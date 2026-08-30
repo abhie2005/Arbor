@@ -1,0 +1,1211 @@
+<title>Arbor Interface Plan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;450;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet">
+
+<style>
+  /* ============================================================
+     DOCUMENT TOKENS  — theme-aware (light / dark / system)
+     ============================================================ */
+  :root{
+    --bg:#EDEFF3;
+    --surface:#FFFFFF;
+    --surface-2:#F5F7FA;
+    --ink:#0E1522;
+    --ink-2:#39435A;
+    --muted:#6B7488;
+    --line:#D5DAE4;
+    --line-2:#BAC2D1;
+    --accent:#1E3FBF;
+    --accent-ink:#1E3FBF;
+    --accent-soft:#E2E8FB;
+    --chip-bg:#EAEDF3;
+
+    --f-display:"Bricolage Grotesque","Helvetica Neue",Arial,sans-serif;
+    --f-body:"Source Serif 4",Georgia,"Times New Roman",serif;
+    --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --f-ui:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+
+    --measure:70ch;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0A0E16; --surface:#111725; --surface-2:#161E2E;
+      --ink:#E7EBF3; --ink-2:#B3BCCC; --muted:#8892A4;
+      --line:#232C3E; --line-2:#35415A;
+      --accent:#8DA4FF; --accent-ink:#A9BAFF; --accent-soft:#18213C;
+      --chip-bg:#1A2233;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0A0E16; --surface:#111725; --surface-2:#161E2E;
+    --ink:#E7EBF3; --ink-2:#B3BCCC; --muted:#8892A4;
+    --line:#232C3E; --line-2:#35415A;
+    --accent:#8DA4FF; --accent-ink:#A9BAFF; --accent-soft:#18213C;
+    --chip-bg:#1A2233;
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--f-body); font-size:17px; line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent-ink);text-underline-offset:3px;}
+  a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px;}
+
+  .shell{max-width:1180px;margin:0 auto;padding:0 28px 120px;display:grid;grid-template-columns:minmax(0,1fr);}
+  @media (min-width:1080px){
+    .shell{grid-template-columns:196px minmax(0,1fr);column-gap:64px;align-items:start;}
+    .masthead{grid-column:1 / -1;}
+  }
+
+  .masthead{border-bottom:1px solid var(--line-2);padding:64px 0 34px;margin-bottom:56px;}
+  .eyebrow{font-family:var(--f-mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin:0 0 22px;display:flex;flex-wrap:wrap;gap:6px 18px;}
+  .eyebrow b{color:var(--accent-ink);font-weight:500;}
+  h1{font-family:var(--f-display);font-weight:800;font-size:clamp(2.6rem,6.2vw,4.4rem);line-height:.98;letter-spacing:-.028em;margin:0 0 20px;text-wrap:balance;max-width:16ch;}
+  .standfirst{font-size:1.18rem;line-height:1.55;color:var(--ink-2);max-width:62ch;margin:0;}
+  .masthead-meta{margin-top:30px;display:flex;flex-wrap:wrap;gap:10px 34px;font-family:var(--f-mono);font-size:12px;color:var(--muted);}
+  .masthead-meta span b{color:var(--ink-2);font-weight:500;}
+
+  .rail{display:none;}
+  @media (min-width:1080px){
+    .rail{display:block;position:sticky;top:32px;font-family:var(--f-mono);font-size:12px;line-height:1.5;}
+    .rail-title{text-transform:uppercase;letter-spacing:.14em;color:var(--muted);font-size:10.5px;padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:14px;}
+    .rail a{display:block;color:var(--ink-2);text-decoration:none;padding:5px 0 5px 12px;border-left:1px solid var(--line);}
+    .rail a:hover{color:var(--accent-ink);border-left-color:var(--accent);}
+  }
+
+  main{min-width:0;}
+  section{margin-bottom:76px;scroll-margin-top:24px;}
+  .sec-head{display:flex;align-items:baseline;gap:14px;border-bottom:1px solid var(--line-2);padding-bottom:10px;margin-bottom:26px;}
+  .sec-key{font-family:var(--f-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-ink);white-space:nowrap;}
+  h2{font-family:var(--f-display);font-weight:600;font-size:clamp(1.5rem,3vw,2rem);letter-spacing:-.02em;line-height:1.12;margin:0;text-wrap:balance;}
+  h3{font-family:var(--f-display);font-weight:600;font-size:1.17rem;letter-spacing:-.012em;margin:36px 0 10px;text-wrap:balance;}
+  h4{font-family:var(--f-mono);font-weight:600;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin:26px 0 8px;}
+  p{max-width:var(--measure);margin:0 0 16px;}
+  ul,ol{max-width:var(--measure);padding-left:1.15em;margin:0 0 16px;}
+  li{margin-bottom:8px;}
+  li::marker{color:var(--muted);}
+  strong{font-weight:700;color:var(--ink);}
+  code{font-family:var(--f-mono);font-size:.83em;background:var(--chip-bg);padding:1px 5px;border-radius:3px;color:var(--ink-2);}
+  .lede{font-size:1.06rem;color:var(--ink-2);}
+
+  .tw{overflow-x:auto;border:1px solid var(--line);background:var(--surface);margin:0 0 22px;}
+  table{border-collapse:collapse;width:100%;min-width:540px;font-size:14.5px;}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top;line-height:1.45;}
+  th{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:500;background:var(--surface-2);white-space:nowrap;}
+  tbody tr:last-child td{border-bottom:none;}
+  td.k{font-family:var(--f-mono);font-size:12.5px;color:var(--ink);white-space:nowrap;}
+  kbd{font-family:var(--f-mono);font-size:11px;background:var(--chip-bg);border:1px solid var(--line-2);border-bottom-width:2px;border-radius:4px;padding:1px 5px;color:var(--ink);white-space:nowrap;}
+
+  pre{background:var(--surface);border:1px solid var(--line);border-left:2px solid var(--line-2);padding:18px 20px;overflow-x:auto;margin:0 0 22px;font-family:var(--f-mono);font-size:12.5px;line-height:1.62;color:var(--ink-2);tab-size:2;}
+  pre b{color:var(--accent-ink);font-weight:500;}
+  pre i{color:var(--muted);font-style:normal;}
+
+  .note{background:var(--surface-2);border:1px solid var(--line);padding:16px 20px;margin:0 0 22px;max-width:var(--measure);}
+  .note p{margin:0;font-size:15.5px;color:var(--ink-2);}
+  .note p + p{margin-top:10px;}
+  .note-label{font-family:var(--f-mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-ink);display:block;margin-bottom:7px;}
+
+  .caption{font-family:var(--f-mono);font-size:11.5px;color:var(--muted);margin:-12px 0 26px;line-height:1.5;max-width:var(--measure);}
+  .caption b{color:var(--ink-2);font-weight:500;}
+
+  footer{border-top:1px solid var(--line-2);padding-top:22px;font-family:var(--f-mono);font-size:11.5px;color:var(--muted);line-height:1.7;}
+
+  /* ============================================================
+     PRODUCT SPECIMEN TOKENS — fixed. These are pictures of the
+     app, so they hold their own palette in either doc theme.
+     ============================================================ */
+  .mock{
+    --a-bg:#0C0F14;
+    --a-panel:#11151C;
+    --a-raised:#181D26;
+    --a-hover:#161B23;
+    --a-sel:#1A2029;
+    --a-line:#1D232C;
+    --a-line2:#2A323E;
+    --a-t1:#E3E7EE;
+    --a-t2:#98A2B1;
+    --a-t3:#69737F;
+    --a-accent:#E9A23B;
+    --a-accent-dim:#3B2C14;
+    --st-todo:#6B7686;
+    --st-active:#5B8DEF;
+    --st-done:#43B581;
+    --st-closed:#4A5563;
+    --pri-urgent:#EC5B5B;
+    --pri-high:#E9A23B;
+    --pri-normal:#5B8DEF;
+    --pri-low:#59636F;
+
+    font-family:var(--f-ui);
+    font-size:13px;
+    line-height:1.45;
+    background:var(--a-bg);
+    color:var(--a-t1);
+    border:1px solid var(--a-line2);
+    border-radius:6px;
+    overflow:hidden;
+    margin:0 0 14px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .mock.light{
+    --a-bg:#FFFFFF;
+    --a-panel:#F7F8FA;
+    --a-raised:#FFFFFF;
+    --a-hover:#F1F3F6;
+    --a-sel:#FDF4E6;
+    --a-line:#E7EAEF;
+    --a-line2:#D5DAE2;
+    --a-t1:#171C24;
+    --a-t2:#5C6675;
+    --a-t3:#8B95A3;
+    --a-accent:#B87514;
+    --a-accent-dim:#FBF0DC;
+    --st-todo:#78828F;
+    --st-active:#2C6BD4;
+    --st-done:#1E8A5C;
+    --st-closed:#78828F;
+    --pri-urgent:#C93A3A;
+    --pri-high:#B87514;
+    --pri-normal:#2C6BD4;
+    --pri-low:#8B95A3;
+  }
+  .mock-scroll{overflow-x:auto;}
+  .mock-inner{min-width:660px;}
+
+  .m-shell{display:grid;grid-template-columns:186px minmax(0,1fr);}
+  .m-side{background:var(--a-panel);border-right:1px solid var(--a-line);padding:0 0 12px;}
+  .m-main{min-width:0;display:flex;flex-direction:column;}
+
+  /* sidebar */
+  .m-ws{display:flex;align-items:center;gap:8px;height:38px;padding:0 10px;border-bottom:1px solid var(--a-line);}
+  .m-mark{width:16px;height:16px;border-radius:3px;background:var(--a-accent);color:#0C0F14;font-size:10px;font-weight:600;display:grid;place-items:center;flex:none;}
+  .m-ws-name{font-weight:600;font-size:12.5px;letter-spacing:-.01em;}
+  .m-ws-caret{margin-left:auto;color:var(--a-t3);font-size:9px;}
+  .m-navgroup{padding:8px 6px 4px;}
+  .m-navlabel{font-family:var(--f-mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--a-t3);padding:6px 6px 5px;}
+  .m-nav{display:flex;align-items:center;gap:8px;height:26px;padding:0 8px;border-radius:4px;color:var(--a-t2);font-size:12.5px;}
+  .m-nav .ic{width:13px;text-align:center;color:var(--a-t3);font-size:11px;flex:none;}
+  .m-nav.on{background:var(--a-sel);color:var(--a-t1);font-weight:500;}
+  .m-nav.on .ic{color:var(--a-accent);}
+  .m-nav .cnt{margin-left:auto;font-family:var(--f-mono);font-size:10.5px;color:var(--a-t3);font-variant-numeric:tabular-nums;}
+  .m-nav.on .cnt{color:var(--a-accent);}
+  .m-nav.d1{padding-left:20px;}
+  .m-nav.d2{padding-left:32px;}
+
+  /* main header */
+  .m-head{height:38px;display:flex;align-items:center;gap:10px;padding:0 12px;border-bottom:1px solid var(--a-line);flex:none;}
+  .m-crumb{font-size:12.5px;color:var(--a-t2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .m-crumb b{color:var(--a-t1);font-weight:600;}
+  .m-crumb i{font-style:normal;color:var(--a-t3);padding:0 5px;}
+  .m-head-right{margin-left:auto;display:flex;align-items:center;gap:7px;flex:none;}
+  .m-kbd{font-family:var(--f-mono);font-size:10px;color:var(--a-t3);border:1px solid var(--a-line2);border-radius:3px;padding:1px 5px;}
+  .m-av{width:19px;height:19px;border-radius:50%;display:grid;place-items:center;font-size:9px;font-weight:600;color:#0C0F14;}
+
+  /* tabs + toolbar */
+  .m-tabs{display:flex;align-items:center;gap:2px;padding:0 12px;border-bottom:1px solid var(--a-line);flex:none;height:32px;}
+  .m-tab{font-size:12px;color:var(--a-t2);padding:0 8px;height:31px;display:flex;align-items:center;border-bottom:1.5px solid transparent;}
+  .m-tab.on{color:var(--a-t1);border-bottom-color:var(--a-accent);font-weight:500;}
+  .m-tab.add{color:var(--a-t3);}
+  .m-bar{display:flex;align-items:center;gap:6px;padding:7px 12px;border-bottom:1px solid var(--a-line);flex-wrap:wrap;flex:none;}
+  .m-pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--a-t2);border:1px solid var(--a-line2);border-radius:4px;padding:2px 7px;white-space:nowrap;}
+  .m-pill.act{color:var(--a-accent);border-color:var(--a-accent-dim);background:var(--a-accent-dim);}
+  .m-pill .x{color:var(--a-t3);font-size:10px;}
+  .m-bar-right{margin-left:auto;display:flex;gap:6px;}
+
+  /* group + rows */
+  .m-group{display:flex;align-items:center;gap:8px;height:28px;padding:0 12px;background:var(--a-panel);border-bottom:1px solid var(--a-line);}
+  .m-gcaret{color:var(--a-t3);font-size:9px;}
+  .m-gname{font-size:11.5px;font-weight:600;letter-spacing:.01em;}
+  .m-gcount{font-family:var(--f-mono);font-size:10.5px;color:var(--a-t3);font-variant-numeric:tabular-nums;}
+  .m-gadd{margin-left:auto;color:var(--a-t3);font-size:13px;}
+
+  .m-row{
+    display:grid;
+    grid-template-columns:14px 12px 58px minmax(0,1fr) auto auto auto auto;
+    align-items:center;
+    gap:9px;
+    height:31px;
+    padding:0 12px;
+    border-bottom:1px solid var(--a-line);
+  }
+  .m-row:last-child{border-bottom:none;}
+  .m-row.sel{background:var(--a-sel);box-shadow:inset 2px 0 0 var(--a-accent);}
+  .m-chk{width:11px;height:11px;border:1px solid var(--a-line2);border-radius:2px;}
+  .m-row.sel .m-chk{border-color:var(--a-accent);background:var(--a-accent);}
+  .m-dot{width:9px;height:9px;border-radius:50%;border:1.5px solid var(--st-todo);}
+  .m-dot.active{border-color:var(--st-active);background:linear-gradient(90deg,var(--st-active) 50%,transparent 50%);}
+  .m-dot.done{border-color:var(--st-done);background:var(--st-done);}
+  .m-id{font-family:var(--f-mono);font-size:10.5px;color:var(--a-t3);letter-spacing:-.01em;}
+  .m-title{font-size:12.5px;color:var(--a-t1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .m-title .sub{color:var(--a-t3);font-size:11px;margin-left:7px;}
+  .m-tag{font-size:10.5px;color:var(--a-t2);border:1px solid var(--a-line2);border-radius:3px;padding:0 5px;line-height:15px;white-space:nowrap;}
+  .m-flag{font-size:10px;}
+  .m-date{font-family:var(--f-mono);font-size:10.5px;color:var(--a-t2);font-variant-numeric:tabular-nums;white-space:nowrap;min-width:26px;text-align:right;}
+  .m-date.over{color:var(--pri-urgent);}
+  .m-date.none{color:var(--a-t3);}
+  .m-stack{display:flex;}
+  .m-stack .m-av{width:17px;height:17px;font-size:8.5px;margin-left:-5px;border:1.5px solid var(--a-bg);}
+  .m-stack .m-av:first-child{margin-left:0;}
+  .m-row.sel .m-stack .m-av{border-color:var(--a-sel);}
+
+  .av-1{background:#E9A23B;}
+  .av-2{background:#5B8DEF;}
+  .av-3{background:#43B581;}
+  .av-4{background:#C77DD8;}
+  .av-5{background:#EC5B5B;}
+
+  /* board */
+  .m-board{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;min-height:230px;}
+  .m-col{border-right:1px solid var(--a-line);padding:0 0 10px;min-width:0;}
+  .m-col:last-child{border-right:none;}
+  .m-colhead{display:flex;align-items:center;gap:7px;height:30px;padding:0 10px;border-bottom:1px solid var(--a-line);background:var(--a-panel);}
+  .m-card{background:var(--a-raised);border:1px solid var(--a-line);border-radius:4px;margin:8px 8px 0;padding:7px 8px;}
+  .m-card.drag{border-color:var(--a-accent);box-shadow:0 6px 16px rgba(0,0,0,.35);transform:rotate(-.6deg);}
+  .m-card-t{font-size:12px;line-height:1.35;margin-bottom:6px;}
+  .m-card-m{display:flex;align-items:center;gap:6px;}
+  .m-card-m .m-id{margin-right:auto;}
+  .m-drop{margin:8px 8px 0;height:44px;border:1px dashed var(--a-accent-dim);border-radius:4px;}
+
+  /* task panel */
+  .m-panel{display:grid;grid-template-columns:minmax(0,1fr) 210px;}
+  .m-pmain{padding:14px 16px;min-width:0;}
+  .m-pside{border-left:1px solid var(--a-line);padding:12px 12px;background:var(--a-panel);}
+  .m-ptitle{font-size:16px;font-weight:600;letter-spacing:-.015em;line-height:1.3;margin:0 0 4px;}
+  .m-pmeta{font-family:var(--f-mono);font-size:10.5px;color:var(--a-t3);margin-bottom:12px;}
+  .m-pbody{font-size:12.5px;color:var(--a-t2);line-height:1.55;margin-bottom:14px;}
+  .m-sec{font-family:var(--f-mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--a-t3);margin:0 0 7px;}
+  .m-fld{display:grid;grid-template-columns:74px minmax(0,1fr);gap:8px;align-items:center;padding:4px 0;font-size:11.5px;}
+  .m-fld .lbl{color:var(--a-t3);}
+  .m-fld .val{color:var(--a-t1);display:flex;align-items:center;gap:5px;}
+  .m-check{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--a-t2);padding:3px 0;}
+  .m-box{width:11px;height:11px;border:1px solid var(--a-line2);border-radius:2px;flex:none;}
+  .m-box.on{background:var(--st-done);border-color:var(--st-done);}
+  .m-check.on{color:var(--a-t3);text-decoration:line-through;}
+  .m-cmt{display:grid;grid-template-columns:20px minmax(0,1fr);gap:8px;padding:8px 0;border-top:1px solid var(--a-line);}
+  .m-cmt-b{font-size:12px;color:var(--a-t2);line-height:1.5;}
+  .m-cmt-b b{color:var(--a-t1);font-weight:600;font-size:11.5px;}
+  .m-cmt-b .ts{font-family:var(--f-mono);font-size:10px;color:var(--a-t3);margin-left:6px;}
+  .m-mention{color:var(--a-accent);}
+
+  /* command palette */
+  .m-pal{max-width:420px;margin:0 auto;background:var(--a-raised);border:1px solid var(--a-line2);border-radius:8px;box-shadow:0 18px 44px rgba(0,0,0,.5);overflow:hidden;}
+  .mock.light .m-pal{box-shadow:0 18px 44px rgba(20,26,36,.16);}
+  .m-palin{display:flex;align-items:center;gap:9px;padding:11px 13px;border-bottom:1px solid var(--a-line);}
+  .m-palin .q{font-size:13.5px;color:var(--a-t1);}
+  .m-palin .cur{width:1.5px;height:15px;background:var(--a-accent);}
+  .m-palgrp{font-family:var(--f-mono);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--a-t3);padding:9px 13px 5px;}
+  .m-palrow{display:flex;align-items:center;gap:9px;padding:6px 13px;font-size:12.5px;color:var(--a-t2);}
+  .m-palrow.on{background:var(--a-sel);color:var(--a-t1);}
+  .m-palrow .ic{width:14px;text-align:center;color:var(--a-t3);font-size:11px;}
+  .m-palrow.on .ic{color:var(--a-accent);}
+  .m-palrow .sc{margin-left:auto;font-family:var(--f-mono);font-size:10px;color:var(--a-t3);}
+  .m-palfoot{display:flex;gap:14px;padding:7px 13px;border-top:1px solid var(--a-line);font-family:var(--f-mono);font-size:10px;color:var(--a-t3);}
+
+  /* presence bar */
+  .m-pres{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:11.5px;color:var(--a-t2);}
+  .m-live{width:6px;height:6px;border-radius:50%;background:var(--st-done);}
+
+  /* swatch grid */
+  .sw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(148px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin:0 0 22px;}
+  .sw{background:var(--surface);padding:12px 13px;}
+  .sw-chip{height:30px;border-radius:4px;margin-bottom:9px;border:1px solid rgba(127,127,127,.22);}
+  .sw-name{font-family:var(--f-mono);font-size:11px;color:var(--ink);display:block;}
+  .sw-hex{font-family:var(--f-mono);font-size:10.5px;color:var(--muted);display:block;}
+  .sw-use{font-size:12px;color:var(--ink-2);margin-top:5px;line-height:1.35;display:block;}
+
+  /* type specimen */
+  .spec{border:1px solid var(--line);background:var(--surface);padding:20px 22px;margin:0 0 22px;font-family:var(--f-ui);}
+  .spec-row{display:grid;grid-template-columns:96px minmax(0,1fr);gap:16px;align-items:baseline;padding:9px 0;border-top:1px solid var(--line);}
+  .spec-row:first-child{border-top:none;}
+  .spec-k{font-family:var(--f-mono);font-size:10.5px;color:var(--muted);letter-spacing:.06em;}
+  .spec-v{color:var(--ink);}
+
+  .kb{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);margin:0 0 22px;}
+  .kb-i{background:var(--surface);padding:9px 12px;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--ink-2);}
+  .kb-i kbd{flex:none;}
+
+  .phase{display:grid;grid-template-columns:52px minmax(0,1fr);gap:20px;padding:18px 0;border-top:1px solid var(--line);}
+  .phase-n{font-family:var(--f-mono);font-size:13px;color:var(--accent-ink);padding-top:2px;font-variant-numeric:tabular-nums;}
+  .phase h3{margin:0 0 6px;font-size:1.06rem;}
+  .phase p{margin:0;font-size:15px;}
+
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow"><span>Interface plan</span><span>·</span><span>Design system</span><span>·</span><span><b>AWS + open source</b></span></p>
+    <h1>Arbor</h1>
+    <p class="standfirst">A dense, dark-first, keyboard-driven work platform. This is the interface plan — the palette, the type, the shell, the screens, and the interaction model — plus the AWS deployment shape and the open-source posture that has to be designed in from the first commit, not bolted on later.</p>
+    <div class="masthead-meta">
+      <span>Direction <b>Dense · keyboard-first</b></span>
+      <span>Components <b>21st.dev / shadcn</b></span>
+      <span>Deploy <b>AWS Fargate</b></span>
+      <span>License <b>AGPL-3.0</b></span>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Contents">
+    <div class="rail-title">Contents</div>
+    <a href="#name">The name</a>
+    <a href="#principles">Principles</a>
+    <a href="#color">Color</a>
+    <a href="#type">Type &amp; density</a>
+    <a href="#shell">The shell</a>
+    <a href="#list">List view</a>
+    <a href="#board">Board view</a>
+    <a href="#detail">Task detail</a>
+    <a href="#palette">Command palette</a>
+    <a href="#keys">Keyboard map</a>
+    <a href="#light">Light theme</a>
+    <a href="#states">States</a>
+    <a href="#responsive">Responsive &amp; a11y</a>
+    <a href="#components">Components — 21st.dev</a>
+    <a href="#aws">AWS architecture</a>
+    <a href="#oss">Open source</a>
+    <a href="#next">What to build first</a>
+  </nav>
+
+  <main>
+
+    <!-- ============ NAME ============ -->
+    <section id="name">
+      <div class="sec-head"><span class="sec-key">00 / Name</span><h2>Arbor</h2></div>
+      <p class="lede">A working name, and a defensible one. The entire product is a tree — workspace, space, folder, list, task, subtask — so the name states the core abstraction rather than describing a benefit. One word, five letters, easy to type in a terminal, reads fine as <code>arbor.dev</code> or <code>arbor.sh</code>, and gives you a mark: a bare branching glyph that works at 16px in a favicon.</p>
+      <p>Before committing, check the npm name, the GitHub org, the domain, and a basic trademark search in your jurisdiction — there are unrelated companies using the word, which is usually fine across different classes of goods but worth ten minutes of diligence. Alternates in the same register, all short and unclaimed-sounding: <strong>Strata</strong>, <strong>Tract</strong>, <strong>Rungs</strong>, <strong>Kiln</strong>. Everything below is a find-and-replace away from any of them.</p>
+    </section>
+
+    <!-- ============ PRINCIPLES ============ -->
+    <section id="principles">
+      <div class="sec-head"><span class="sec-key">01 / Principles</span><h2>Six rules that settle most arguments</h2></div>
+
+      <p>Design principles are only useful if they can lose you a feature. These can.</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Principle</th><th>What it rules out</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Density is a feature</td><td>Cards with 24px of padding. A row is 31px and shows id, status, title, tags, priority, dates, and assignees without truncating the title. If a screen shows fewer than 20 tasks without scrolling, it's wrong.</td></tr>
+            <tr><td class="k">Keyboard is the primary input</td><td>Any action that exists only behind a hover menu. Every mutation has a shortcut and appears in <kbd>⌘K</kbd>. The mouse is supported, not assumed.</td></tr>
+            <tr><td class="k">Chrome earns its pixels</td><td>Decorative borders, drop shadows on static surfaces, gradient headers, icons next to text that already says the thing. Shadows exist only where something genuinely floats: menus, modals, dragged cards.</td></tr>
+            <tr><td class="k">Color means state, never decoration</td><td>Colored section headers, rainbow sidebars. Hue is reserved for status group, priority, and one brand accent. If it's colored, it's telling you something.</td></tr>
+            <tr><td class="k">Optimistic, always</td><td>Spinners on navigation, "Saving…" toasts, disabled buttons during a write. The UI updates on keypress and reconciles with the server afterwards; failures roll back with an inline, undoable error.</td></tr>
+            <tr><td class="k">Quiet by default</td><td>Notification badges on everything, celebratory animation, empty-state illustrations. One accent color, used sparingly enough that it still means "here".</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ COLOR ============ -->
+    <section id="color">
+      <div class="sec-head"><span class="sec-key">02 / Color</span><h2>Palette</h2></div>
+
+      <p>Cool near-black ground with a warm brass accent. The warm–cool tension is the whole identity: everything structural is a desaturated blue-grey, and the one warm hue marks what is <em>yours</em> — focus, selection, the active nav item, the primary action. It's deliberately not the indigo-on-charcoal that every tool in this category defaults to.</p>
+
+      <h4>Surfaces &amp; text — dark (default)</h4>
+      <div class="sw-grid">
+        <div class="sw"><div class="sw-chip" style="background:#0C0F14"></div><span class="sw-name">bg</span><span class="sw-hex">#0C0F14</span><span class="sw-use">App ground. Blue-biased, never pure black.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#11151C"></div><span class="sw-name">panel</span><span class="sw-hex">#11151C</span><span class="sw-use">Sidebar, group headers, toolbars.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#181D26"></div><span class="sw-name">raised</span><span class="sw-hex">#181D26</span><span class="sw-use">Menus, modals, board cards.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#1D232C"></div><span class="sw-name">line</span><span class="sw-hex">#1D232C</span><span class="sw-use">Hairline dividers between rows.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#2A323E"></div><span class="sw-name">line-2</span><span class="sw-hex">#2A323E</span><span class="sw-use">Control borders, outer frame.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#E3E7EE"></div><span class="sw-name">text</span><span class="sw-hex">#E3E7EE</span><span class="sw-use">Primary. Never pure white.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#98A2B1"></div><span class="sw-name">text-2</span><span class="sw-hex">#98A2B1</span><span class="sw-use">Secondary and metadata.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#69737F"></div><span class="sw-name">text-3</span><span class="sw-hex">#69737F</span><span class="sw-use">Labels, ids, placeholders.</span></div>
+      </div>
+
+      <h4>Accent &amp; semantics</h4>
+      <div class="sw-grid">
+        <div class="sw"><div class="sw-chip" style="background:#E9A23B"></div><span class="sw-name">accent</span><span class="sw-hex">#E9A23B</span><span class="sw-use">Brass. Focus ring, selection rail, active tab, primary button, brand mark.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#3B2C14"></div><span class="sw-name">accent-dim</span><span class="sw-hex">#3B2C14</span><span class="sw-use">Accent backgrounds at 100% opacity — never alpha, so it composites predictably.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#6B7686"></div><span class="sw-name">status/todo</span><span class="sw-hex">#6B7686</span><span class="sw-use">Not-started group.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#5B8DEF"></div><span class="sw-name">status/active</span><span class="sw-hex">#5B8DEF</span><span class="sw-use">Active group. Also normal priority.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#43B581"></div><span class="sw-name">status/done</span><span class="sw-hex">#43B581</span><span class="sw-use">Done group, checked items, live-sync dot.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#4A5563"></div><span class="sw-name">status/closed</span><span class="sw-hex">#4A5563</span><span class="sw-use">Closed group — deliberately recessive.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#EC5B5B"></div><span class="sw-name">urgent</span><span class="sw-hex">#EC5B5B</span><span class="sw-use">Urgent priority, overdue dates, destructive actions.</span></div>
+        <div class="sw"><div class="sw-chip" style="background:#C77DD8"></div><span class="sw-name">avatar/n</span><span class="sw-hex">#C77DD8</span><span class="sw-use">One of five avatar hues, hashed from user id.</span></div>
+      </div>
+
+      <div class="note">
+        <span class="note-label">Rules</span>
+        <p>Status colors come from the <strong>group</strong>, never the status name — a team's custom "Shipping" status inherits the active blue because its group is active. Users pick a status color for the dot only; the system color still drives charts and reporting.</p>
+        <p>Every token has a light-theme counterpart at matched contrast, not an inversion. The accent darkens to <code>#B87514</code> in light mode so it stays legible on white — see <a href="#light">the light specimen</a>.</p>
+      </div>
+    </section>
+
+    <!-- ============ TYPE ============ -->
+    <section id="type">
+      <div class="sec-head"><span class="sec-key">03 / Type</span><h2>Type &amp; density</h2></div>
+
+      <p><strong>IBM Plex Sans</strong> for the interface and <strong>IBM Plex Mono</strong> for identifiers, dates, counts, and shortcuts. Chosen for three reasons: it's a genuine superfamily so the sans and mono share proportions and never look pasted together; its mono has excellent digit and hyphen clarity at 10px, which matters when the whole UI is stamped with <code>ENG-402</code>; and it's OFL-licensed, so an open-source project can ship it without an asset-licensing footnote.</p>
+
+      <div class="spec">
+        <div class="spec-row"><span class="spec-k">display / 20 · 600</span><span class="spec-v" style="font-size:20px;font-weight:600;letter-spacing:-.02em;">Migrate the access index</span></div>
+        <div class="spec-row"><span class="spec-k">title / 16 · 600</span><span class="spec-v" style="font-size:16px;font-weight:600;letter-spacing:-.015em;">Fix auth redirect loop on SSO callback</span></div>
+        <div class="spec-row"><span class="spec-k">body / 13 · 400</span><span class="spec-v" style="font-size:13px;">Task rows, descriptions, comments. The workhorse size.</span></div>
+        <div class="spec-row"><span class="spec-k">row / 12.5 · 400</span><span class="spec-v" style="font-size:12.5px;">Task titles inside a dense list — a half-step down from body.</span></div>
+        <div class="spec-row"><span class="spec-k">meta / 11.5 · 400</span><span class="spec-v" style="font-size:11.5px;color:var(--muted);">Tags, field values, secondary detail.</span></div>
+        <div class="spec-row"><span class="spec-k">mono / 10.5 · 400</span><span class="spec-v" style="font-family:var(--f-mono);font-size:10.5px;color:var(--muted);">ENG-402 · 4h 20m · Fri 14 · ⌘K</span></div>
+        <div class="spec-row"><span class="spec-k">label / 9.5 · 600</span><span class="spec-v" style="font-family:var(--f-mono);font-size:9.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--muted);">In Progress</span></div>
+      </div>
+
+      <h4>Density scale</h4>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Token</th><th>Value</th><th>Applies to</th></tr></thead>
+          <tbody>
+            <tr><td class="k">row-h</td><td>31px default · 27px compact · 38px relaxed</td><td>User-switchable in settings; persisted per user, not per view.</td></tr>
+            <tr><td class="k">header-h</td><td>38px</td><td>Main header, workspace switcher — one consistent band.</td></tr>
+            <tr><td class="k">tab-h / group-h</td><td>32px / 28px</td><td>View tabs, group headers.</td></tr>
+            <tr><td class="k">sidebar-w</td><td>186px · collapses to 48px icon rail</td><td>Resizable, persisted, <kbd>⌘\</kbd> to toggle.</td></tr>
+            <tr><td class="k">panel-w</td><td>420px slide-over · full-page at <kbd>⌘⏎</kbd></td><td>Task detail.</td></tr>
+            <tr><td class="k">space</td><td>4 · 6 · 8 · 12 · 16 · 24</td><td>The whole scale. Nothing between, nothing above 24 inside the app frame.</td></tr>
+            <tr><td class="k">radius</td><td>0 rows · 3 chips · 4 controls/cards · 6 panels · 8 modals</td><td>Radius encodes elevation. Rows are square because they tile.</td></tr>
+            <tr><td class="k">border</td><td>1px hairline only</td><td>No 2px borders anywhere except the focus ring and the active tab underline.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ SHELL ============ -->
+    <section id="shell">
+      <div class="sec-head"><span class="sec-key">04 / Shell</span><h2>The application shell</h2></div>
+
+      <p>Three regions, no global top bar. The sidebar owns the full height, the main column owns its own header, and the detail panel slides in from the right without displacing anything. Every region is independently scrollable, and the main column is the only one that ever moves.</p>
+
+      <h4>Region map</h4>
+      <pre><b>┌─────────────┬──────────────────────────────────┬──────────────┐</b>
+<b>│</b> SIDEBAR     <b>│</b> MAIN                             <b>│</b> DETAIL       <b>│</b>
+<b>│</b> 186px       <b>│</b> fluid, min 480px                 <b>│</b> 420px        <b>│</b>
+<b>│</b>             <b>│</b>                                  <b>│</b> slide-over   <b>│</b>
+<b>│</b> workspace   <b>│</b> <i>header</i>   breadcrumb · search      <b>│</b>              <b>│</b>
+<b>│</b> pinned nav  <b>│</b> <i>tabs</i>     saved views + &quot;+&quot;         <b>│</b> task, doc,   <b>│</b>
+<b>│</b> container   <b>│</b> <i>toolbar</i>  filter · group · sort     <b>│</b> or comment   <b>│</b>
+<b>│</b>   tree      <b>│</b> <i>body</i>     grouped rows / board /    <b>│</b> thread       <b>│</b>
+<b>│</b> favorites   <b>│</b>          calendar / table          <b>│</b>              <b>│</b>
+<b>└─────────────┴──────────────────────────────────┴──────────────┘</b>
+  <i>⌘\ collapses          ⌘K over everything          ⌘. toggles</i></pre>
+
+      <p>The detail panel is a <strong>route, not a modal</strong>. Opening a task pushes <code>/t/ENG-402</code> onto the history stack while the list stays mounted behind it, so browser back closes the panel, the URL is shareable, and the list never re-fetches. Pressing <kbd>⌘⏎</kbd> promotes the same route to a full page with no panel.</p>
+    </section>
+
+    <!-- ============ LIST ============ -->
+    <section id="list">
+      <div class="sec-head"><span class="sec-key">05 / Screen</span><h2>List view — the default surface</h2></div>
+
+      <p>This is where users spend eighty percent of their time, so it gets the most attention. Grouped rows, inline editing on every cell, multi-select with range extension, and a filter bar that is a live representation of the saved view definition.</p>
+
+      <div class="mock">
+        <div class="mock-scroll"><div class="mock-inner">
+          <div class="m-shell">
+
+            <div class="m-side">
+              <div class="m-ws">
+                <div class="m-mark">A</div>
+                <div class="m-ws-name">Northwind</div>
+                <div class="m-ws-caret">▾</div>
+              </div>
+              <div class="m-navgroup">
+                <div class="m-nav"><span class="ic">⌂</span>Home</div>
+                <div class="m-nav"><span class="ic">✦</span>My Work<span class="cnt">7</span></div>
+                <div class="m-nav"><span class="ic">⧉</span>Inbox<span class="cnt">3</span></div>
+                <div class="m-nav"><span class="ic">⌕</span>Search</div>
+              </div>
+              <div class="m-navgroup">
+                <div class="m-navlabel">Spaces</div>
+                <div class="m-nav"><span class="ic">▾</span>Engineering</div>
+                <div class="m-nav d1 on"><span class="ic">▤</span>Sprint 24<span class="cnt">16</span></div>
+                <div class="m-nav d1"><span class="ic">▤</span>Backlog</div>
+                <div class="m-nav d1"><span class="ic">▤</span>Bugs<span class="cnt">4</span></div>
+                <div class="m-nav"><span class="ic">▸</span>Design</div>
+                <div class="m-nav"><span class="ic">▸</span>Go&nbsp;to&nbsp;Market</div>
+              </div>
+              <div class="m-navgroup">
+                <div class="m-navlabel">Favorites</div>
+                <div class="m-nav"><span class="ic">★</span>Q3 roadmap</div>
+                <div class="m-nav"><span class="ic">★</span>On-call rota</div>
+              </div>
+            </div>
+
+            <div class="m-main">
+              <div class="m-head">
+                <div class="m-crumb">Engineering<i>›</i>Sprint 24<i>›</i><b>All tasks</b></div>
+                <div class="m-head-right">
+                  <span class="m-kbd">⌘K</span>
+                  <div class="m-av av-2">RK</div>
+                </div>
+              </div>
+
+              <div class="m-tabs">
+                <div class="m-tab on">List</div>
+                <div class="m-tab">Board</div>
+                <div class="m-tab">Calendar</div>
+                <div class="m-tab">Table</div>
+                <div class="m-tab add">+</div>
+              </div>
+
+              <div class="m-bar">
+                <span class="m-pill act">Assignee: me <span class="x">✕</span></span>
+                <span class="m-pill act">Priority ≥ High <span class="x">✕</span></span>
+                <span class="m-pill">+ Filter</span>
+                <div class="m-bar-right">
+                  <span class="m-pill">Group: Status</span>
+                  <span class="m-pill">Sort: Due ↑</span>
+                </div>
+              </div>
+
+              <div class="m-group">
+                <span class="m-gcaret">▾</span>
+                <span class="m-gname" style="color:var(--st-active)">In Progress</span>
+                <span class="m-gcount">4</span>
+                <span class="m-gadd">+</span>
+              </div>
+
+              <div class="m-row sel">
+                <span class="m-chk"></span>
+                <span class="m-dot active"></span>
+                <span class="m-id">ENG-402</span>
+                <span class="m-title">Fix auth redirect loop on SSO callback<span class="sub">3 subtasks</span></span>
+                <span class="m-tag">auth</span>
+                <span class="m-flag" style="color:var(--pri-urgent)">▲</span>
+                <span class="m-date over">Fri 14</span>
+                <span class="m-stack"><span class="m-av av-2">RK</span><span class="m-av av-4">JD</span></span>
+              </div>
+              <div class="m-row">
+                <span class="m-chk"></span>
+                <span class="m-dot active"></span>
+                <span class="m-id">ENG-398</span>
+                <span class="m-title">Rate limit the public API</span>
+                <span class="m-tag">platform</span>
+                <span class="m-flag" style="color:var(--pri-high)">▲</span>
+                <span class="m-date">Mon 17</span>
+                <span class="m-stack"><span class="m-av av-3">SP</span></span>
+              </div>
+              <div class="m-row">
+                <span class="m-chk"></span>
+                <span class="m-dot active"></span>
+                <span class="m-id">ENG-411</span>
+                <span class="m-title">Migrate the access index to a background job</span>
+                <span class="m-tag">infra</span>
+                <span class="m-flag" style="color:var(--pri-high)">▲</span>
+                <span class="m-date none">—</span>
+                <span class="m-stack"><span class="m-av av-1">AM</span><span class="m-av av-5">TC</span></span>
+              </div>
+
+              <div class="m-group">
+                <span class="m-gcaret">▾</span>
+                <span class="m-gname" style="color:var(--st-todo)">Todo</span>
+                <span class="m-gcount">12</span>
+                <span class="m-gadd">+</span>
+              </div>
+
+              <div class="m-row">
+                <span class="m-chk"></span>
+                <span class="m-dot"></span>
+                <span class="m-id">ENG-415</span>
+                <span class="m-title">Board drag performance above 500 cards</span>
+                <span class="m-tag">perf</span>
+                <span class="m-flag" style="color:var(--pri-normal)">▲</span>
+                <span class="m-date">Wed 19</span>
+                <span class="m-stack"><span class="m-av av-3">SP</span></span>
+              </div>
+              <div class="m-row">
+                <span class="m-chk"></span>
+                <span class="m-dot"></span>
+                <span class="m-id">ENG-417</span>
+                <span class="m-title">Fractional index helper for drag reorder</span>
+                <span class="m-tag">core</span>
+                <span class="m-flag" style="color:var(--pri-low)">▲</span>
+                <span class="m-date none">—</span>
+                <span class="m-stack"></span>
+              </div>
+
+              <div class="m-group">
+                <span class="m-gcaret">▸</span>
+                <span class="m-gname" style="color:var(--st-done)">Done</span>
+                <span class="m-gcount">21</span>
+                <span class="m-gadd">+</span>
+              </div>
+
+              <div class="m-pres">
+                <span class="m-live"></span>
+                <span style="color:var(--a-t3)">Live · </span>
+                <span class="m-stack"><span class="m-av av-4">JD</span><span class="m-av av-3">SP</span></span>
+                <span style="color:var(--a-t3)">2 others viewing</span>
+              </div>
+
+            </div>
+          </div>
+        </div></div>
+      </div>
+      <p class="caption"><b>Anatomy, left to right:</b> select checkbox · status dot (group-colored, click to cycle) · custom key · title with subtask count · tags · priority flag · due date, red when overdue · assignee stack. Selected row takes a brass rail, never a full-bleed highlight. Group headers are sticky and carry a live count and an inline “+”.</p>
+
+      <h4>Behaviors that make it feel fast</h4>
+      <ul>
+        <li><strong>Every cell is editable in place.</strong> Click the dot for a status menu, the date for a picker, the avatar stack for assignees. No "edit mode".</li>
+        <li><strong>Row virtualization from day one.</strong> Ten thousand tasks scroll at 60fps or the density promise is a lie.</li>
+        <li><strong>Multi-select is first-class.</strong> <kbd>X</kbd> to select, <kbd>⇧J</kbd>/<kbd>⇧K</kbd> to extend, then any field shortcut applies to the whole selection with one optimistic write and one undo entry.</li>
+        <li><strong>The filter bar is the view definition.</strong> Each pill maps to one entry in <code>filters.fields[]</code>. Editing a pill on a shared view shows "Unsaved · <u>Save</u> · <u>Reset</u>" rather than silently mutating what your teammates see.</li>
+        <li><strong>New task inline.</strong> <kbd>C</kbd> or the group "+" inserts an editable row in place, pre-filled with that group's status. Type, hit enter, keep going — the fastest path from thought to task.</li>
+      </ul>
+    </section>
+
+    <!-- ============ BOARD ============ -->
+    <section id="board">
+      <div class="sec-head"><span class="sec-key">06 / Screen</span><h2>Board view</h2></div>
+
+      <p>Structurally the same query, rendered as columns. Because grouping is a property of the view definition rather than of the board, a board can group by assignee, priority, or any dropdown custom field just as easily as by status.</p>
+
+      <div class="mock">
+        <div class="mock-scroll"><div class="mock-inner">
+          <div class="m-head">
+            <div class="m-crumb">Engineering<i>›</i>Sprint 24<i>›</i><b>Board</b></div>
+            <div class="m-head-right"><span class="m-pill">Group: Status</span><span class="m-kbd">⌘K</span></div>
+          </div>
+          <div class="m-board">
+
+            <div class="m-col">
+              <div class="m-colhead"><span class="m-dot"></span><span class="m-gname">Todo</span><span class="m-gcount">12</span><span class="m-gadd">+</span></div>
+              <div class="m-card">
+                <div class="m-card-t">Board drag performance above 500 cards</div>
+                <div class="m-card-m"><span class="m-id">ENG-415</span><span class="m-flag" style="color:var(--pri-normal)">▲</span><span class="m-av av-3">SP</span></div>
+              </div>
+              <div class="m-card">
+                <div class="m-card-t">Fractional index helper for drag reorder</div>
+                <div class="m-card-m"><span class="m-id">ENG-417</span><span class="m-flag" style="color:var(--pri-low)">▲</span></div>
+              </div>
+            </div>
+
+            <div class="m-col">
+              <div class="m-colhead"><span class="m-dot active"></span><span class="m-gname">In Progress</span><span class="m-gcount">4</span><span class="m-gadd">+</span></div>
+              <div class="m-card drag">
+                <div class="m-card-t">Fix auth redirect loop on SSO callback</div>
+                <div class="m-card-m"><span class="m-id">ENG-402</span><span class="m-flag" style="color:var(--pri-urgent)">▲</span><span class="m-av av-2">RK</span></div>
+              </div>
+              <div class="m-card">
+                <div class="m-card-t">Rate limit the public API</div>
+                <div class="m-card-m"><span class="m-id">ENG-398</span><span class="m-flag" style="color:var(--pri-high)">▲</span><span class="m-av av-3">SP</span></div>
+              </div>
+            </div>
+
+            <div class="m-col">
+              <div class="m-colhead"><span class="m-dot" style="border-color:var(--st-active)"></span><span class="m-gname">In Review</span><span class="m-gcount">2</span><span class="m-gadd">+</span></div>
+              <div class="m-drop"></div>
+              <div class="m-card">
+                <div class="m-card-t">Webhook signature verification</div>
+                <div class="m-card-m"><span class="m-id">ENG-390</span><span class="m-flag" style="color:var(--pri-normal)">▲</span><span class="m-av av-4">JD</span></div>
+              </div>
+            </div>
+
+            <div class="m-col">
+              <div class="m-colhead"><span class="m-dot done"></span><span class="m-gname">Done</span><span class="m-gcount">21</span><span class="m-gadd">+</span></div>
+              <div class="m-card" style="opacity:.55">
+                <div class="m-card-t">Seed script for demo workspace</div>
+                <div class="m-card-m"><span class="m-id">ENG-380</span><span class="m-av av-1">AM</span></div>
+              </div>
+            </div>
+
+          </div>
+        </div></div>
+      </div>
+      <p class="caption"><b>Drag state:</b> the lifted card takes a brass border, a real shadow, and a sub-degree rotation; the target column shows a dashed placeholder at the drop index. Columns are keyboard-reachable too — <kbd>⇧→</kbd> moves the selected task one column right, which is faster than dragging and works on the whole selection.</p>
+    </section>
+
+    <!-- ============ DETAIL ============ -->
+    <section id="detail">
+      <div class="sec-head"><span class="sec-key">07 / Screen</span><h2>Task detail</h2></div>
+
+      <p>Two columns inside the panel: the narrative on the left (title, description, checklists, comments) and the structured fields on the right. The split matters — properties stay in a fixed, scannable position while the conversation grows.</p>
+
+      <div class="mock">
+        <div class="mock-scroll"><div class="mock-inner">
+          <div class="m-head">
+            <div class="m-crumb">Sprint 24<i>›</i><b>ENG-402</b></div>
+            <div class="m-head-right"><span class="m-kbd">⌘⏎ expand</span><span class="m-kbd">esc</span></div>
+          </div>
+          <div class="m-panel">
+
+            <div class="m-pmain">
+              <h3 class="m-ptitle">Fix auth redirect loop on SSO callback</h3>
+              <div class="m-pmeta">ENG-402 · opened by AM · 3 days ago · 2h 40m tracked</div>
+              <p class="m-pbody">Users on the SAML path bounce between <span style="color:var(--a-t1)">/auth/callback</span> and the login page when the session cookie is set before the workspace claim resolves. Reproduces on Safari only.</p>
+
+              <div class="m-sec">Checklist · 2 of 3</div>
+              <div class="m-check on"><span class="m-box on"></span>Reproduce with a clean profile</div>
+              <div class="m-check on"><span class="m-box on"></span>Add a failing integration test</div>
+              <div class="m-check"><span class="m-box"></span>Resolve the claim before setting the cookie</div>
+
+              <div class="m-sec" style="margin-top:16px">Activity</div>
+              <div class="m-cmt">
+                <span class="m-av av-4">JD</span>
+                <div class="m-cmt-b"><b>Jordan</b><span class="ts">2h ago</span><br>Confirmed on 17.4. <span class="m-mention">@riley</span> can you take the cookie ordering?</div>
+              </div>
+              <div class="m-cmt">
+                <span class="m-av av-2">RK</span>
+                <div class="m-cmt-b"><b>Riley</b><span class="ts">41m ago</span><br>On it — the claim resolver is async, that's the bug.</div>
+              </div>
+              <div class="m-cmt">
+                <span class="m-av av-1" style="background:var(--a-line2);color:var(--a-t3)">⚙</span>
+                <div class="m-cmt-b" style="color:var(--a-t3)">Automation moved this to <span style="color:var(--st-active)">In Progress</span><span class="ts">40m ago</span></div>
+              </div>
+            </div>
+
+            <div class="m-pside">
+              <div class="m-sec">Properties</div>
+              <div class="m-fld"><span class="lbl">Status</span><span class="val"><span class="m-dot active"></span>In Progress</span></div>
+              <div class="m-fld"><span class="lbl">Assignees</span><span class="val"><span class="m-stack"><span class="m-av av-2">RK</span><span class="m-av av-4">JD</span></span></span></div>
+              <div class="m-fld"><span class="lbl">Priority</span><span class="val"><span class="m-flag" style="color:var(--pri-urgent)">▲</span>Urgent</span></div>
+              <div class="m-fld"><span class="lbl">Due</span><span class="val" style="color:var(--pri-urgent)">Fri 14 Aug</span></div>
+              <div class="m-fld"><span class="lbl">Estimate</span><span class="val">4h</span></div>
+              <div class="m-fld"><span class="lbl">Points</span><span class="val">3</span></div>
+              <div class="m-fld"><span class="lbl">Tags</span><span class="val"><span class="m-tag">auth</span></span></div>
+
+              <div class="m-sec" style="margin-top:14px">Custom</div>
+              <div class="m-fld"><span class="lbl">Severity</span><span class="val"><span class="m-tag" style="color:var(--pri-urgent);border-color:var(--pri-urgent)">S1</span></span></div>
+              <div class="m-fld"><span class="lbl">Env</span><span class="val">Production</span></div>
+              <div class="m-fld"><span class="lbl">Customer</span><span class="val" style="color:var(--a-accent)">Acme Corp</span></div>
+
+              <div class="m-sec" style="margin-top:14px">Blocking</div>
+              <div class="m-fld"><span class="lbl" style="color:var(--pri-urgent)">blocks</span><span class="val"><span class="m-id">ENG-420</span></span></div>
+            </div>
+
+          </div>
+        </div></div>
+      </div>
+      <p class="caption"><b>Note the third activity entry.</b> Automation-driven changes are attributed to the automation with a gear avatar, never to the user who tripped it. Get this wrong and people stop trusting the history — which is the one thing the activity log exists to provide.</p>
+
+      <ul>
+        <li><strong>Custom fields are grouped separately from built-ins</strong>, and only fields scoped to this task's type appear. A Bug shows Severity and Env; a Feature never renders them.</li>
+        <li><strong>Every property row is a keyboard target.</strong> <kbd>S</kbd> opens status, <kbd>A</kbd> assignees, <kbd>D</kbd> due date — the same keys as in the list, so the muscle memory transfers.</li>
+        <li><strong>The description is a collaborative document</strong>, sharing the same editor and CRDT as Docs. One editor implementation, three surfaces.</li>
+      </ul>
+    </section>
+
+    <!-- ============ PALETTE ============ -->
+    <section id="palette">
+      <div class="sec-head"><span class="sec-key">08 / Screen</span><h2>Command palette</h2></div>
+
+      <p>In a keyboard-first product this isn't a convenience feature, it's the primary navigation. It has to do three jobs in one input: <strong>go somewhere</strong>, <strong>create something</strong>, and <strong>act on the current selection</strong>. Results are ranked by recency and frecency, not alphabetically.</p>
+
+      <div class="mock" style="padding:26px 20px;">
+        <div class="m-pal">
+          <div class="m-palin"><span style="color:var(--a-t3)">›</span><span class="q">auth</span><span class="cur"></span></div>
+
+          <div class="m-palgrp">Tasks</div>
+          <div class="m-palrow on"><span class="ic">◐</span>Fix auth redirect loop on SSO callback<span class="sc">ENG-402</span></div>
+          <div class="m-palrow"><span class="ic">○</span>Auth service rate limits<span class="sc">ENG-388</span></div>
+
+          <div class="m-palgrp">Navigate</div>
+          <div class="m-palrow"><span class="ic">▤</span>Engineering › Auth<span class="sc">list</span></div>
+          <div class="m-palrow"><span class="ic">▦</span>Auth architecture<span class="sc">doc</span></div>
+
+          <div class="m-palgrp">Actions on selection</div>
+          <div class="m-palrow"><span class="ic">+</span>Create task in Auth<span class="sc">C</span></div>
+          <div class="m-palrow"><span class="ic">→</span>Move to list…<span class="sc">M</span></div>
+          <div class="m-palrow"><span class="ic">◷</span>Start timer<span class="sc">T</span></div>
+
+          <div class="m-palfoot"><span>↑↓ navigate</span><span>⏎ open</span><span>⇥ actions</span><span>esc close</span></div>
+        </div>
+      </div>
+      <p class="caption"><b>One input, three modes.</b> Bare text searches everything; <kbd>&gt;</kbd> restricts to commands; <kbd>#</kbd> jumps to a task by key. When rows are selected in the list behind it, the actions group operates on the whole selection and says so.</p>
+    </section>
+
+    <!-- ============ KEYS ============ -->
+    <section id="keys">
+      <div class="sec-head"><span class="sec-key">09 / Input</span><h2>Keyboard map</h2></div>
+
+      <p>Ship this complete in the first release. Retrofitting shortcuts onto a mouse-designed UI produces awkward bindings and half-covered surfaces; designing them first shapes the components correctly.</p>
+
+      <h4>Global</h4>
+      <div class="kb">
+        <div class="kb-i"><kbd>⌘K</kbd> Command palette</div>
+        <div class="kb-i"><kbd>⌘\</kbd> Toggle sidebar</div>
+        <div class="kb-i"><kbd>⌘.</kbd> Toggle detail panel</div>
+        <div class="kb-i"><kbd>?</kbd> Shortcut sheet</div>
+        <div class="kb-i"><kbd>G</kbd> <kbd>H</kbd> Go home</div>
+        <div class="kb-i"><kbd>G</kbd> <kbd>M</kbd> Go to my work</div>
+        <div class="kb-i"><kbd>G</kbd> <kbd>I</kbd> Go to inbox</div>
+        <div class="kb-i"><kbd>⌘Z</kbd> Undo last mutation</div>
+      </div>
+
+      <h4>In a view</h4>
+      <div class="kb">
+        <div class="kb-i"><kbd>J</kbd> <kbd>K</kbd> Move cursor</div>
+        <div class="kb-i"><kbd>X</kbd> Select row</div>
+        <div class="kb-i"><kbd>⇧J</kbd> <kbd>⇧K</kbd> Extend selection</div>
+        <div class="kb-i"><kbd>⏎</kbd> Open in panel</div>
+        <div class="kb-i"><kbd>C</kbd> Create task inline</div>
+        <div class="kb-i"><kbd>/</kbd> Search within view</div>
+        <div class="kb-i"><kbd>F</kbd> Add filter</div>
+        <div class="kb-i"><kbd>1</kbd>–<kbd>9</kbd> Jump to view tab</div>
+      </div>
+
+      <h4>On a task or selection</h4>
+      <div class="kb">
+        <div class="kb-i"><kbd>S</kbd> Set status</div>
+        <div class="kb-i"><kbd>A</kbd> Set assignees</div>
+        <div class="kb-i"><kbd>D</kbd> Set due date</div>
+        <div class="kb-i"><kbd>P</kbd> Set priority</div>
+        <div class="kb-i"><kbd>L</kbd> Add tag</div>
+        <div class="kb-i"><kbd>M</kbd> Move to list</div>
+        <div class="kb-i"><kbd>T</kbd> Start / stop timer</div>
+        <div class="kb-i"><kbd>⇧→</kbd> Advance status</div>
+        <div class="kb-i"><kbd>E</kbd> Archive</div>
+        <div class="kb-i"><kbd>⌘C</kbd> Copy task link</div>
+      </div>
+
+      <div class="note">
+        <span class="note-label">Undo is the safety net that lets everything else be fast</span>
+        <p>Because writes are optimistic and destructive keys are single-letter, <kbd>⌘Z</kbd> must reverse <em>any</em> mutation — including bulk ones — for at least the last 20 actions in the session. Build the mutation layer as a stack of invertible operations from the start; you cannot add real undo later.</p>
+      </div>
+    </section>
+
+    <!-- ============ LIGHT ============ -->
+    <section id="light">
+      <div class="sec-head"><span class="sec-key">10 / Theme</span><h2>Light theme</h2></div>
+
+      <p>Dark-first does not mean dark-only — roughly half of any team will switch, and a light theme that was clearly an afterthought reads as unfinished. Same structure, same density, matched contrast. The accent darkens to <code>#B87514</code>, the selected row uses a pale brass wash instead of a lifted grey, and hairlines get lighter rather than darker so the grid stays quiet.</p>
+
+      <div class="mock light">
+        <div class="mock-scroll"><div class="mock-inner">
+          <div class="m-head">
+            <div class="m-crumb">Engineering<i>›</i>Sprint 24<i>›</i><b>All tasks</b></div>
+            <div class="m-head-right"><span class="m-kbd">⌘K</span><div class="m-av av-2">RK</div></div>
+          </div>
+          <div class="m-group">
+            <span class="m-gcaret">▾</span>
+            <span class="m-gname" style="color:var(--st-active)">In Progress</span>
+            <span class="m-gcount">4</span>
+            <span class="m-gadd">+</span>
+          </div>
+          <div class="m-row sel">
+            <span class="m-chk"></span><span class="m-dot active"></span>
+            <span class="m-id">ENG-402</span>
+            <span class="m-title">Fix auth redirect loop on SSO callback<span class="sub">3 subtasks</span></span>
+            <span class="m-tag">auth</span>
+            <span class="m-flag" style="color:var(--pri-urgent)">▲</span>
+            <span class="m-date over">Fri 14</span>
+            <span class="m-stack"><span class="m-av av-2">RK</span><span class="m-av av-4">JD</span></span>
+          </div>
+          <div class="m-row">
+            <span class="m-chk"></span><span class="m-dot active"></span>
+            <span class="m-id">ENG-398</span>
+            <span class="m-title">Rate limit the public API</span>
+            <span class="m-tag">platform</span>
+            <span class="m-flag" style="color:var(--pri-high)">▲</span>
+            <span class="m-date">Mon 17</span>
+            <span class="m-stack"><span class="m-av av-3">SP</span></span>
+          </div>
+          <div class="m-row">
+            <span class="m-chk"></span><span class="m-dot"></span>
+            <span class="m-id">ENG-417</span>
+            <span class="m-title">Fractional index helper for drag reorder</span>
+            <span class="m-tag">core</span>
+            <span class="m-flag" style="color:var(--pri-low)">▲</span>
+            <span class="m-date none">—</span>
+            <span class="m-stack"></span>
+          </div>
+        </div></div>
+      </div>
+      <p class="caption">Implement both as one token set with two value maps. Follow the OS by default, allow an explicit override, and persist the choice server-side so it follows the user across devices.</p>
+    </section>
+
+    <!-- ============ STATES ============ -->
+    <section id="states">
+      <div class="sec-head"><span class="sec-key">11 / States</span><h2>The states nobody designs until they're a bug</h2></div>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>State</th><th>Treatment</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Loading</td><td>Row-shaped skeletons at the correct height so nothing shifts when data lands. Never a centered spinner — navigation between views the user has already visited renders from cache instantly and revalidates behind the scenes.</td></tr>
+            <tr><td class="k">Empty list</td><td>One line of text and the inline "+" row already focused. No illustration. The fastest empty state is one you can immediately type into.</td></tr>
+            <tr><td class="k">Empty because of filters</td><td>Distinct from a genuinely empty list: "No tasks match 3 filters · <u>Clear</u>". Confusing these two is a top-five support complaint in this category.</td></tr>
+            <tr><td class="k">Write failed</td><td>The optimistic change rolls back with a brief brass flash on the affected cell and an inline toast: what failed, why, and <u>Retry</u>. No modal, no lost keystrokes.</td></tr>
+            <tr><td class="k">Offline</td><td>A thin bar at the bottom of the sidebar: "Offline · 3 changes queued". Reads keep serving from cache, writes queue, and reconnection replays them in order.</td></tr>
+            <tr><td class="k">Conflict</td><td>Someone else changed the same field while you were editing: keep your value, show a subtle marker on the cell, and let it be inspected in history. Never a blocking "resolve conflict" dialog.</td></tr>
+            <tr><td class="k">Presence</td><td>Avatar stack in the view footer for viewers; a coloured caret with a name label in the editor for co-editing. Presence is ambient — it never moves the layout.</td></tr>
+            <tr><td class="k">Permission denied</td><td>Hide what the user cannot see rather than showing a locked row, but make a directly-linked inaccessible task explicit: "You don't have access to this task · Request access".</td></tr>
+            <tr><td class="k">Archived / trashed</td><td>Archived items are excluded from views but reachable by key and restorable. Trash keeps items for 30 days with a visible countdown.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ RESPONSIVE ============ -->
+    <section id="responsive">
+      <div class="sec-head"><span class="sec-key">12 / Reach</span><h2>Responsive &amp; accessible</h2></div>
+
+      <h3>Breakpoints</h3>
+      <ul>
+        <li><strong>≥1280px</strong> — full three-region shell, detail panel opens beside the list.</li>
+        <li><strong>1024–1279px</strong> — detail panel overlays the main column instead of splitting it.</li>
+        <li><strong>768–1023px</strong> — sidebar collapses to the icon rail; it expands as an overlay on demand.</li>
+        <li><strong>&lt;768px</strong> — a genuinely separate layout, not a squeezed desktop. Single column, list and task as full pages, a bottom tab bar for Home / My Work / Inbox / Search, and swipe-to-complete on rows. Board becomes horizontally paged. <strong>Do not attempt Gantt or Table on a phone</strong> — link out to the list instead.</li>
+      </ul>
+
+      <h3>Accessibility, in a dense keyboard UI specifically</h3>
+      <ul>
+        <li><strong>Contrast:</strong> body text ≥ 4.5:1 and non-text state indicators ≥ 3:1 in both themes. The status dot and the priority flag pair color with <em>shape</em> — a filled versus hollow dot, a flag versus a dash — so the UI survives colorblindness and greyscale.</li>
+        <li><strong>Focus is always visible:</strong> a 2px brass ring on every interactive element, plus a persistent row cursor distinct from selection. Keyboard users must never wonder where they are.</li>
+        <li><strong>The list is a real grid:</strong> <code>role="grid"</code> with row and cell semantics, <code>aria-selected</code> on rows, and a live region announcing "3 tasks selected" and "Status set to In Progress" so bulk edits are perceivable.</li>
+        <li><strong>Every drag has a keyboard equivalent</strong> — reordering, moving between columns, and resizing — because drag-only interactions are the most common accessibility failure in this category.</li>
+        <li><strong>Shortcuts are remappable</strong>, and single-letter keys never fire while a text input has focus.</li>
+        <li><strong>Respect <code>prefers-reduced-motion</code>:</strong> panel slides and drag animations become instant state changes.</li>
+      </ul>
+    </section>
+
+    <!-- ============ COMPONENTS ============ -->
+    <section id="components">
+      <div class="sec-head"><span class="sec-key">13 / Components</span><h2>Source the primitive layer from 21st.dev</h2></div>
+
+      <p class="lede">Do not hand-build menus, date pickers, and command palettes. <strong>21st.dev</strong> is a community registry of 12,000+ React components built on <strong>Tailwind CSS</strong> and <strong>Radix primitives</strong>, following shadcn/ui conventions. Components install with a single command and the code lands <em>in our repository</em> — we own it, edit it, and ship it as part of the project rather than carrying a runtime dependency.</p>
+
+      <pre><i># once, at repo root — points the registry at packages/ui</i>
+npx shadcn@latest init
+
+<i># per component</i>
+npx shadcn@latest add <b>"https://21st.dev/r/&lt;author&gt;/&lt;component&gt;"</b></pre>
+
+      <h3>Why this registry, specifically</h3>
+      <ul>
+        <li><strong>Copy-in, not import.</strong> The shadcn model puts real source in <code>packages/ui</code>. For an open-source project that's the right shape: contributors can read and change every pixel, there's no version lock, and no upstream release can break the app.</li>
+        <li><strong>Radix underneath.</strong> Focus trapping, roving tabindex, ARIA roles, and escape/dismiss behavior are already correct. That delivers a large share of <a href="#responsive">the accessibility requirements</a> for free — and in a keyboard-first product, those are the requirements that matter most.</li>
+        <li><strong>Tailwind CSS variables.</strong> The components theme through CSS custom properties, so <a href="#color">our token set</a> drops straight in without forking anything.</li>
+      </ul>
+
+      <h3>What to take, and what to leave</h3>
+      <p>Roughly two thousand of the registry's entries are marketing blocks — animated heroes, gradient backgrounds, pricing tables. Those are for a different product surface and none of them belong in a dense application shell. Take the interaction primitives, which are tedious to build and easy to get subtly wrong:</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Take</th><th>Used by</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Command / cmdk</td><td>The <a href="#palette">command palette</a> — fuzzy match, grouped results, keyboard loop.</td></tr>
+            <tr><td class="k">Dropdown · Context menu · Popover</td><td>Status, priority, assignee, and tag pickers; right-click on any row.</td></tr>
+            <tr><td class="k">Combobox / multi-select</td><td>Assignee and tag inputs, and every filter value field.</td></tr>
+            <tr><td class="k">Dialog · Sheet</td><td>The task detail slide-over, settings, confirmation prompts.</td></tr>
+            <tr><td class="k">Calendar / date picker</td><td>Due and start dates, and the Calendar view's month grid.</td></tr>
+            <tr><td class="k">Toast (Sonner)</td><td>Failed-write rollback with inline retry, undo confirmations.</td></tr>
+            <tr><td class="k">Resizable panels</td><td>Sidebar and detail panel widths, persisted per user.</td></tr>
+            <tr><td class="k">Tooltip · Avatar · Checkbox · Switch · Tabs · Scroll-area</td><td>Everywhere. The unglamorous half of the component inventory.</td></tr>
+            <tr><td class="k">Tree / collapsible</td><td>The sidebar container tree.</td></tr>
+            <tr><td class="k">Data table primitives</td><td>Table view — pair with TanStack Virtual for row recycling.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Leave</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Marketing blocks, hero sections, gradient backgrounds</td><td>Wrong product surface. Save them for the eventual landing page, not the app.</td></tr>
+            <tr><td class="k">Anything shipping its own brand colors or webfont</td><td>Fights the token system and drags in a second typeface.</td></tr>
+            <tr><td class="k">Heavy Framer Motion decoration</td><td>Violates “chrome earns its pixels”, and animated defaults rarely respect <code>prefers-reduced-motion</code>.</td></tr>
+            <tr><td class="k">Components with their own dark-mode logic</td><td>We have exactly one token set with two value maps. A second theming mechanism is a bug waiting to happen.</td></tr>
+            <tr><td class="k">The task row, board card, and filter bar</td><td>These <em>are</em> the product. They're built from our primitives, never imported whole.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The discipline that keeps it coherent</h3>
+      <ol>
+        <li><strong>Re-tokenize on import, once.</strong> shadcn's defaults are built for comfortable density — <code>h-10</code> buttons, <code>py-2</code> menu items, <code>rounded-lg</code> everywhere. Our targets are a 31px row and a 4px radius. Map the CSS variables to our tokens and override the size scale centrally in <code>packages/ui/tokens.css</code>, not per usage site, or the density drifts component by component until the app looks like every other shadcn project.</li>
+        <li><strong>Everything lands in <code>packages/ui/src/primitives/</code>.</strong> Screens import from <code>@arbor/ui</code> and never from the registry directly. One indirection, and re-skinning the whole app stays a single-package change.</li>
+        <li><strong>One component per PR</strong>, with before/after screenshots in both themes. It's the only review that reliably catches density drift.</li>
+        <li><strong>Record the provenance.</strong> Registry components are community-published and carry their own licenses. On every import, append the source URL, author, and license to <code>packages/ui/ATTRIBUTIONS.md</code>. In an AGPL repository this isn't bookkeeping — an unattributable component is one a downstream adopter can't safely ship.</li>
+        <li><strong>Reject anything you'd rewrite more than half of.</strong> Density is the differentiator. A component that fights the 31px row costs more to tame than to write.</li>
+      </ol>
+
+      <div class="note">
+        <span class="note-label">MCP status</span>
+        <p>The 21st MCP server was found configured under two of your other projects and is now added to this one at <strong>local scope</strong> — it lives in <code>~/.claude.json</code>, so the API key stays out of the repository. Health check passes. <strong>Its tools load on the next Claude Code restart</strong>; after that, components can be searched and inserted conversationally instead of by hand.</p>
+        <p>When the repo goes public, commit a <code>.mcp.json.example</code> referencing <code>${TWENTYFIRST_API_KEY}</code> and never a real key — an API key in git history outlives any commit that removes it.</p>
+      </div>
+    </section>
+
+    <!-- ============ AWS ============ -->
+    <section id="aws">
+      <div class="sec-head"><span class="sec-key">14 / Infra</span><h2>AWS architecture</h2></div>
+
+      <p class="lede">One rule governs every choice here: <strong>AWS is the reference production deployment, not a dependency</strong>. An open-source project that only runs on one cloud gets very few contributors and almost no self-hosters. Every managed service below sits behind an interface with a portable default.</p>
+
+      <pre>            <i>Route 53 → CloudFront ─── S3  (static assets, uploads)</i>
+                            <b>│</b>
+                        <i>ALB (HTTPS + WebSocket upgrade)</i>
+                            <b>│</b>
+        <b>┌───────────────────┼───────────────────┐</b>
+        <b>│</b>                   <b>│</b>                   <b>│</b>
+   <b>ECS Fargate</b>         <b>ECS Fargate</b>         <b>ECS Fargate</b>
+   <b>web</b>                 <b>realtime</b>            <b>worker</b>
+   Next.js SSR         WS gateway          automations,
+   + API routes        + Yjs sync          digests, index
+        <b>│</b>                   <b>│</b>                   <b>│</b>
+        <b>└───────────────────┼───────────────────┘</b>
+                            <b>│</b>
+        <b>┌───────────────┬───┴───────┬───────────────┐</b>
+   <b>RDS Postgres</b>   <b>ElastiCache</b>    <b>SQS</b> + <b>EventBridge</b>   <b>SES</b>
+   Multi-AZ        Redis           jobs + schedules      email
+   pgvector        pub/sub,
+                   presence, locks</pre>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Concern</th><th>AWS</th><th>Why / portable default</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Compute</td><td>ECS Fargate behind an ALB</td><td><strong>Not Lambda.</strong> WebSockets need long-lived connections, and API Gateway's WebSocket API turns every message into an invocation — awkward and expensive at collaboration volume. Fargate also means the same container runs locally. Fall back: any Docker host.</td></tr>
+            <tr><td class="k">Three services, not one</td><td>web · realtime · worker</td><td>They scale on completely different signals: web on request rate, realtime on concurrent connections, worker on queue depth. One container for all three means paying for the worst case of each.</td></tr>
+            <tr><td class="k">Database</td><td>RDS Postgres Multi-AZ (or Aurora Serverless v2)</td><td>Start with RDS — cheaper and simpler until load is real. Enable <code>pgvector</code> now for the eventual semantic search; it costs nothing unused.</td></tr>
+            <tr><td class="k">Realtime fan-out</td><td>ElastiCache Redis pub/sub</td><td>With several realtime tasks running, a change on one must reach subscribers on the others. Also holds presence and idempotency keys. Fall back: a single Redis container.</td></tr>
+            <tr><td class="k">Files</td><td>S3 + CloudFront, presigned URLs</td><td>Use the <strong>S3 API</strong>, not AWS-specific features, so MinIO, R2, and Backblaze all work unchanged for self-hosters.</td></tr>
+            <tr><td class="k">Background work</td><td>SQS + EventBridge Scheduler</td><td>Automation runs, access-index rebuilds, notification digests, recurring tasks, reminders. Queue with a visibility timeout and a DLQ — automation retries must be idempotent.</td></tr>
+            <tr><td class="k">Email</td><td>SES</td><td>Behind a mailer interface. Self-hosters point it at plain SMTP.</td></tr>
+            <tr><td class="k">Auth</td><td>In-app sessions in RDS · Cognito only for enterprise SSO</td><td><strong>Not a third-party auth SaaS.</strong> Sessions, invites, and roles are rows in our own Postgres, so a self-hoster needs nothing external and the whole flow stays readable in the repo. Cognito, Google Workspace, and Okta plug in later as optional SAML/OIDC providers for the enterprise tier.</td></tr>
+            <tr><td class="k">AI / LLM</td><td>Amazon Bedrock</td><td>Keeps model traffic inside the AWS account and off a separate vendor's bill and data policy. Call it through one provider interface so Google Vertex AI or a direct API key are drop-in alternatives — never hardcode an SDK into feature code.</td></tr>
+            <tr><td class="k">Search</td><td>Postgres FTS</td><td>Add OpenSearch only when relevance, not latency, is the complaint. Never make it required to boot.</td></tr>
+            <tr><td class="k">Secrets</td><td>Secrets Manager / SSM</td><td>Read through the same env-var interface that a <code>.env</code> file satisfies locally.</td></tr>
+            <tr><td class="k">IaC</td><td>Terraform module in <code>infra/</code></td><td>Terraform over CDK for the public repo — more contributors can read it, and it ports to other clouds. Ship it as a module people can <code>terraform apply</code> into their own account.</td></tr>
+            <tr><td class="k">CI/CD</td><td>GitHub Actions → ECR → ECS rolling deploy</td><td>Migrations run as a one-off ECS task before the rollout, and must be backward compatible for one release so a rollback doesn't strand the database.</td></tr>
+            <tr><td class="k">Observability</td><td>CloudWatch + OpenTelemetry</td><td>Instrument with OTel so self-hosters can point at whatever they already run.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="note-label">Cost shape</span>
+        <p>A small deployment — two Fargate tasks per service, one <code>db.t4g.medium</code>, a <code>cache.t4g.micro</code>, an ALB — lands in the low hundreds per month, and the ALB and NAT gateway are a surprisingly large slice. Put NAT behind VPC endpoints for S3 and ECR early; it's the single easiest AWS bill mistake to avoid in this shape.</p>
+      </div>
+
+      <h3>Nothing sits on a third-party platform</h3>
+      <p>Worth stating plainly, because it's easy to drift: <strong>every backend and data service in this project is AWS-managed or self-hosted</strong> — no application PaaS, no hosted database vendor, no auth SaaS, no managed queue product outside the account. The app runs in containers you control, the data lives in your RDS instance, and sessions live in your own tables. That keeps the AWS bill the only infrastructure bill, keeps the compliance story to one provider, and — the reason that matters most here — means a self-hoster can run the entire thing without an account anywhere.</p>
+
+      <h3>If you'd rather run on Google Cloud</h3>
+      <p>The architecture is deliberately generic, so the whole thing ports. Two containers and a Postgres instance is not an AWS-shaped design; it's a portable one that happens to be deployed on AWS first.</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Capability</th><th>AWS (primary)</th><th>Google Cloud</th><th>Self-host</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Containers</td><td>ECS Fargate + ALB</td><td>Cloud Run + Cloud Load Balancing</td><td>Docker Compose</td></tr>
+            <tr><td class="k">Database</td><td>RDS Postgres</td><td>Cloud SQL for Postgres</td><td>postgres:17 container</td></tr>
+            <tr><td class="k">Cache / pub-sub</td><td>ElastiCache Redis</td><td>Memorystore Redis</td><td>redis container</td></tr>
+            <tr><td class="k">Object storage</td><td>S3 + CloudFront</td><td>Cloud Storage + Cloud CDN</td><td>MinIO (S3 API)</td></tr>
+            <tr><td class="k">Queue</td><td>SQS</td><td>Pub/Sub or Cloud Tasks</td><td>Redis-backed queue</td></tr>
+            <tr><td class="k">Scheduler</td><td>EventBridge Scheduler</td><td>Cloud Scheduler</td><td>node-cron in the worker</td></tr>
+            <tr><td class="k">Email</td><td>SES</td><td>SendGrid / Workspace SMTP</td><td>Any SMTP host</td></tr>
+            <tr><td class="k">Secrets</td><td>Secrets Manager</td><td>Secret Manager</td><td><code>.env</code></td></tr>
+            <tr><td class="k">LLM</td><td>Bedrock</td><td>Vertex AI</td><td>Direct API key</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Only two rules keep that table true, and both are cheap now and expensive later: <strong>use the S3 API rather than S3-specific features</strong>, and <strong>put every managed service behind a small interface</strong> — <code>Storage</code>, <code>Queue</code>, <code>Mailer</code>, <code>LLM</code> — with the local Docker implementation written first. If the Compose stack can run the full test suite, the abstraction is real; if it can't, you have an AWS-only app with extra indirection.</p>
+
+      <div class="note">
+        <span class="note-label">Cognito, specifically</span>
+        <p>Resist making Cognito the primary identity store. It's genuinely awkward to work with, it can't be self-hosted, and putting it on the critical path means nobody can run the project without an AWS account — which forfeits most of the benefit of open-sourcing it. Own the user table; treat every cloud identity provider as an optional federated login on top.</p>
+      </div>
+    </section>
+
+    <!-- ============ OSS ============ -->
+    <section id="oss">
+      <div class="sec-head"><span class="sec-key">15 / Open source</span><h2>Building it in the open</h2></div>
+
+      <h3>License</h3>
+      <p>Recommend <strong>AGPL-3.0</strong> for the server, with the client SDK and any shared packages under <strong>Apache-2.0</strong>. AGPL keeps the code genuinely open and self-hostable while making it impractical for a larger company to run a closed hosted version of your work — the standard posture for open-source products in this category, and the one that preserves the option of selling hosting yourself later. If adoption matters more to you than that protection, MIT is the honest alternative; just decide now, because relicensing after outside contributions arrive requires tracking down every contributor.</p>
+      <p>Whichever you pick, add a <strong>DCO sign-off</strong> or a lightweight CLA from the first PR. Retrofitting contributor agreements is genuinely painful.</p>
+
+      <h3>Repository shape</h3>
+      <pre>arbor/
+├─ apps/
+│  ├─ web/          <i>Next.js — UI + API routes</i>
+│  ├─ realtime/     <i>WebSocket gateway + Yjs persistence</i>
+│  └─ worker/       <i>automations, digests, scheduled jobs</i>
+├─ packages/
+│  ├─ core/         <i><b>view compiler, permission resolver, field engine</b></i>
+│  ├─ db/           <i>Drizzle schema + migrations</i>
+│  ├─ ui/           <i>tokens, 21st.dev primitives, task row, ATTRIBUTIONS.md</i>
+│  └─ sdk/          <i>typed API client — your app uses it too</i>
+├─ infra/
+│  ├─ terraform/    <i>the AWS reference deployment</i>
+│  └─ docker/       <i>compose.yml — the self-host path</i>
+└─ docs/
+   ├─ decisions/    <i>ADRs, numbered, never deleted</i>
+   └─ self-hosting/</pre>
+
+      <p><code>packages/core</code> is the important one. Keeping the view compiler, permission resolver, and field engine framework-free and fully unit-tested means the three parts of the system that are hardest to get right are also the easiest for a stranger to contribute to — and they stay honest, because they can't quietly reach for a request object.</p>
+
+      <h3>What earns contributors</h3>
+      <ul>
+        <li><strong>A README that shows the product in the first screen.</strong> A short screen recording of the list view, then the one-line quickstart. Nobody reads paragraph three.</li>
+        <li><strong><code>docker compose up</code> must genuinely work</strong> on a clean machine, with a seeded demo workspace so the first launch shows a populated board rather than an empty shell. Test it in CI on every PR — a broken quickstart is the most expensive bug an open-source project can have.</li>
+        <li><strong>A hosted demo</strong> that resets nightly, with no signup. Evaluation before commitment.</li>
+        <li><strong>Real <code>good-first-issue</code>s</strong> — new view renderers, custom field types, and keyboard shortcuts are perfectly shaped: self-contained, visible, and satisfying.</li>
+        <li><strong>ADRs in <code>docs/decisions</code>.</strong> Write down why tasks aren't CRDTs, why the access index is materialized, why Fargate over Lambda. It stops the same debate from recurring and shows outsiders how you think.</li>
+        <li><strong>An architecture diagram in the docs</strong>, kept current. The teardown you already have is most of it.</li>
+      </ul>
+
+      <div class="note">
+        <span class="note-label">One thing to decide early</span>
+        <p>Are enterprise features (SSO, audit logs, custom roles) <strong>in the open repo</strong> or in a separate licensed directory? Both are legitimate — many projects use an <code>ee/</code> folder under a commercial license — but choosing after those features exist means an awkward, public relicensing. Decide it before you write the first line of SSO.</p>
+      </div>
+    </section>
+
+    <!-- ============ NEXT ============ -->
+    <section id="next">
+      <div class="sec-head"><span class="sec-key">16 / Next</span><h2>What to build first</h2></div>
+
+      <p>The design above is the target. The build order that reaches it without dead ends:</p>
+
+      <div class="phase">
+        <div class="phase-n">01</div>
+        <div>
+          <h3>Tokens and primitives, in isolation</h3>
+          <p>Both themes as one token set, then <code>shadcn init</code> pointed at <code>packages/ui</code> and the <a href="#components">21st.dev primitives</a> pulled in and re-tokenized to our density. On top of them, build the pieces that are ours: task row, status dot, avatar stack, priority flag, date chip, tag, pill. Do it in a component workbench before any screen exists — every screen is made of these, and fixing them later means touching everything.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">02</div>
+        <div>
+          <h3>The shell and the routing model</h3>
+          <p>Sidebar tree, main header, view tabs, the detail panel as a real route. Get the URL structure right now — panel-as-route versus panel-as-modal is a decision that touches every screen afterwards.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">03</div>
+        <div>
+          <h3>List view against the view compiler</h3>
+          <p>Virtualized rows, grouping, inline edit, multi-select, and the filter bar bound to the view definition. This is the phase to over-invest in — Board, Table, and Calendar are renderers over the same machinery, and each costs days instead of weeks once this is right.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">04</div>
+        <div>
+          <h3>Keyboard layer and the mutation stack</h3>
+          <p>The command palette, the full shortcut map, and optimistic mutations as invertible operations with real undo. Doing this fourth rather than last is the difference between a keyboard-first product and a product with some shortcuts.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">05</div>
+        <div>
+          <h3>Docker compose, seed data, and the README</h3>
+          <p>Before the first public commit. The project's first impression is <code>docker compose up</code>, and it's much easier to keep that working from day one than to repair it at launch.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      Arbor — interface plan, v0.1 · August 2026<br>
+      Companion to the platform teardown. Palette, type, and layout specimens are live HTML, not images — inspect them.
+    </footer>
+
+  </main>
+</div>

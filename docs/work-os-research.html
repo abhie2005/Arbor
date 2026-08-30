@@ -1,0 +1,1098 @@
+<title>Anatomy of a Work OS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --bg:#EDEFF3;
+    --surface:#FFFFFF;
+    --surface-2:#F5F7FA;
+    --ink:#0E1522;
+    --ink-2:#39435A;
+    --muted:#6B7488;
+    --line:#D5DAE4;
+    --line-2:#BAC2D1;
+    --accent:#1E3FBF;
+    --accent-ink:#1E3FBF;
+    --accent-soft:#E2E8FB;
+    --g-todo:#6B7488;
+    --g-active:#1E3FBF;
+    --g-done:#0F6B4A;
+    --g-closed:#4A5468;
+    --g-warn:#8A5A00;
+    --g-crit:#A02A3D;
+    --chip-bg:#EAEDF3;
+
+    --f-display:"Bricolage Grotesque","Helvetica Neue",Arial,sans-serif;
+    --f-body:"Source Serif 4",Georgia,"Times New Roman",serif;
+    --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+
+    --measure:70ch;
+  }
+
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0A0E16;
+      --surface:#111725;
+      --surface-2:#161E2E;
+      --ink:#E7EBF3;
+      --ink-2:#B3BCCC;
+      --muted:#8892A4;
+      --line:#232C3E;
+      --line-2:#35415A;
+      --accent:#8DA4FF;
+      --accent-ink:#A9BAFF;
+      --accent-soft:#18213C;
+      --g-todo:#8892A4;
+      --g-active:#8DA4FF;
+      --g-done:#4FC08D;
+      --g-closed:#7C879B;
+      --g-warn:#D9A441;
+      --g-crit:#E8798B;
+      --chip-bg:#1A2233;
+    }
+  }
+
+  :root[data-theme="dark"]{
+    --bg:#0A0E16;
+    --surface:#111725;
+    --surface-2:#161E2E;
+    --ink:#E7EBF3;
+    --ink-2:#B3BCCC;
+    --muted:#8892A4;
+    --line:#232C3E;
+    --line-2:#35415A;
+    --accent:#8DA4FF;
+    --accent-ink:#A9BAFF;
+    --accent-soft:#18213C;
+    --g-todo:#8892A4;
+    --g-active:#8DA4FF;
+    --g-done:#4FC08D;
+    --g-closed:#7C879B;
+    --g-warn:#D9A441;
+    --g-crit:#E8798B;
+    --chip-bg:#1A2233;
+  }
+
+  *{box-sizing:border-box;}
+
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:var(--f-body);
+    font-size:17px;
+    line-height:1.62;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  a{color:var(--accent-ink);text-underline-offset:3px;text-decoration-thickness:1px;}
+  a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:2px;}
+
+  /* ---------- shell ---------- */
+  .shell{
+    max-width:1180px;
+    margin:0 auto;
+    padding:0 28px 120px;
+    display:grid;
+    grid-template-columns:minmax(0,1fr);
+    gap:0;
+  }
+  @media (min-width:1080px){
+    .shell{
+      grid-template-columns:196px minmax(0,1fr);
+      column-gap:64px;
+      align-items:start;
+    }
+    .masthead{grid-column:1 / -1;}
+  }
+
+  /* ---------- masthead ---------- */
+  .masthead{
+    border-bottom:1px solid var(--line-2);
+    padding:64px 0 34px;
+    margin-bottom:56px;
+  }
+  .eyebrow{
+    font-family:var(--f-mono);
+    font-size:11.5px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin:0 0 22px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:6px 18px;
+  }
+  .eyebrow b{color:var(--accent-ink);font-weight:500;}
+  h1{
+    font-family:var(--f-display);
+    font-weight:800;
+    font-size:clamp(2.6rem,6.2vw,4.4rem);
+    line-height:.98;
+    letter-spacing:-.028em;
+    margin:0 0 20px;
+    text-wrap:balance;
+    max-width:16ch;
+  }
+  .standfirst{
+    font-size:1.18rem;
+    line-height:1.55;
+    color:var(--ink-2);
+    max-width:62ch;
+    margin:0;
+  }
+  .masthead-meta{
+    margin-top:30px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:10px 34px;
+    font-family:var(--f-mono);
+    font-size:12px;
+    color:var(--muted);
+  }
+  .masthead-meta span b{color:var(--ink-2);font-weight:500;}
+
+  /* ---------- nav rail ---------- */
+  .rail{display:none;}
+  @media (min-width:1080px){
+    .rail{
+      display:block;
+      position:sticky;
+      top:32px;
+      font-family:var(--f-mono);
+      font-size:12px;
+      line-height:1.5;
+    }
+    .rail-title{
+      text-transform:uppercase;
+      letter-spacing:.14em;
+      color:var(--muted);
+      font-size:10.5px;
+      padding-bottom:10px;
+      border-bottom:1px solid var(--line);
+      margin-bottom:14px;
+    }
+    .rail a{
+      display:block;
+      color:var(--ink-2);
+      text-decoration:none;
+      padding:5px 0 5px 12px;
+      border-left:1px solid var(--line);
+    }
+    .rail a:hover{color:var(--accent-ink);border-left-color:var(--accent);}
+  }
+
+  /* ---------- sections ---------- */
+  main{min-width:0;}
+  section{margin-bottom:76px;scroll-margin-top:24px;}
+  .sec-head{
+    display:flex;
+    align-items:baseline;
+    gap:14px;
+    border-bottom:1px solid var(--line-2);
+    padding-bottom:10px;
+    margin-bottom:26px;
+  }
+  .sec-key{
+    font-family:var(--f-mono);
+    font-size:11px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--accent-ink);
+    white-space:nowrap;
+  }
+  h2{
+    font-family:var(--f-display);
+    font-weight:600;
+    font-size:clamp(1.5rem,3vw,2rem);
+    letter-spacing:-.02em;
+    line-height:1.12;
+    margin:0;
+    text-wrap:balance;
+  }
+  h3{
+    font-family:var(--f-display);
+    font-weight:600;
+    font-size:1.17rem;
+    letter-spacing:-.012em;
+    margin:36px 0 10px;
+    text-wrap:balance;
+  }
+  h4{
+    font-family:var(--f-mono);
+    font-weight:600;
+    font-size:12px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin:26px 0 8px;
+  }
+  p{max-width:var(--measure);margin:0 0 16px;}
+  ul,ol{max-width:var(--measure);padding-left:1.15em;margin:0 0 16px;}
+  li{margin-bottom:8px;}
+  li::marker{color:var(--muted);}
+  strong{font-weight:700;color:var(--ink);}
+  code{
+    font-family:var(--f-mono);
+    font-size:.83em;
+    background:var(--chip-bg);
+    padding:1px 5px;
+    border-radius:3px;
+    color:var(--ink-2);
+  }
+
+  .lede{font-size:1.06rem;color:var(--ink-2);}
+
+  /* ---------- hierarchy diagram ---------- */
+  .tree{
+    background:var(--surface);
+    border:1px solid var(--line);
+    padding:26px 26px 20px;
+    margin:0 0 22px;
+    overflow-x:auto;
+  }
+  .tree-inner{min-width:520px;}
+  .node{
+    display:grid;
+    grid-template-columns:minmax(190px,240px) minmax(0,1fr);
+    gap:18px;
+    align-items:baseline;
+    padding:7px 0;
+    border-top:1px solid var(--line);
+  }
+  .node:first-child{border-top:none;}
+  .node-name{
+    font-family:var(--f-mono);
+    font-size:13px;
+    font-weight:500;
+    color:var(--ink);
+    white-space:nowrap;
+  }
+  .node-name i{
+    font-style:normal;
+    color:var(--line-2);
+    letter-spacing:-1px;
+    margin-right:8px;
+  }
+  .node-note{font-size:14px;color:var(--ink-2);line-height:1.45;}
+  .node-note em{font-style:normal;color:var(--muted);}
+  .node.dim .node-name{color:var(--muted);}
+
+  /* ---------- chips ---------- */
+  .chip{
+    display:inline-block;
+    font-family:var(--f-mono);
+    font-size:10.5px;
+    letter-spacing:.06em;
+    text-transform:uppercase;
+    padding:2px 7px;
+    border:1px solid var(--line-2);
+    border-radius:99px;
+    color:var(--muted);
+    white-space:nowrap;
+  }
+  .chip.on{color:var(--accent-ink);border-color:var(--accent);background:var(--accent-soft);}
+  .chiprow{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 18px;}
+
+  .swatch{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    font-family:var(--f-mono);
+    font-size:12px;
+    padding:6px 12px 6px 10px;
+    border:1px solid var(--line);
+    background:var(--surface);
+  }
+  .swatch::before{content:"";width:9px;height:9px;border-radius:2px;background:var(--dot,var(--muted));}
+  .groups{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 20px;}
+
+  /* ---------- tables ---------- */
+  .tw{overflow-x:auto;border:1px solid var(--line);background:var(--surface);margin:0 0 22px;}
+  table{border-collapse:collapse;width:100%;min-width:540px;font-size:14.5px;}
+  th,td{
+    text-align:left;
+    padding:10px 14px;
+    border-bottom:1px solid var(--line);
+    vertical-align:top;
+    line-height:1.45;
+  }
+  th{
+    font-family:var(--f-mono);
+    font-size:10.5px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--muted);
+    font-weight:500;
+    background:var(--surface-2);
+    white-space:nowrap;
+  }
+  tbody tr:last-child td{border-bottom:none;}
+  td.k{font-family:var(--f-mono);font-size:12.5px;color:var(--ink);white-space:nowrap;}
+  td.n{font-variant-numeric:tabular-nums;}
+
+  /* ---------- code ---------- */
+  pre{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-left:2px solid var(--line-2);
+    padding:18px 20px;
+    overflow-x:auto;
+    margin:0 0 22px;
+    font-family:var(--f-mono);
+    font-size:12.5px;
+    line-height:1.62;
+    color:var(--ink-2);
+    tab-size:2;
+  }
+  pre b{color:var(--accent-ink);font-weight:500;}
+  pre i{color:var(--muted);font-style:normal;}
+
+  /* ---------- callout ---------- */
+  .note{
+    background:var(--surface-2);
+    border:1px solid var(--line);
+    padding:16px 20px;
+    margin:0 0 22px;
+    max-width:var(--measure);
+  }
+  .note p{margin:0;font-size:15.5px;color:var(--ink-2);}
+  .note p + p{margin-top:10px;}
+  .note-label{
+    font-family:var(--f-mono);
+    font-size:10.5px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--accent-ink);
+    display:block;
+    margin-bottom:7px;
+  }
+
+  /* ---------- phases ---------- */
+  .phase{
+    display:grid;
+    grid-template-columns:52px minmax(0,1fr);
+    gap:20px;
+    padding:20px 0;
+    border-top:1px solid var(--line);
+  }
+  .phase-n{
+    font-family:var(--f-mono);
+    font-size:13px;
+    color:var(--accent-ink);
+    padding-top:2px;
+    font-variant-numeric:tabular-nums;
+  }
+  .phase h3{margin:0 0 6px;font-size:1.06rem;}
+  .phase p{margin:0 0 10px;font-size:15px;}
+  .phase .chiprow{margin:0;}
+  .cutline{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    margin:6px 0;
+    font-family:var(--f-mono);
+    font-size:11px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--accent-ink);
+  }
+  .cutline::before,.cutline::after{content:"";height:1px;background:var(--accent);flex:1;opacity:.55;}
+
+  /* ---------- sources ---------- */
+  .srcs{columns:2;column-gap:36px;font-size:14px;max-width:none;}
+  .srcs li{break-inside:avoid;margin-bottom:9px;}
+  @media (max-width:700px){.srcs{columns:1;}}
+
+  footer{
+    border-top:1px solid var(--line-2);
+    padding-top:22px;
+    font-family:var(--f-mono);
+    font-size:11.5px;
+    color:var(--muted);
+    line-height:1.7;
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important;}
+  }
+</style>
+
+<div class="shell">
+
+  <header class="masthead">
+    <p class="eyebrow"><span>Product teardown</span><span>·</span><span>Reference architecture</span><span>·</span><span><b>Build blueprint</b></span></p>
+    <h1>Anatomy of a Work&nbsp;OS</h1>
+    <p class="standfirst">How the modern all-in-one work platform is actually put together — the object graph, the four configuration engines that sit on top of it, and the order to build them in. Researched from public product documentation and API references, then reduced to something you can implement.</p>
+    <div class="masthead-meta">
+      <span>Researched <b>Aug 2026</b></span>
+      <span>Subject <b>ClickUp-class platforms</b></span>
+      <span>Target <b>Next.js + Postgres on AWS</b></span>
+    </div>
+  </header>
+
+  <nav class="rail" aria-label="Contents">
+    <div class="rail-title">Contents</div>
+    <a href="#thesis">The product thesis</a>
+    <a href="#hierarchy">The hierarchy</a>
+    <a href="#task">The task object</a>
+    <a href="#engines">Four engines</a>
+    <a href="#statuses">— Statuses</a>
+    <a href="#fields">— Custom fields</a>
+    <a href="#views">— Views</a>
+    <a href="#permissions">— Permissions</a>
+    <a href="#modules">Satellite modules</a>
+    <a href="#schema">Data model</a>
+    <a href="#hard">The hard parts</a>
+    <a href="#stack">Stack</a>
+    <a href="#roadmap">Build order</a>
+    <a href="#position">Positioning</a>
+    <a href="#sources">Sources</a>
+  </nav>
+
+  <main>
+
+    <!-- ============ THESIS ============ -->
+    <section id="thesis">
+      <div class="sec-head"><span class="sec-key">01 / Thesis</span><h2>It is not a to-do app. It's a configurable database with opinions.</h2></div>
+
+      <p class="lede">The mistake most people make when rebuilding a platform in this class is treating it as a task manager with extra screens. It isn't. Underneath, there is <strong>one object graph</strong> — containers holding work items — and <strong>four configuration engines</strong> that let each customer reshape that graph into their own workflow without a developer.</p>
+
+      <p>Everything the marketing site lists — 15+ views, custom statuses, custom fields, automations, dashboards, docs, chat, goals, time tracking, forms, whiteboards, AI — is either one of those engines or a satellite module hanging off the same graph. The product's actual pitch is consolidation: replace the separate tools a team pays for with one workspace where a task, the doc describing it, the chat about it, and the hours logged against it are all the same records.</p>
+
+      <p>That has two consequences for your build:</p>
+
+      <ul>
+        <li><strong>The engines are the product, not the features.</strong> Shipping a Board view is a weekend. Shipping a view <em>system</em> where any user can define grouping, filters, sort, and visible columns against arbitrary user-defined fields, save it, and share it — that's the actual work, and everything else composes out of it.</li>
+        <li><strong>Breadth is a trap for a solo build.</strong> The incumbent's breadth is the result of eight years and a large engineering org. Copying the surface area produces fifteen shallow features. Building the engines properly produces a product that feels deep on day one and grows sideways cheaply.</li>
+      </ul>
+
+      <div class="note">
+        <span class="note-label">Read this first</span>
+        <p>The two hardest problems in this category are <strong>permission-aware querying at depth</strong> and <strong>real-time collaboration on two different kinds of data</strong>. Both are architectural, both are extremely expensive to retrofit, and both are covered in <a href="#hard">The hard parts</a>. Decide them before you write the first migration.</p>
+      </div>
+    </section>
+
+    <!-- ============ HIERARCHY ============ -->
+    <section id="hierarchy">
+      <div class="sec-head"><span class="sec-key">02 / Graph</span><h2>The hierarchy is the spine everything else attaches to</h2></div>
+
+      <p>Containers nest from the organization down to the smallest checkbox. Each level is not just a folder — it is a <strong>configuration boundary</strong>, and that's the part worth copying. Settings defined higher up flow down and can be overridden lower down.</p>
+
+      <div class="tree">
+        <div class="tree-inner">
+          <div class="node">
+            <div class="node-name">Workspace</div>
+            <div class="node-note">The organization. Billing, seats, members, roles, integrations, audit log. One per company. <em>Everything above this is your SaaS account model, not the product.</em></div>
+          </div>
+          <div class="node">
+            <div class="node-name"><i>└─</i>Everything view</div>
+            <div class="node-note">A virtual level, not a container — cross-workspace views that query every list the viewer can see. <em>Falls out for free if your view engine is written against a query, not a parent id.</em></div>
+          </div>
+          <div class="node">
+            <div class="node-name"><i>└─</i>Space</div>
+            <div class="node-note">Department or major function. <strong>The main configuration boundary:</strong> statuses, which features are enabled, custom fields, privacy, default views.</div>
+          </div>
+          <div class="node">
+            <div class="node-name"><i>&nbsp;&nbsp;&nbsp;└─</i>Folder</div>
+            <div class="node-note">Optional grouping of lists — a client, a quarter, a product area. Inherits statuses from the Space, can override.</div>
+          </div>
+          <div class="node dim">
+            <div class="node-name"><i>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─</i>Subfolder</div>
+            <div class="node-note">One further nesting level, added late in the incumbent's life and given its own permissions, statuses, fields, and automations. <em>Design for arbitrary depth from day one and you avoid this retrofit entirely.</em></div>
+          </div>
+          <div class="node">
+            <div class="node-name"><i>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─</i>List</div>
+            <div class="node-note">Where work actually lives. Can sit directly in a Space (<em>folderless</em>) or inside a Folder. Owns the custom fields and status set that its tasks resolve against.</div>
+          </div>
+          <div class="node">
+            <div class="node-name"><i>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─</i>Task</div>
+            <div class="node-note">The atomic work item. Has a <strong>home list</strong> but can appear in several lists at once — status and custom fields always resolve from home.</div>
+          </div>
+          <div class="node">
+            <div class="node-name"><i>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─</i>Subtask</div>
+            <div class="node-note">A task with a parent. Same table, same fields, same everything. Nests up to seven levels deep in the incumbent.</div>
+          </div>
+          <div class="node dim">
+            <div class="node-name"><i>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└─</i>Checklist item</div>
+            <div class="node-note">Deliberately <em>not</em> a task: no assignee semantics worth speaking of, no status, no reporting. A cheap nested list for steps nobody needs to track. <em>Keep it cheap.</em></div>
+          </div>
+        </div>
+      </div>
+
+      <h3>The rules that actually matter</h3>
+      <ul>
+        <li><strong>Subtasks are tasks.</strong> One table with a self-referential <code>parent_id</code>. Never model them separately — every feature you build for tasks would need building twice.</li>
+        <li><strong>Lists can be parentless within a Space.</strong> Your foreign keys need to allow a list whose parent is a Space rather than a Folder. Model the container chain polymorphically or you'll write two of every query.</li>
+        <li><strong>Configuration inherits and overrides.</strong> A list's effective status set is <em>its own, else its folder's, else its space's</em>. Resolve this once in a cached service, not ad hoc in twelve places.</li>
+        <li><strong>A task can live in many lists.</strong> This single feature breaks the naive <code>tasks.list_id</code> column. It needs a join table, with one row flagged as home. Decide now — retrofitting it means rewriting every query in the app.</li>
+      </ul>
+    </section>
+
+    <!-- ============ TASK ============ -->
+    <section id="task">
+      <div class="sec-head"><span class="sec-key">03 / Object</span><h2>What's actually on a task</h2></div>
+
+      <p>From the public API, the task object carries this. Fields marked <span class="chip on">core</span> are load-bearing for an MVP; the rest can wait.</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Field</th><th>Type</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="k">name</td><td>string</td><td>Title. <span class="chip on">core</span></td></tr>
+            <tr><td class="k">description / markdown_description</td><td>rich text</td><td>Stored twice in the incumbent — rendered form and markdown source. Store one canonical rich-text document instead.</td></tr>
+            <tr><td class="k">status</td><td>ref → status</td><td>Resolved against the list's status set, not a global enum. <span class="chip on">core</span></td></tr>
+            <tr><td class="k">priority</td><td>1–4</td><td>Urgent / High / Normal / Low. A fixed enum, unlike status. <span class="chip on">core</span></td></tr>
+            <tr><td class="k">assignees</td><td>user[]</td><td>Many-to-many — multiple assignees is a headline feature, not an edge case. <span class="chip on">core</span></td></tr>
+            <tr><td class="k">watchers</td><td>user[]</td><td>Drives notification fan-out. Separate from assignees.</td></tr>
+            <tr><td class="k">start_date / due_date</td><td>timestamp</td><td>Each with a “time included?” flag — a date-only due date must not shift across timezones. <span class="chip on">core</span></td></tr>
+            <tr><td class="k">time_estimate</td><td>ms</td><td>Optionally split per assignee on higher tiers.</td></tr>
+            <tr><td class="k">points</td><td>number</td><td>Sprint points. Feeds velocity and burndown.</td></tr>
+            <tr><td class="k">tags</td><td>tag[]</td><td>Defined at Space level, applied to tasks. Cross-list filtering.</td></tr>
+            <tr><td class="k">parent</td><td>ref → task</td><td>Makes it a subtask. <span class="chip on">core</span></td></tr>
+            <tr><td class="k">custom_item_id</td><td>ref → task type</td><td>Custom task types — Bug, Lead, Epic. Drives which custom fields even appear.</td></tr>
+            <tr><td class="k">custom_fields</td><td>value[]</td><td>The open-ended part. See <a href="#fields">the field engine</a>.</td></tr>
+            <tr><td class="k">dependencies</td><td>edge[]</td><td><code>blocking</code> / <code>waiting_on</code>, with a chain id. Feeds Gantt and “can't close until…” rules.</td></tr>
+            <tr><td class="k">linked_tasks</td><td>edge[]</td><td>Plain undirected relationship — no scheduling meaning.</td></tr>
+            <tr><td class="k">checklists</td><td>checklist[]</td><td>Named groups of items with their own ordering.</td></tr>
+            <tr><td class="k">attachments</td><td>file[]</td><td>Blob storage + a metadata row.</td></tr>
+            <tr><td class="k">comments</td><td>comment[]</td><td>Threaded, reactable, and <em>assignable</em> — a comment can be an action item. Nice differentiator, cheap to build.</td></tr>
+            <tr><td class="k">custom_id</td><td>string</td><td>Human-readable key like <code>ENG-402</code>. Per-space prefix + counter.</td></tr>
+            <tr><td class="k">time in status</td><td>derived</td><td>Computed from the activity log, not stored. Powers cycle-time reporting.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Custom task types</h3>
+      <p>A late but important addition: tasks carry a type (Task, Bug, Feature, Lead…), and custom fields can be <strong>scoped to a type</strong>, so a Bug loads bug fields and nothing else. This is what keeps a mature workspace from drowning in forty irrelevant columns. It costs one nullable column on the task and a scope table on the field — build it early, because retro-fitting field scoping is painful.</p>
+    </section>
+
+    <!-- ============ ENGINES ============ -->
+    <section id="engines">
+      <div class="sec-head"><span class="sec-key">04 / Engines</span><h2>Four engines sit on the graph</h2></div>
+      <p>Every configuration surface in the product reduces to one of these. They share a shape: a definition attached to a container, an inheritance rule, and a resolver that answers “what applies to <em>this</em> object for <em>this</em> user?”</p>
+      <div class="chiprow">
+        <span class="chip on">Status engine</span>
+        <span class="chip on">Field engine</span>
+        <span class="chip on">View engine</span>
+        <span class="chip on">Permission engine</span>
+      </div>
+    </section>
+
+    <!-- ============ STATUSES ============ -->
+    <section id="statuses">
+      <div class="sec-head"><span class="sec-key">04.1</span><h2>Status engine</h2></div>
+
+      <p>Statuses are user-defined strings, but they are not free-form: every status belongs to a <strong>group</strong>, and the group is what the rest of the system reasons about. “Done” means <em>group = done</em>, not <em>name = "Done"</em>.</p>
+
+      <div class="groups">
+        <span class="swatch" style="--dot:var(--g-todo)">not_started <em>&nbsp;· optional</em></span>
+        <span class="swatch" style="--dot:var(--g-active)">active</span>
+        <span class="swatch" style="--dot:var(--g-done)">done</span>
+        <span class="swatch" style="--dot:var(--g-closed)">closed <em>&nbsp;· terminal</em></span>
+      </div>
+
+      <ul>
+        <li><strong>Groups are fixed; statuses within them are not.</strong> A team can have six active statuses named anything. Reporting, filters, “show closed”, and completion percentages all key off the group.</li>
+        <li><strong>Closed is special.</strong> In the incumbent it's a single terminal status you may rename but not multiply. That constraint keeps “is this finished” answerable across a workspace — worth keeping.</li>
+        <li><strong>Defined at Space, overridable at Folder, Subfolder, and List.</strong> Same inheritance chain as everything else.</li>
+        <li><strong>Status templates</strong> are saved reusable sets (Kanban, Scrum, Marketing) applied to new containers. Trivial to build, disproportionately good for onboarding — a new user picking “Scrum” instantly has a real workflow.</li>
+        <li><strong>Changing a status set must migrate existing tasks.</strong> Deleting a status forces a “move these 43 tasks to…” prompt. Don't skip this; orphaned status references are a bug factory.</li>
+      </ul>
+    </section>
+
+    <!-- ============ FIELDS ============ -->
+    <section id="fields">
+      <div class="sec-head"><span class="sec-key">04.2</span><h2>Custom field engine</h2></div>
+
+      <p>A field definition lives on a container (List, Folder, Space, or Workspace-wide) and consists of a name, a type, and a <code>type_config</code> blob whose shape depends on the type. Values attach to tasks. Here is the full type set from the public API, with the value shape each one stores:</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Type</th><th>type_config</th><th>Stored value</th></tr></thead>
+          <tbody>
+            <tr><td class="k">short_text / text</td><td>—</td><td>string (single-line / paragraph)</td></tr>
+            <tr><td class="k">number</td><td>—</td><td>numeric, signed</td></tr>
+            <tr><td class="k">currency</td><td>currency_type, precision</td><td>numeric</td></tr>
+            <tr><td class="k">checkbox</td><td>—</td><td>boolean</td></tr>
+            <tr><td class="k">date</td><td>—</td><td>unix ms + <code>time: bool</code></td></tr>
+            <tr><td class="k">drop_down</td><td>options[] {id,name,color,orderindex}, sorting</td><td>one option id</td></tr>
+            <tr><td class="k">labels</td><td>options[] {id,label,color,orderindex}</td><td>array of option ids</td></tr>
+            <tr><td class="k">url / email / phone</td><td>—</td><td>validated string</td></tr>
+            <tr><td class="k">users</td><td>—</td><td>set diff: <code>{add:[], rem:[]}</code></td></tr>
+            <tr><td class="k">tasks</td><td>—</td><td>set diff of task ids — a relationship field</td></tr>
+            <tr><td class="k">location</td><td>—</td><td>{lat, lng, formatted_address}</td></tr>
+            <tr><td class="k">emoji</td><td>code_point, count 1–5</td><td>integer 0..count — a rating</td></tr>
+            <tr><td class="k">manual_progress</td><td>start, end, current</td><td>{current}</td></tr>
+            <tr><td class="k">automatic_progress</td><td>tracking flags</td><td>derived — not settable</td></tr>
+            <tr><td class="k">formula</td><td>expression</td><td>derived from other fields</td></tr>
+            <tr><td class="k">relationship / rollup</td><td>target list, aggregation</td><td>derived: sum / avg / range across related tasks</td></tr>
+            <tr><td class="k">voting</td><td>—</td><td>read-only aggregate</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>How to store the values</h3>
+      <p>This is the single decision that determines whether filtering stays fast at a million tasks. Three options, in the order I'd consider them:</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Approach</th><th>Filtering</th><th>Verdict</th></tr></thead>
+          <tbody>
+            <tr><td class="k">JSONB column on task</td><td>GIN index; awkward for range and sort</td><td>Fastest to ship, hits a wall on sorted+filtered views</td></tr>
+            <tr><td class="k">Typed EAV table</td><td>Indexed per column; needs a join per filtered field</td><td><strong>Recommended.</strong> One row per (task, field) with <code>value_text</code>, <code>value_num</code>, <code>value_date</code>, <code>value_json</code>; index each</td></tr>
+            <tr><td class="k">Physical columns per field</td><td>Native, fastest</td><td>DDL at runtime, migration hell, per-tenant schema drift. No.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="note-label">Derived fields</span>
+        <p>Formula, rollup, and progress fields are <strong>computed, not stored</strong>, but views need to filter and sort by them. Compute them on write into a materialized value on the same EAV row, invalidated by the activity log. Computing at read time is what makes these products feel slow.</p>
+      </div>
+    </section>
+
+    <!-- ============ VIEWS ============ -->
+    <section id="views">
+      <div class="sec-head"><span class="sec-key">04.3</span><h2>View engine — the actual core</h2></div>
+
+      <p>A view is a <strong>saved query plus a renderer</strong>. The incumbent's own API makes this unusually legible: every view, whatever its visual type, serializes to the same object. Build this object, and each new “view type” is a new renderer over an existing query — not a new feature.</p>
+
+      <pre><b>View</b> {
+  id, name,
+  type: <i>list | board | calendar | gantt | timeline | table | workload
+      | team | box | activity | map | mind_map | form | doc | chat
+      | whiteboard | portfolio</i>,
+  parent: { id, type: <i>7=workspace · 4=space · 5=folder · 6=list</i> },
+
+  grouping: { field: <i>none|status|priority|assignee|tag|dueDate|&lt;custom&gt;</i>,
+              dir: 1|-1, collapsed: [], ignore: bool },
+  divide:   { field, dir, collapsed: [] },          <i>// swimlanes</i>
+  sorting:  { fields: [ { field, dir: 1|-1, idx } ] },
+
+  filters:  { op: <i>AND|OR</i>,
+              fields: [ { field, op: <i>EQ|NOT|GT|LT|IN|ANY|ALL|IS_NULL|RANGE</i>,
+                          values, idx } ],
+              search: "", show_closed: bool },
+
+  columns:  { fields: [ { field, idx, width, hidden, display } ] },
+
+  settings: { show_subtasks: <i>1=separate|2=expanded|3=collapsed</i>,
+              show_task_locations, show_subtask_parent_names,
+              show_closed_subtasks, show_assignees, show_images,
+              collapse_empty_columns, me_comments, me_subtasks },
+
+  team_sidebar: { assignees: [], assigned_comments, unassigned_tasks }
+}</pre>
+
+      <h3>Why this shape is worth copying exactly</h3>
+      <ul>
+        <li><strong>One compiler, many renderers.</strong> Board view is <em>grouping.field = status</em>. Calendar is <em>a date field on an axis</em>. Workload is <em>group by assignee, sum an effort field per time bucket</em>. Table is List with all columns shown. You write the query compiler once.</li>
+        <li><strong>Views attach at any level.</strong> The <code>parent.type</code> discriminator is why the same view definition works on one list or across the entire workspace. Your query builder takes a <em>scope</em> (a set of list ids the viewer can see) rather than a single <code>list_id</code>.</li>
+        <li><strong>Personal vs shared.</strong> Every view is either saved for everyone or private to its creator, and users can override filters locally without mutating the shared definition. Model this as a base view + per-user overlay.</li>
+        <li><strong>Form and Doc are “views”.</strong> Stretching the concept, but it means a form that creates tasks in a list, and a doc pinned to a list, both appear in the same tab bar with the same permissions. Cheap consistency.</li>
+      </ul>
+
+      <h4>The renderers, ranked by value per unit of effort</h4>
+      <div class="tw">
+        <table>
+          <thead><tr><th>View</th><th>What it is</th><th>Effort</th></tr></thead>
+          <tbody>
+            <tr><td class="k">List</td><td>Grouped, collapsible rows with inline edit. The default.</td><td>Med — inline editing is the cost</td></tr>
+            <tr><td class="k">Board</td><td>Same query, grouped into drag-and-drop columns.</td><td>Low, once List exists</td></tr>
+            <tr><td class="k">Table</td><td>Spreadsheet grid, keyboard nav, bulk edit.</td><td>Med-high — do it with a virtualized grid</td></tr>
+            <tr><td class="k">Calendar</td><td>Tasks placed on a date field; drag to reschedule.</td><td>Med</td></tr>
+            <tr><td class="k">Gantt / Timeline</td><td>Bars over time + dependency arrows + critical path.</td><td>High — the dependency math is the work</td></tr>
+            <tr><td class="k">Workload</td><td>Capacity per person per week from estimates or points.</td><td>Med — needs a capacity model</td></tr>
+            <tr><td class="k">Map / Mind map / Whiteboard / Canvas</td><td>Spatial renderers over the same records.</td><td>High, low ROI early</td></tr>
+            <tr><td class="k">Activity</td><td>Reverse-chron feed straight off the activity log.</td><td>Low — free if the log exists</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ PERMISSIONS ============ -->
+    <section id="permissions">
+      <div class="sec-head"><span class="sec-key">04.4</span><h2>Permission engine</h2></div>
+
+      <p>Two orthogonal systems, and conflating them is a classic mistake:</p>
+
+      <h4>1. Role — what a person may do</h4>
+      <div class="tw">
+        <table>
+          <thead><tr><th>Role</th><th>Capability</th></tr></thead>
+          <tbody>
+            <tr><td class="k">Owner</td><td>Everything, including billing and workspace deletion. Can be more than one.</td></tr>
+            <tr><td class="k">Admin</td><td>Manage members, spaces, and settings; no billing control.</td></tr>
+            <tr><td class="k">Member</td><td>Create and edit work anywhere they have access.</td></tr>
+            <tr><td class="k">Limited member</td><td>Member without the ability to create top-level containers.</td></tr>
+            <tr><td class="k">Guest</td><td>External. Sees only explicitly shared objects. Sub-tiered into view-only, comment, and edit.</td></tr>
+            <tr><td class="k">Custom role</td><td>Enterprise feature — a named permission bundle. Ship last.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>2. Access — what they may do it to</h4>
+      <ul>
+        <li>Any container (Space, Folder, Subfolder, List) and individual tasks and docs can be <strong>public to the workspace or private</strong>, with an explicit grant list of users and groups.</li>
+        <li>Access <strong>inherits downward</strong> and can be tightened at any level. A workspace setting can flip the default so all new Spaces start private.</li>
+        <li>Guests are granted at the <em>object</em> level — added to a task, a list, or a folder — never given a Space.</li>
+        <li>A “shared with me” query needs to walk the grant graph, which is why the incumbent exposes a dedicated <em>shared hierarchy</em> endpoint. Plan for it.</li>
+      </ul>
+
+      <div class="note">
+        <span class="note-label">Implementation</span>
+        <p>Do not resolve permissions by walking parents at query time — with seven levels of nesting that's seven joins on the hot path. Maintain a <strong>materialized access table</strong>: <code>(principal_id, list_id, permission)</code>, recomputed by a background job whenever a grant or container moves. Every list query then becomes a single inner join, and the “Everything view” becomes trivial.</p>
+      </div>
+    </section>
+
+    <!-- ============ MODULES ============ -->
+    <section id="modules">
+      <div class="sec-head"><span class="sec-key">05 / Modules</span><h2>Satellite modules</h2></div>
+
+      <p>Each of these is a separate product bolted to the same graph. Ordered by how much they contribute to the “this replaces my other tools” feeling, per unit of effort.</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Module</th><th>Model</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="k">Activity &amp; comments</td>
+              <td>Append-only event rows; threaded comments with reactions and assignment</td>
+              <td><strong>Build first.</strong> It's not a feature, it's infrastructure — history, notifications, automations, and reporting all read from it.</td>
+            </tr>
+            <tr>
+              <td class="k">Time tracking</td>
+              <td>Time entries with start/stop, a single running entry per user, tags, billable flag; timesheets and approvals on top</td>
+              <td>Small surface, high perceived value. Estimates vs actuals is the payoff.</td>
+            </tr>
+            <tr>
+              <td class="k">Docs</td>
+              <td>Doc → nested pages, rich text, backlinks to tasks; wikis are just docs with a flag</td>
+              <td>Needs a real collaborative editor. This is the CRDT half of realtime.</td>
+            </tr>
+            <tr>
+              <td class="k">Dashboards</td>
+              <td>A grid of cards, each card = a saved query + a chart spec</td>
+              <td>Falls out of the view engine almost free. Sprint velocity, burndown, and burnup all compute from points or time estimates over a sprint window.</td>
+            </tr>
+            <tr>
+              <td class="k">Goals</td>
+              <td>Goal → key results with targets of type number, currency, boolean, task, or list; progress rolls up automatically</td>
+              <td>Cheap, and it's the feature execs look for.</td>
+            </tr>
+            <tr>
+              <td class="k">Automations</td>
+              <td>trigger → conditions[] → actions[], scoped to a container, applying to tasks, subtasks, or both</td>
+              <td>See <a href="#hard">the hard parts</a> — loop prevention is the whole game.</td>
+            </tr>
+            <tr>
+              <td class="k">Forms</td>
+              <td>A view type that renders fields as inputs and creates a task in the list on submit; supports conditional logic</td>
+              <td>Very high value per line of code — turns the tool into an intake system.</td>
+            </tr>
+            <tr>
+              <td class="k">Sprints</td>
+              <td>A folder of date-bounded lists + a points field + carry-over rules</td>
+              <td>Mostly conventions over existing primitives. Good demo of the engines paying off.</td>
+            </tr>
+            <tr>
+              <td class="k">Chat</td>
+              <td>Channels (standalone or attached to a Space/Folder/List), DMs, threads, reactions, followers</td>
+              <td>Large build. Only justified if the pitch is genuinely “replace the chat tool”.</td>
+            </tr>
+            <tr>
+              <td class="k">Whiteboards</td>
+              <td>Infinite canvas with shapes that can <em>be</em> tasks</td>
+              <td>Use an existing canvas library. Don't hand-roll.</td>
+            </tr>
+            <tr>
+              <td class="k">Templates</td>
+              <td>Serialized subtree of any container + its config, re-instantiable with date offsets</td>
+              <td>Underrated. Makes an empty workspace usable in one click.</td>
+            </tr>
+            <tr>
+              <td class="k">AI layer</td>
+              <td>Summaries, AI-filled fields, standups, natural-language task creation, semantic search across the graph</td>
+              <td>The current competitive front. Sold as a per-seat add-on, which tells you what it costs to run.</td>
+            </tr>
+            <tr>
+              <td class="k">API + webhooks</td>
+              <td>REST over the same objects; webhooks per workspace with signatures and health tracking</td>
+              <td>Build the app against your own public API and both stay honest.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ SCHEMA ============ -->
+    <section id="schema">
+      <div class="sec-head"><span class="sec-key">06 / Schema</span><h2>A data model to start from</h2></div>
+
+      <p>Postgres. Abbreviated to the decisions that matter — the ones that are expensive to change later are marked.</p>
+
+      <pre><i>-- containers: one polymorphic tree, not four tables</i>
+<b>workspaces</b>      (id, name, slug, plan, settings_json)
+<b>containers</b>      (id, workspace_id, <b>parent_id</b> → containers, kind, name,
+                 position, is_private, archived_at)
+                 <i>-- kind: space | folder | list        ← arbitrary depth for free</i>
+
+<i>-- tasks and their placement</i>
+<b>tasks</b>           (id, workspace_id, <b>home_list_id</b>, parent_task_id,
+                 custom_key, name, description_doc_id, status_id,
+                 priority, start_at, due_at, due_has_time,
+                 time_estimate_ms, points, task_type_id,
+                 created_by, created_at, updated_at, archived_at,
+                 <i>-- denormalized ancestors: filter without recursion</i>
+                 <b>space_id, folder_id</b>)
+<b>task_lists</b>      (task_id, list_id, is_home)          <i>← multi-list. Do it now.</i>
+<b>task_assignees</b>  (task_id, user_id)
+<b>task_watchers</b>   (task_id, user_id)
+<b>task_links</b>      (task_id, linked_task_id, kind)      <i>-- blocks | waits_on | relates</i>
+
+<i>-- status engine</i>
+<b>status_sets</b>     (id, workspace_id, container_id NULL, name, is_template)
+<b>statuses</b>        (id, status_set_id, name, color, <b>group</b>, position)
+                 <i>-- group: not_started | active | done | closed</i>
+
+<i>-- field engine</i>
+<b>fields</b>          (id, workspace_id, container_id, name, type,
+                 type_config_json, position)
+<b>field_scopes</b>    (field_id, task_type_id)             <i>-- fields per task type</i>
+<b>field_values</b>    (task_id, field_id,
+                 value_text, value_num, value_date, value_json,
+                 computed_at)                        <i>← index every typed column</i>
+
+<i>-- view engine</i>
+<b>views</b>           (id, workspace_id, parent_id, parent_kind, type, name,
+                 <b>definition_json</b>, owner_id NULL, position)
+                 <i>-- owner_id NULL = shared; set = personal</i>
+<b>view_overrides</b>  (view_id, user_id, definition_patch_json)
+
+<i>-- permissions: materialized, not walked</i>
+<b>memberships</b>     (workspace_id, user_id, role)
+<b>grants</b>          (container_id, principal_id, principal_kind, permission)
+<b>access_index</b>    (principal_id, list_id, permission)  <i>← rebuilt by a job</i>
+
+<i>-- the spine of everything reactive</i>
+<b>activity</b>        (id bigserial, workspace_id, actor_id, object_kind,
+                 object_id, verb, field, old_value, new_value, at)
+                 <i>← append-only; drives history, notifications, automations</i>
+
+<i>-- satellites</i>
+<b>comments</b>        (id, object_kind, object_id, parent_id, author_id,
+                 body_json, assigned_to, resolved_at)
+<b>time_entries</b>    (id, task_id, user_id, started_at, ended_at,
+                 duration_ms, billable, description)
+<b>docs / pages</b>    (id, workspace_id, container_id, parent_page_id,
+                 title, content_ydoc bytea)          <i>-- CRDT state</i>
+<b>automations</b>     (id, container_id, trigger_json, conditions_json,
+                 actions_json, enabled, applies_to)
+<b>notifications</b>   (id, user_id, activity_id, read_at, cleared_at)</pre>
+
+      <h4>Three details that will save you a rewrite</h4>
+      <ul>
+        <li><strong>Denormalize the ancestor ids onto tasks.</strong> <code>space_id</code> and <code>folder_id</code> on the task row turn every cross-container view from a recursive CTE into an index scan. Maintain them on move.</li>
+        <li><strong>Position as a fractional index</strong> (a string or float between neighbors), not an integer. Drag-and-drop reordering with integers means rewriting every row in the list on every drag.</li>
+        <li><strong>Never hard-delete.</strong> <code>archived_at</code> everywhere, plus a trash view. Users of this class of tool delete things by accident constantly, and “restore” is table stakes.</li>
+      </ul>
+    </section>
+
+    <!-- ============ HARD PARTS ============ -->
+    <section id="hard">
+      <div class="sec-head"><span class="sec-key">07 / Risk</span><h2>The hard parts</h2></div>
+
+      <h3>Realtime is two different problems</h3>
+      <p>The most common architectural mistake is picking one strategy for both. They have different consistency requirements:</p>
+      <ul>
+        <li><strong>Structured records</strong> (tasks, fields, statuses) — server-authoritative. Client writes optimistically to a local cache, server validates and broadcasts a delta to everyone subscribed to that workspace. Conflicts are rare and last-write-wins per field is acceptable. <em>Do not use a CRDT here</em>; you'd be paying enormous complexity to solve a conflict rate near zero, and you'd lose server-side validation.</li>
+        <li><strong>Rich text and canvas</strong> (docs, whiteboards, task descriptions) — genuinely concurrent character-level editing. This needs a CRDT (Yjs is the mature choice) with a persistence layer and awareness for cursors. Store the binary doc state; render to HTML on the server for search and previews.</li>
+      </ul>
+      <p>The transport can be shared: one WebSocket per client multiplexing workspace deltas and document updates. Subscriptions are per-container, and the fan-out must be permission-filtered at the server — a naive workspace-wide broadcast leaks private space contents to everyone connected.</p>
+
+      <h3>The automation engine will try to eat itself</h3>
+      <p>Trigger → conditions → actions is easy. What's hard:</p>
+      <ul>
+        <li><strong>Loops.</strong> Automation A sets a status, which triggers automation B, which sets a field, which re-triggers A. Every mature system has a depth counter and a per-task execution budget per window. Add both on day one.</li>
+        <li><strong>Actor attribution.</strong> Automation-driven changes must be attributable to the automation, not the user who tripped it, or the activity feed becomes a lie and users don't trust it.</li>
+        <li><strong>Idempotency.</strong> Consume from the activity log with an outbox pattern and a dedupe key, so a retry doesn't create the same subtask twice.</li>
+        <li><strong>Quotas are the pricing lever.</strong> The incumbent gates on runs per month by tier — roughly 100 on free, 1,000, then 10,000. Count runs from the start even if you never charge.</li>
+      </ul>
+
+      <h3>View queries are where performance dies</h3>
+      <p>A single view can filter on three custom fields, sort by a fourth, group by assignee, span every list in the workspace, and be permission-scoped per viewer. Compile it to <em>one</em> parameterized query with the access index joined first (it's the most selective), custom-field filters as EXISTS subqueries against the typed EAV columns, and keyset pagination — never OFFSET, because users scroll deep in a Board column. Cap the filter count, and put a query timeout on it.</p>
+
+      <h3>Notifications need a hybrid fan-out</h3>
+      <p>Fan-out-on-write (a row per recipient per event) makes the inbox a fast indexed read but explodes on a task with 200 watchers. Fan-out-on-read keeps storage small but makes the inbox a heavy query. Use write fan-out for direct signals (assigned, mentioned, comment replied) and read-time aggregation for ambient activity. Also: <strong>digest and collapse</strong>. Twelve field edits on one task in a minute is one notification, or your product becomes unusable and people mute it.</p>
+
+      <h3>Search</h3>
+      <p>Postgres full-text over task names, descriptions, comments, and doc content gets you a long way — with the access index applied as a filter, not as a post-processing step. Move to a dedicated index only when relevance ranking, not latency, becomes the complaint.</p>
+    </section>
+
+    <!-- ============ STACK ============ -->
+    <section id="stack">
+      <div class="sec-head"><span class="sec-key">08 / Stack</span><h2>Recommended stack</h2></div>
+
+      <p>Built to run on <strong>AWS</strong> and to be self-hostable with <code>docker compose up</code> — no third-party application platform, hosted database vendor, or auth SaaS anywhere on the critical path. The <a href="https://claude.ai/code/artifact/3f87786c-b967-482c-a3f2-f43f32674329">interface plan</a> carries the full deployment topology and the Google Cloud equivalents.</p>
+
+      <div class="tw">
+        <table>
+          <thead><tr><th>Layer</th><th>Choice</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td class="k">App</td><td>Next.js App Router, containerized</td><td>Server Components for the heavy container/view reads, Server Actions for mutations. Runs in a container, so the same image works locally, on ECS, and on anyone's Docker host.</td></tr>
+            <tr><td class="k">Compute</td><td>ECS Fargate behind an ALB — three services: <code>web</code>, <code>realtime</code>, <code>worker</code></td><td>Not Lambda: WebSockets need long-lived connections. Three services because they scale on request rate, connection count, and queue depth respectively.</td></tr>
+            <tr><td class="k">Database</td><td>RDS Postgres (Multi-AZ)</td><td>Recursive CTEs, JSONB, GIN indexes, real transactions, and <code>pgvector</code> for later semantic search. Nothing else in the category is a better fit.</td></tr>
+            <tr><td class="k">ORM</td><td>Drizzle</td><td>You will write hand-tuned SQL for the view compiler. Pick an ORM that gets out of the way when you do.</td></tr>
+            <tr><td class="k">Realtime</td><td>Own WebSocket service on Fargate + ElastiCache Redis pub/sub</td><td>One multiplexed connection carrying record deltas, Yjs updates, and presence. Redis fans a change out across every realtime task.</td></tr>
+            <tr><td class="k">Collaborative text</td><td>Yjs + Tiptap (or Lexical)</td><td>Mature CRDT, good persistence adapters, ships with cursor awareness.</td></tr>
+            <tr><td class="k">Canvas</td><td>tldraw</td><td>Whiteboards are a whole product. Don't build one.</td></tr>
+            <tr><td class="k">Client state</td><td>TanStack Query + a normalized entity cache</td><td>Optimistic updates and delta reconciliation are the core UX requirement.</td></tr>
+            <tr><td class="k">UI components</td><td>21st.dev / shadcn primitives on Radix + Tailwind, plus TanStack Virtual</td><td>Registry components are copied into the repo rather than imported, so there's no runtime dependency and contributors can edit every pixel.</td></tr>
+            <tr><td class="k">Auth</td><td>Sessions in our own Postgres; Cognito/Okta only as optional enterprise SSO</td><td>A self-hoster must not need an AWS account to log in. Own the user table; federate on top.</td></tr>
+            <tr><td class="k">Files</td><td>S3 + CloudFront, presigned URLs</td><td>Use the S3 <em>API</em>, not S3-only features, so MinIO and R2 work unchanged.</td></tr>
+            <tr><td class="k">Background work</td><td>SQS + EventBridge Scheduler, worked by the <code>worker</code> service</td><td>Automation execution, access-index rebuilds, digests, recurring tasks. DLQ plus idempotency keys.</td></tr>
+            <tr><td class="k">AI</td><td>Amazon Bedrock behind a provider interface</td><td>Keeps model traffic in the same account and bill. Vertex AI or a direct API key stay drop-in alternatives.</td></tr>
+            <tr><td class="k">IaC / CI</td><td>Terraform module in <code>infra/</code>; GitHub Actions → ECR → ECS</td><td>Terraform over CDK for a public repo — more contributors can read it, and it ports to other clouds.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ ROADMAP ============ -->
+    <section id="roadmap">
+      <div class="sec-head"><span class="sec-key">09 / Order</span><h2>Build order</h2></div>
+
+      <p>These are genuinely sequential — each phase depends on the one above it. The cut line marks the smallest version that is a real product rather than a demo.</p>
+
+      <div class="phase">
+        <div class="phase-n">01</div>
+        <div>
+          <h3>Foundation and graph</h3>
+          <p>Auth, workspace, membership. The container tree with arbitrary depth, drag-to-reorder with fractional indices, archive/restore. Tasks with name, status, assignees, dates, priority, parent. The multi-list join table, even though nothing uses it yet.</p>
+          <div class="chiprow"><span class="chip">containers</span><span class="chip">tasks</span><span class="chip">task_lists</span><span class="chip">fractional ordering</span></div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">02</div>
+        <div>
+          <h3>View engine and the first two renderers</h3>
+          <p>The view definition object, the query compiler, saved views in a tab bar, personal vs shared. List and Board on top of it. Nothing else until grouping, filtering, and sorting are genuinely generic — this is the phase to over-invest in.</p>
+          <div class="chiprow"><span class="chip">definition_json</span><span class="chip">query compiler</span><span class="chip">list view</span><span class="chip">board view</span></div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">03</div>
+        <div>
+          <h3>Configuration engines</h3>
+          <p>Custom statuses with groups and inheritance, status templates. Custom fields with the typed value table, per-container definitions, task types with field scoping. The moment these land, the same codebase serves a CRM, a bug tracker, and a content calendar.</p>
+          <div class="chiprow"><span class="chip">statuses</span><span class="chip">fields</span><span class="chip">task types</span><span class="chip">templates</span></div>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">04</div>
+        <div>
+          <h3>Collaboration spine</h3>
+          <p>The activity log, task history, threaded comments with mentions and assignment, attachments, the notification inbox with collapsing, and realtime deltas with presence. This is what makes it feel alive rather than like a form over a database.</p>
+          <div class="chiprow"><span class="chip">activity</span><span class="chip">comments</span><span class="chip">inbox</span><span class="chip">realtime</span></div>
+        </div>
+      </div>
+
+      <div class="cutline">Cut line — everything above is a shippable product</div>
+
+      <div class="phase">
+        <div class="phase-n">05</div>
+        <div>
+          <h3>Access control</h3>
+          <p>Private containers, grants, the materialized access index, guests with scoped sharing. Do it before you have real users, because backfilling privacy into an app that assumed everything was visible is a rewrite.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">06</div>
+        <div>
+          <h3>Depth: time, goals, dashboards, remaining views</h3>
+          <p>Time tracking with estimates vs actuals. Goals with rolled-up key results. Dashboards as cards over saved queries. Calendar, Table, Gantt with dependencies, Workload.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">07</div>
+        <div>
+          <h3>Docs</h3>
+          <p>The CRDT editor, nested pages, task backlinks, doc search. A separate build with its own difficulty curve — hence its own phase.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">08</div>
+        <div>
+          <h3>Automations, forms, templates, public API</h3>
+          <p>The rule engine with loop guards and quotas. Forms as a view type. Container templates with date offsets. The REST API and webhooks — ideally the same API your own client already uses.</p>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="phase-n">09</div>
+        <div>
+          <h3>AI layer</h3>
+          <p>Only meaningful once there's a real graph to reason over: summarize a list, generate subtasks, fill fields, answer questions across tasks and docs, natural-language view creation. Build it against the same query compiler so AI-generated views are just views.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ POSITIONING ============ -->
+    <section id="position">
+      <div class="sec-head"><span class="sec-key">10 / Product</span><h2>Positioning notes</h2></div>
+
+      <h3>Pick a wedge; the engines give you the breadth later</h3>
+      <p>The incumbent's own tiering shows where perceived value sits: the free tier caps storage, spaces, and automation runs; the first paid tier unlocks unlimited views and guests; the next adds workload, advanced dashboards, custom roles, and far higher automation quotas; AI is a separate per-seat add-on. That's a map of what people actually pay for — <strong>views, capacity planning, permissions, and automation volume</strong>. Note how little of it is “more task fields”.</p>
+
+      <h3>Where a new entrant can actually win</h3>
+      <ul>
+        <li><strong>Speed and restraint.</strong> The dominant complaint about this category is bloat and slowness. A product with four excellent views that loads instantly beats one with fifteen that doesn't.</li>
+        <li><strong>Opinionated defaults.</strong> Infinite configurability means every new workspace starts as a blank, intimidating grid. Ship strong templates that make a workspace useful in one click.</li>
+        <li><strong>One thing done deeply.</strong> Agencies, engineering teams, and content teams all use these tools bent into a shape they don't quite fit. Being the one built for a specific shape is a real position.</li>
+      </ul>
+
+      <h3>Building it as your own product</h3>
+      <p>Functionality and architecture are yours to reimplement — hierarchies, saved views, and custom fields are common industry patterns, not anyone's property. What isn't: the name, logo, icon set, brand colors, marketing copy, and verbatim UI text. Write your own copy, design your own visual language, choose an unrelated name, and don't import any of their assets. Ship it as what it is — a work platform you built — and the question of what inspired it never needs to come up.</p>
+    </section>
+
+    <!-- ============ SOURCES ============ -->
+    <section id="sources">
+      <div class="sec-head"><span class="sec-key">11</span><h2>Sources</h2></div>
+      <ul class="srcs">
+        <li><a href="https://clickup.com/hierarchy-guide">Project hierarchy guide</a></li>
+        <li><a href="https://help.clickup.com/hc/en-us/articles/13856392825367-Intro-to-the-Hierarchy">Intro to the Hierarchy</a></li>
+        <li><a href="https://clickup.com/features">Full product feature index</a></li>
+        <li><a href="https://developer.clickup.com/llms.txt">API surface index</a></li>
+        <li><a href="https://developer.clickup.com/docs/tasks">Task object reference</a></li>
+        <li><a href="https://developer.clickup.com/docs/customfields">Custom field types &amp; configs</a></li>
+        <li><a href="https://developer.clickup.com/reference/getview">View object schema</a></li>
+        <li><a href="https://help.clickup.com/hc/en-us/articles/6309452618647-Manage-task-statuses">Status groups &amp; management</a></li>
+        <li><a href="https://help.clickup.com/hc/en-us/articles/6309533958935-Status-templates">Status templates</a></li>
+        <li><a href="https://help.clickup.com/hc/en-us/articles/6310033667223-Intro-to-user-roles">User roles</a></li>
+        <li><a href="https://help.clickup.com/hc/en-us/articles/6309221065495-Permissions-in-detail">Permissions in detail</a></li>
+        <li><a href="https://help.clickup.com/hc/en-us/articles/6309958824727-Tasks-in-Multiple-Lists">Tasks in multiple lists</a></li>
+        <li><a href="https://help.clickup.com/hc/en-us/articles/6304528030743-Intro-to-Relationships">Relationships &amp; rollups</a></li>
+        <li><a href="https://help.clickup.com/hc/en-us/articles/6312102752791-Intro-to-Automations">Automations model</a></li>
+        <li><a href="https://help.clickup.com/hc/en-us/articles/6312248505623-Intro-to-Sprint-Dashboard-cards">Sprint dashboard cards</a></li>
+        <li><a href="https://clickup.com/v4">Platform 4.0 overview</a></li>
+        <li><a href="https://www.upsys-consulting.com/en/blog/clickup-pricing-explained">Pricing tiers &amp; limits</a></li>
+        <li><a href="https://www.zenpilot.com/clickup-weekly/clickup-weekly-013/">2026 roadmap coverage</a></li>
+      </ul>
+    </section>
+
+    <footer>
+      Compiled from public product documentation and API references, August 2026.<br>
+      Independent analysis. Not affiliated with or endorsed by any vendor named.
+    </footer>
+
+  </main>
+</div>

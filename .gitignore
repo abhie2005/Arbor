@@ -1,0 +1,34 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+coverage/
+.turbo/
+
+# env — never commit real values
+.env
+.env.*
+!.env.example
+
+# MCP config carries API keys; only the example is tracked
+.mcp.json
+
+# local infra state
+infra/docker/.data/
+infra/terraform/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.log
+npm-debug.log*
+
+# local agent/tooling config
+.claude/settings.local.json

@@ -1,0 +1,86 @@
+# The self-host path. `docker compose up` must work on a clean machine — it is
+# the project's first impression, and a broken quickstart is the most expensive
+# bug an open-source project can have. CI runs this on every PR.
+#
+# Every service here has an AWS counterpart in infra/terraform:
+#   postgres → RDS · redis → ElastiCache · minio → S3 · mailpit → SES
+
+name: arbor
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: arbor
+      POSTGRES_PASSWORD: arbor
+      POSTGRES_DB: arbor
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U arbor -d arbor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # S3-compatible storage. Because the app only uses the S3 API, this and RDS's
+  # real S3 are interchangeable with a connection-string change.
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: arborminio
+      MINIO_ROOT_PASSWORD: arborminio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Creates the bucket once, then exits.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 arborminio arborminio &&
+      mc mb --ignore-existing local/arbor &&
+      echo 'bucket ready'
+      "
+
+  # Catches outbound mail in development. Web UI on http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

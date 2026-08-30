@@ -1,0 +1,21 @@
+{
+  "name": "@arbor/core",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "description": "View compiler, hierarchy resolution, and ordering. Framework-free and fully unit-tested — no request objects, no database handles.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "fractional-indexing": "^3.2.0"
+  }
+}

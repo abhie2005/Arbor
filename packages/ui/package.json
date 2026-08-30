@@ -1,0 +1,16 @@
+{
+  "name": "@arbor/ui",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "description": "Design tokens and interface primitives. Registry components land in src/primitives and are re-tokenized on import.",
+  "exports": {
+    "./tokens.css": "./src/tokens.css",
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests"
+  }
+}

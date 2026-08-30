@@ -1,0 +1,12 @@
+{
+  "_comment": "Copy to .mcp.json and export TWENTYFIRST_API_KEY. .mcp.json is gitignored — never commit a real key.",
+  "mcpServers": {
+    "21st": {
+      "type": "http",
+      "url": "https://21st.dev/api/mcp",
+      "headers": {
+        "x-api-key": "${TWENTYFIRST_API_KEY}"
+      }
+    }
+  }
+}
