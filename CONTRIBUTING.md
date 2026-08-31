@@ -20,8 +20,13 @@ report it. The quickstart is the project's first impression.
 - **One component per PR** when importing from [21st.dev](https://21st.dev),
   with screenshots in both themes, and a row added to
   `packages/ui/ATTRIBUTIONS.md`.
-- **Write the ADR** if you change something structural. `docs/decisions/`,
-  numbered, never deleted — superseded ADRs get a status line, not a rewrite.
+- **Log the decision.** Add an entry to [`DECISIONS.md`](DECISIONS.md) in the
+  same PR whenever you make a non-obvious call — a library choice, a rejected
+  alternative, a trade-off you knowingly accepted. State what you *didn't* do
+  and why; that's the part nobody can reconstruct later.
+- **Write the ADR** if the change is structural enough that reversing it would
+  be expensive. `docs/decisions/`, numbered, never deleted — superseded ADRs get
+  a status line, not a rewrite.
 - **`packages/core` stays framework-free.** No database handles, no request
   objects, no framework imports. It is the most testable part of the codebase
   and it should stay that way.
