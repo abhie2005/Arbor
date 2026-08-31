@@ -3,9 +3,10 @@
 A dense, keyboard-driven work platform. Hierarchies, saved views, custom fields,
 and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 
-> **Status: early.** The foundation is in place — the container tree, the task
-> model, the view compiler, and the permission index all work and are tested
-> against a real Postgres. The UI is not built yet. See [Roadmap](#roadmap).
+> **Status: early.** The container tree, task model, view compiler, permission
+> index, and mutation layer all work and are tested against a real Postgres.
+> The List view is interactive. Everything else is unbuilt.
+> **[docs/STATUS.md](docs/STATUS.md) is the current state and where to pick up.**
 
 ---
 
@@ -28,8 +29,9 @@ Requires Node 22+ and Docker. Nothing else, and no cloud account.
 Verify the stack end to end:
 
 ```bash
-npm run db:smoke       # runs compiled view queries against the seeded data
-npm test               # 56 unit tests
+npm test               # 80 unit tests, no database needed
+npm run db:smoke       # 16 checks against real Postgres: compiled queries,
+                       # permission scoping, mutations, and the activity log
 ```
 
 ---
@@ -107,15 +109,16 @@ connections, and API Gateway's WebSocket API bills per message.
       subtasks, multi-list membership, fractional ordering, soft delete.
 - [x] **2 — View compiler.** Definition object, permission-scoped SQL
       compilation, filters, grouping, custom-field sorting, group counts.
-- [ ] **3 — Configuration engines.** Status sets with inheritance, custom field
+- [x] **3 — Mutations.** Invertible operations, one transaction per batch, an
+      activity row per change, real undo, and an interactive List view.
+- [ ] **4 — Configuration engines.** Status sets with inheritance, custom field
       CRUD, task types with field scoping, templates.
-- [ ] **4 — Collaboration.** Activity log, comments, notifications, realtime
-      deltas, presence.
-- [ ] **5 — Access control.** Private containers, grants, access-index rebuild
-      job, guests.
-- [ ] **6 — Depth.** Time tracking, goals, dashboards, remaining view renderers.
-- [ ] **7 — Docs.** CRDT editor, nested pages, backlinks.
-- [ ] **8 — Automations, forms, public API.**
+- [ ] **5 — Collaboration.** Comments, notifications, realtime deltas, presence.
+- [ ] **6 — Access control.** Real auth, private containers, grants,
+      access-index rebuild job, guests.
+- [ ] **7 — Depth.** Time tracking, goals, dashboards, remaining view renderers.
+- [ ] **8 — Docs.** CRDT editor, nested pages, backlinks.
+- [ ] **9 — Automations, forms, public API.**
 
 ---
 
@@ -125,8 +128,10 @@ Good first issues are the ones shaped like this: a new view renderer, a new
 custom field type, a keyboard shortcut. Each is self-contained, visible, and
 satisfying.
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and the
-[ADRs](docs/decisions/) if you want to know why something is the way it is.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) first. If you want to know why
+something is the way it is, [DECISIONS.md](DECISIONS.md) logs every non-obvious
+call with the alternatives that were rejected, and [docs/decisions/](docs/decisions/)
+holds the ADRs for the structural ones.
 
 UI primitives come from the [21st.dev](https://21st.dev) registry via the shadcn
 CLI, land in `packages/ui/src/primitives/`, and are re-tokenized to Arbor's
