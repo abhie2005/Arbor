@@ -353,3 +353,182 @@
   border-radius: 50%;
   background: var(--status-done);
 }
+
+/* ---------- interactive ---------- */
+.row[data-pending] {
+  opacity: 0.55;
+}
+
+.dot-button,
+.flag,
+.archive,
+.title {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+}
+
+.dot-button {
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+}
+
+/* The reset above uses `font: inherit`, which wipes the size set earlier in
+   this file. Restate what the shorthand clobbered. */
+.flag {
+  font-size: 10px;
+}
+
+.title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-row);
+}
+
+.title:hover {
+  color: var(--accent);
+}
+
+.title-input {
+  background: var(--raised);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-row);
+  padding: 2px var(--space-2);
+  width: 100%;
+  outline: none;
+}
+
+.archive {
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  width: 16px;
+}
+
+.row:hover .archive,
+.archive:focus-visible {
+  opacity: 1;
+}
+
+.archive:hover {
+  color: var(--danger);
+}
+
+.row {
+  grid-template-columns: 12px 58px minmax(0, 1fr) auto auto auto 16px;
+}
+
+.new-task-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--row-h);
+  padding: 0 var(--space-4);
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--text-meta);
+  cursor: pointer;
+  text-align: left;
+}
+
+.new-task-trigger:hover {
+  background: var(--hover);
+  color: var(--text-2);
+}
+
+.new-task .dot {
+  border-style: dashed;
+}
+
+/* ---------- dev switcher ---------- */
+.switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-control);
+  padding: 1px var(--space-2);
+}
+
+.switcher-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--warning);
+}
+
+.switcher select {
+  background: none;
+  border: none;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-meta);
+  outline: none;
+  cursor: pointer;
+}
+
+.switcher select option {
+  background: var(--raised);
+  color: var(--text);
+}
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed;
+  bottom: var(--space-6);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-modal);
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-meta);
+  color: var(--text);
+  z-index: 50;
+}
+
+.toast button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-meta);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.toast button:disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
+.toast kbd {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-chip);
+  padding: 0 4px;
+  color: var(--text-3);
+}

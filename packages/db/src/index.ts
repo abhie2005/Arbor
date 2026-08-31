@@ -8,3 +8,9 @@ export {
   type Database,
   type DatabaseOptions,
 } from "./client";
+export {
+  applyOperations,
+  MutationRejected,
+  type ApplyContext,
+  type ApplyResult,
+} from "./mutations";

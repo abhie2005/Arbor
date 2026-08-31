@@ -9,8 +9,15 @@
  *
  *   npm run db:seed && npm run db:smoke
  */
-import { DEFAULT_VIEW_DEFINITION, compileViewQuery } from "@arbor/core";
+import {
+  DEFAULT_VIEW_DEFINITION,
+  compileViewQuery,
+  invertBatch,
+  type Operation,
+} from "@arbor/core";
 import { Pool } from "pg";
+
+import { applyOperations } from "./mutations";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL ?? "postgres://arbor:arbor@localhost:5432/arbor",
@@ -168,9 +175,133 @@ async function main() {
       rows.every((r) => r.parent_task_id === null) ? null : "a subtask appeared as a top-level row",
   );
 
+  // --- mutations -----------------------------------------------------------
+  console.log("\nmutations → activity log\n");
+
+  const target = await one(`SELECT id, status_id, name FROM tasks WHERE key = 'ENG-415'`);
+  const nextStatus = await one(
+    `SELECT id FROM statuses WHERE name = 'In Review' LIMIT 1`,
+  );
+
+  const beforeActivity = await one(
+    `SELECT COUNT(*)::int AS n FROM activity WHERE object_id = '${target.id}'`,
+  );
+
+  const change: Operation = {
+    kind: "setField",
+    taskId: target.id!,
+    field: "statusId",
+    from: target.status_id!,
+    to: nextStatus.id!,
+  };
+
+  await applyOperations([change], { actorId: viewer.id!, connection: pool });
+
+  const afterStatus = await one(
+    `SELECT status_id, completed_at FROM tasks WHERE id = '${target.id}'`,
+  );
+  const afterActivity = await one(
+    `SELECT COUNT(*)::int AS n FROM activity WHERE object_id = '${target.id}'`,
+  );
+  const lastEvent = await one(
+    `SELECT verb, actor_id, field FROM activity
+     WHERE object_id = '${target.id}' ORDER BY id DESC LIMIT 1`,
+  );
+
+  report(
+    "a field change lands on the task",
+    afterStatus.status_id === nextStatus.id ? null : "status did not change",
+  );
+  report(
+    "the same change writes exactly one activity row",
+    Number(afterActivity.n) - Number(beforeActivity.n) === 1
+      ? null
+      : `expected 1 new activity row, got ${Number(afterActivity.n) - Number(beforeActivity.n)}`,
+  );
+  report(
+    "the activity row records the verb and the actor",
+    lastEvent.verb === "task.status_id_changed" && lastEvent.actor_id === viewer.id
+      ? null
+      : `got verb=${lastEvent.verb} actor=${lastEvent.actor_id}`,
+  );
+
+  // Undo is the same machinery in reverse — no special-case code path.
+  await applyOperations(invertBatch([change]), { actorId: viewer.id!, connection: pool });
+  const restored = await one(`SELECT status_id FROM tasks WHERE id = '${target.id}'`);
+  report(
+    "undo restores the previous value",
+    restored.status_id === target.status_id ? null : "undo did not restore the original status",
+  );
+
+  // A no-op must not reach the database at all.
+  const beforeNoop = await one(
+    `SELECT COUNT(*)::int AS n FROM activity WHERE object_id = '${target.id}'`,
+  );
+  const noopResult = await applyOperations(
+    [{ ...change, from: target.status_id!, to: target.status_id! }],
+    { actorId: viewer.id!, connection: pool },
+  );
+  const afterNoop = await one(
+    `SELECT COUNT(*)::int AS n FROM activity WHERE object_id = '${target.id}'`,
+  );
+  report(
+    "a no-op writes nothing",
+    noopResult.applied === 0 && Number(beforeNoop.n) === Number(afterNoop.n)
+      ? null
+      : "a no-op reached the database",
+  );
+
+  // Moving into a done-group status must stamp completion, and out must clear
+  // it — derived server-side so it can never drift from status.
+  const doneStatus = await one(`SELECT id FROM statuses WHERE name = 'Done' LIMIT 1`);
+  await applyOperations(
+    [{ ...change, from: target.status_id!, to: doneStatus.id! }],
+    { actorId: viewer.id!, connection: pool },
+  );
+  const completed = await one(`SELECT completed_at FROM tasks WHERE id = '${target.id}'`);
+  report(
+    "moving into a done status stamps completed_at",
+    completed.completed_at ? null : "completed_at was not set",
+  );
+
+  await applyOperations(
+    [{ ...change, from: doneStatus.id!, to: target.status_id! }],
+    { actorId: viewer.id!, connection: pool },
+  );
+  const reopened = await one(`SELECT completed_at FROM tasks WHERE id = '${target.id}'`);
+  report(
+    "moving back out clears completed_at",
+    reopened.completed_at === null ? null : "completed_at was not cleared",
+  );
+
+  report(
+    "an operation without an actor is refused",
+    await expectRejection(() =>
+      applyOperations([change], { actorId: "", connection: pool }),
+    ),
+  );
+
   console.log(failures === 0 ? "\nall checks passed\n" : `\n${failures} check(s) failed\n`);
   await pool.end();
   process.exit(failures === 0 ? 0 : 1);
+}
+
+function report(label: string, problem: string | null) {
+  if (problem) {
+    failures++;
+    console.log(`  FAIL  ${label}\n        ${problem}`);
+  } else {
+    console.log(`  ok    ${label}`);
+  }
+}
+
+async function expectRejection(fn: () => Promise<unknown>): Promise<string | null> {
+  try {
+    await fn();
+    return "expected a rejection, but the call succeeded";
+  } catch {
+    return null;
+  }
 }
 
 main().catch((error: unknown) => {

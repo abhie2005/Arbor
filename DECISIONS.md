@@ -62,6 +62,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-032](#d-032) | The demo page has no query of its own | Testing |
 | [D-033](#d-033) | A live-Postgres smoke check alongside unit tests | Testing |
 | [D-034](#d-034) | Dev-mode user switcher before real auth | Auth |
+| [D-035](#d-035) | The mutation executor lives in the data layer, not the web app | Architecture |
+| [D-036](#d-036) | The server decides what an operation's inverse is | Architecture |
 
 ---
 
@@ -752,3 +754,54 @@ which point real auth stops being deferrable.
 *In one sentence:* I stubbed identity behind a single interface so the
 interesting work — mutations and the activity log — wasn't blocked on
 undifferentiated auth plumbing.
+
+### D-035
+**The mutation executor lives in the data layer, not the web app** · 2026-08-30 · active
+
+`applyOperations` sits in `@arbor/db`, takes an `actorId` parameter, and knows
+nothing about sessions.
+
+**How this came up.** It was written in `apps/web/src/server/` with a
+`server-only` import and an internal `requireUser()` call. That made it
+impossible to exercise outside a Next.js request — which is how I noticed the
+real problem: **the worker needs to apply operations too.** Running an
+automation action *is* applying an operation. So does an API client, and so will
+an importer.
+
+**The fix.** Move it down a layer and invert the dependency on identity: the
+caller supplies the actor, because the caller is the one who has it. The web app
+gets it from a session, the worker from the automation record.
+
+**What this bought immediately.** The mutation path became testable from a
+script, which is how the eight mutation checks in `db:smoke` exist at all —
+activity-row counts, undo round-tripping, no-op suppression, and the
+`completed_at` derivation are all verified against real Postgres now.
+
+**The tell to watch for.** Code that can only run inside a request usually
+belongs to the request. When it can't be tested without one, that's the signal
+it's in the wrong layer.
+
+*In one sentence:* the executor was trapped in the web app because it fetched
+its own identity, and moving it into the data layer with the actor passed in made
+it reusable by the worker and testable in isolation.
+
+### D-036
+**The server decides what an operation's inverse is** · 2026-08-30 · active
+
+Each server action returns the inverse operations; the client stores them and
+decides only *when* to apply them.
+
+**Alternative.** Have the client construct the inverse from what it has on
+screen. Simpler, and wrong: a tab that's been open for ten minutes has a stale
+idea of `from`. Undoing would restore a value that was never there, silently
+overwriting someone else's change.
+
+**Why this split.** The server knows the previous value at the moment of the
+write. The client knows the user's intent to undo. Each side decides the thing
+it actually has information about.
+
+**Trade-off.** Inverse operations travel over the wire, so the payload is
+slightly larger and the undo stack holds server-shaped data.
+
+*In one sentence:* only the server knows what the value actually was, so it
+computes the inverse and the client only chooses when to apply it.
