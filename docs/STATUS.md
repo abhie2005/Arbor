@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-09-01. Repo: https://github.com/abhie2005/clickup-alt (`main`).
+Last updated 2026-09-01. Repo: https://github.com/abhie2005/Arbor (`main`).
 
 This file exists so a new session, or a future you, can pick the project up
 without re-deriving anything. Update it whenever you stop mid-stream.
@@ -182,9 +182,6 @@ and unlocks Board/Table/Calendar as renderers rather than features.
 
 ## Open questions
 
-- **Repo name.** `clickup-alt` references ClickUp directly, which cuts against
-  the goal of the product standing on its own (D-001). Renaming is a two-minute
-  GitHub operation and nothing in the code depends on it.
 - **Enterprise features** — in the open repo, or a separately-licensed `ee/`
   directory? Decide before writing the first line of SSO; choosing afterwards
   means an awkward public relicensing.

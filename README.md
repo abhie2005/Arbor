@@ -13,8 +13,8 @@ and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 ## Quickstart
 
 ```bash
-git clone https://github.com/<you>/arbor.git
-cd arbor
+git clone https://github.com/abhie2005/Arbor.git
+cd Arbor
 cp .env.example .env
 
 npm install
