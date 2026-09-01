@@ -1,9 +1,76 @@
 # Status — resume here
 
-Last updated 2026-08-31. Repo: https://github.com/abhie2005/clickup-alt (`main`).
+Last updated 2026-09-01. Repo: https://github.com/abhie2005/clickup-alt (`main`).
 
 This file exists so a new session, or a future you, can pick the project up
 without re-deriving anything. Update it whenever you stop mid-stream.
+
+---
+
+## OPEN BUG — undo does not work in the browser
+
+**Status: unresolved. Two attempted fixes both failed. Do not assume it is
+fixed.**
+
+**Symptom.** Click a status dot — the task moves, correctly. The Undo button
+lights up showing depth `1`. Click Undo (or press ⌘Z) — a toast appears
+claiming the change was undone, but the row does not move back.
+
+### What is already ruled out
+
+- **The write path is not the problem.** `npm run db:smoke` applies an
+  operation, applies its inverse, and asserts the original value is restored
+  directly against Postgres. It passes. `invert()` and `invertBatch()` have 24
+  unit tests. The server-side machinery works.
+- **The stack is not empty.** The button shows depth `1`, which reads from the
+  module-scope store, so the inverse was recorded.
+
+### What was fixed along the way (real bugs, but not this one)
+
+Both of these were genuine defects worth fixing. Neither resolved the symptom,
+so **do not treat them as the explanation**:
+
+1. **D-038** — the stack was in a `useRef` that `revalidatePath` could wipe on
+   remount. Moved to module scope.
+2. **D-040** — the action was `void`-called outside a transition, so Next.js
+   never applied the refreshed payload, and the toast fired before the server
+   answered. Now awaited inside `startTransition` with `router.refresh()`.
+
+### Why the diagnosis stalled
+
+Every fix so far was **reasoned from the code, never observed in a browser** —
+the Claude-in-Chrome extension would not connect, so nothing was verified end
+to end. That is exactly how two plausible-but-wrong fixes shipped in a row.
+
+### How to actually diagnose it — do this first, before changing any code
+
+Open the app with devtools:
+
+1. **Network tab** → click Undo → find the POST to `/`. Check:
+   - Does the request fire at all? (If not, the handler is not running.)
+   - What is the response status? A 500 means the action threw.
+   - Does the response contain a fresh RSC payload, or just the return value?
+2. **Console tab** → look for a React or Next error on click.
+3. **Check the database directly** while the UI still looks unchanged:
+   ```bash
+   docker exec arbor-pg psql -U arbor -d arbor -c \
+     "SELECT key, status_id FROM tasks WHERE key='ENG-415';"
+   ```
+   - **Value changed back** → the write works, the UI is not re-rendering.
+     The bug is in the refresh path, not the mutation.
+   - **Value unchanged** → the action is failing or being filtered. Check
+     `activity` for a row, and whether `applyOperations` returned
+     `applied: 0` (an `isNoop` mismatch would do that).
+
+That single check splits the remaining hypotheses in half. Report which side it
+lands on before writing a fix.
+
+### Untested hypotheses worth holding
+
+- The `Operation` objects may not survive the server-action serialization
+  boundary intact — verify `from`/`to` server-side by logging in `undo()`.
+- `revalidatePath("/")` combined with `export const dynamic = "force-dynamic"`
+  may not invalidate the client Router Cache as expected.
 
 ---
 
@@ -38,15 +105,16 @@ npm run db:seed && npm run db:smoke            # 16 checks against real Postgres
 | **Hierarchy** | Config inheritance, effective privacy, denormalized ancestors, move-legality. |
 | **Ordering** | Fractional indices — one row written per drag. |
 | **Mutations** | Invertible operations, one transaction per batch, activity row per change, real undo. |
-| **List view** | Renders through the compiler. Status cycling, priority cycling, inline rename, archive, inline create, ⌘Z. |
+| **List view** | Renders through the compiler. Status cycling, priority cycling, inline rename, archive, inline create all work. **Undo does not — see the open bug above.** |
 | **Identity** | Dev-only user switcher behind `getCurrentUser()`. Not real auth. |
 
 **Verified:** 80 unit tests, 16 live-Postgres smoke checks, three packages
 typechecking clean.
 
-**Not verified:** nobody has clicked a button. The Chrome extension was not
-connected, so the click → server action → database path is proven only at the
-layer boundary, not end to end through the UI. **Do this first when you resume.**
+**Confirmed working in a browser** (2026-09-01): status cycling, inline
+rename, inline create, archive, the dev user switcher.
+
+**Confirmed broken:** undo. See the open bug at the top of this file.
 
 ---
 
@@ -64,9 +132,9 @@ layer boundary, not end to end through the UI. **Do this first when you resume.*
 
 ## Where to pick up
 
-**Immediate (30 min):** load the app in a browser and click through the
-interactive list. Status dot, priority flag, inline rename, archive, create,
-⌘Z. This is the one gap in the verification story.
+**Immediate:** the undo bug above. It is small in scope but it is a
+correctness bug in the mutation layer's most visible feature, and the fix is
+gated on one browser observation, not on more code reading.
 
 **Next phase — configuration engines.** The schema is already in place for all
 of it; this is service + UI work.
