@@ -9,8 +9,10 @@ import {
   useMemo,
   useState,
   useSyncExternalStore,
+  useTransition,
   type ReactNode,
 } from "react";
+import { useRouter } from "next/navigation";
 
 import { undo as undoAction } from "@/server/actions";
 
@@ -38,14 +40,17 @@ interface UndoContextValue {
   record: (inverse: readonly Operation[]) => void;
   undo: () => void;
   depth: number;
+  pending: boolean;
   nextLabel: string | undefined;
 }
 
 const UndoContext = createContext<UndoContextValue | null>(null);
 
 export function UndoProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const depth = useSyncExternalStore(subscribe, undoDepth, serverDepth);
   const [toast, setToast] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
 
   const record = useCallback((inverse: readonly Operation[]) => {
     recordInverse(inverse);
@@ -59,9 +64,29 @@ export function UndoProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    setToast(describeBatch(inverse));
-    void undoAction(inverse);
-  }, []);
+    // Inside a transition, and awaited. Both matter:
+    //
+    //   - Outside a transition, Next.js never applies the refreshed page
+    //     payload that `revalidatePath` produces, so the write lands in the
+    //     database and the screen keeps showing stale rows.
+    //   - Fire-and-forget meant the toast claimed success before the server had
+    //     answered, so a failed undo still reported that it had worked.
+    startTransition(async () => {
+      try {
+        await undoAction(inverse);
+        // Belt and braces: force the server components to re-fetch even if the
+        // action's own revalidation did not reach this tree.
+        router.refresh();
+        setToast(describeBatch(inverse));
+      } catch (error) {
+        // Put it back — a failed undo must not cost the user their history.
+        recordInverse(inverse);
+        setToast(
+          error instanceof Error ? `Undo failed — ${error.message}` : "Undo failed",
+        );
+      }
+    });
+  }, [router]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -96,8 +121,8 @@ export function UndoProvider({ children }: { children: ReactNode }) {
   }, [toast]);
 
   const value = useMemo(
-    () => ({ record, undo, depth, nextLabel: nextUndoDescription() }),
-    [record, undo, depth],
+    () => ({ record, undo, depth, pending, nextLabel: nextUndoDescription() }),
+    [record, undo, depth, pending],
   );
 
   return (
@@ -122,14 +147,14 @@ export function UndoProvider({ children }: { children: ReactNode }) {
  * the stack depth is observable rather than something you infer from behaviour.
  */
 export function UndoButton() {
-  const { undo, depth, nextLabel } = useUndo();
+  const { undo, depth, pending, nextLabel } = useUndo();
 
   return (
     <button
       type="button"
       className="undo-button"
       onClick={undo}
-      disabled={depth === 0}
+      disabled={depth === 0 || pending}
       title={depth > 0 ? `${nextLabel} · ⌘Z` : "Nothing to undo"}
     >
       <span aria-hidden>↩</span> Undo

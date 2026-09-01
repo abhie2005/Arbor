@@ -67,6 +67,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-037](#d-037) | Find the root `.env` by walking up, and never fall back to a default URL | Tooling |
 | [D-038](#d-038) | The undo stack lives at module scope, not in React state | Frontend |
 | [D-039](#d-039) | Every keyboard shortcut needs a visible equivalent | Frontend |
+| [D-040](#d-040) | Server actions run inside a transition and are always awaited | Frontend |
 
 ---
 
@@ -895,3 +896,44 @@ inline on the row.
 
 *In one sentence:* a shortcut with no visible counterpart is undiscoverable and
 undebuggable, so every one gets a control that also exposes its state.
+
+### D-040
+**Server actions run inside a transition and are always awaited** · 2026-09-01 · active
+
+Never `void someServerAction(...)`. Always
+`startTransition(async () => { await action(); ... })`.
+
+**How this came up.** After fixing the undo stack (D-038), the button showed a
+depth of 1 and clicking it displayed "Changed status" — but the row did not
+move. The user reported it as "it says it undid, but it didn't."
+
+**Two bugs in one line.** The undo handler ended with:
+
+```js
+setToast(describeBatch(inverse));
+void undoAction(inverse);
+```
+
+1. **Outside a transition, Next.js never applies the refreshed page payload.**
+   `revalidatePath` marks the route stale, but nothing re-renders the tree
+   unless the action was dispatched inside a transition. The database write
+   landed and the screen kept showing the old rows. This is why clicking a
+   status dot worked — `TaskRow` wraps its calls in `startTransition` — and
+   undo did not.
+2. **Fire-and-forget makes the toast lie.** The success message was shown
+   before the server had answered, so a *failed* undo also reported success.
+   Confirmed the write path itself was fine: `db:smoke` asserts undo restores
+   the previous value directly against Postgres, and passes.
+
+**The fix.** Await inside a transition, toast only on success, call
+`router.refresh()` as a second guarantee that the server components re-fetch,
+and on failure push the inverse back onto the stack — a failed undo must not
+also cost the user their history.
+
+**The general rule.** A mutation is not complete when the promise is created;
+it is complete when the server has answered *and* the UI reflects it. Any code
+path that reports success before both have happened is lying to the user.
+
+*In one sentence:* a fire-and-forget server action skips the re-render Next.js
+does on revalidation and reports success before the server answers, so every
+action is now awaited inside a transition and only confirms once it has landed.
