@@ -65,6 +65,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-035](#d-035) | The mutation executor lives in the data layer, not the web app | Architecture |
 | [D-036](#d-036) | The server decides what an operation's inverse is | Architecture |
 | [D-037](#d-037) | Find the root `.env` by walking up, and never fall back to a default URL | Tooling |
+| [D-038](#d-038) | The undo stack lives at module scope, not in React state | Frontend |
+| [D-039](#d-039) | Every keyboard shortcut needs a visible equivalent | Frontend |
 
 ---
 
@@ -841,3 +843,55 @@ it succeeds locally, does nothing in production, and raises no error.
 *In one sentence:* the env file sits at the workspace root but processes start
 in subdirectories, so the loader walks up to find it — and I removed the
 hardcoded database fallback, because a silent default is worse than a crash.
+
+### D-038
+**The undo stack lives at module scope, not in React state** · 2026-09-01 · active
+
+`apps/web/src/components/undo-store.ts` owns the stack; the provider subscribes
+to it with `useSyncExternalStore`.
+
+**How this came up.** The user reported that ⌘Z did nothing, while every other
+interaction worked. Since clicking a status dot succeeded, the server had
+returned the inverse and `record()` had run — so the stack should have had
+content by the time the key was pressed.
+
+**The cause.** The stack was held in a `useRef` inside `UndoProvider`. Every
+mutation ends with `revalidatePath("/")`, which re-renders the page; when that
+remounts the provider, the ref is re-initialised to a fresh empty stack. The
+history was being wiped moments after being recorded.
+
+**The fix, and why it is not a workaround.** Undo history belongs to the
+*session*, not to a component instance. Module scope is what "the session"
+means on the client: it survives every remount and clears only on a full page
+load. Putting it there is the correct home, and it happens to be immune to the
+remount question entirely.
+
+**The general lesson.** State whose lifetime is longer than any component's
+should not live inside a component. If a remount would lose it and that loss
+would be a bug, it is in the wrong place.
+
+*In one sentence:* undo history outlives any single render, so holding it in a
+ref meant a revalidation could silently erase it — module scope matches its
+actual lifetime.
+
+### D-039
+**Every keyboard shortcut needs a visible equivalent** · 2026-09-01 · active
+
+Undo is now a button in the header showing the stack depth, as well as ⌘Z.
+
+**Why.** When ⌘Z appeared to do nothing, there was no way to tell *which* part
+had failed — the keybinding, the recording, or the server call. A visible
+control with a depth counter makes the state observable: if it reads `2`, the
+stack has content and any failure is downstream of it.
+
+That is the debugging argument. The product argument is stronger: a
+keyboard-first tool still has to be discoverable. A shortcut nobody can find is
+a feature that does not exist for most users, and D-002 committed us to dense
+and keyboard-driven, not to hidden.
+
+**Related fix.** `TaskRow` caught mutation errors and silently reset — so a
+broken mutation looked identical to a UI ignoring clicks. Failures now surface
+inline on the row.
+
+*In one sentence:* a shortcut with no visible counterpart is undiscoverable and
+undebuggable, so every one gets a control that also exposes its state.

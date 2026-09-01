@@ -1,51 +1,58 @@
 "use client";
 
-import { type Operation, UndoStack, describeBatch } from "@arbor/core";
+import { describeBatch, type Operation } from "@arbor/core";
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
 import { undo as undoAction } from "@/server/actions";
 
+import {
+  nextUndoDescription,
+  recordInverse,
+  serverDepth,
+  subscribe,
+  takeInverse,
+  undoDepth,
+} from "./undo-store";
+
 /**
- * The undo stack lives in the client, holding inverse operations the server
- * returned.
+ * Undo, driven by inverse operations the server returned.
  *
- * The server decides what the inverse is (it knows the previous value; a stale
- * tab does not), and the client only decides *when* to apply it. That split is
- * what keeps undo correct when two people are editing the same list.
+ * The server decides what the inverse is — it knows the previous value, and a
+ * tab that has been open for ten minutes does not. The client decides only when
+ * to apply it.
+ *
+ * The stack itself lives in `undo-store`, at module scope, because every
+ * mutation revalidates the page and a remount would wipe component-local state.
  */
 
 interface UndoContextValue {
-  record: (inverse: Operation[]) => void;
+  record: (inverse: readonly Operation[]) => void;
   undo: () => void;
   depth: number;
-  pending: string | null;
+  nextLabel: string | undefined;
 }
 
 const UndoContext = createContext<UndoContextValue | null>(null);
 
 export function UndoProvider({ children }: { children: ReactNode }) {
-  const stack = useRef(new UndoStack(20));
-  const [depth, setDepth] = useState(0);
+  const depth = useSyncExternalStore(subscribe, undoDepth, serverDepth);
   const [toast, setToast] = useState<string | null>(null);
 
-  const record = useCallback((inverse: Operation[]) => {
-    if (inverse.length === 0) return;
-    stack.current.push(inverse);
-    setDepth(stack.current.depth);
+  const record = useCallback((inverse: readonly Operation[]) => {
+    recordInverse(inverse);
   }, []);
 
   const undo = useCallback(() => {
-    const inverse = stack.current.pop();
-    setDepth(stack.current.depth);
+    const inverse = takeInverse();
 
     if (!inverse) {
       setToast("Nothing to undo");
@@ -58,35 +65,39 @@ export function UndoProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      // toLowerCase because Shift or Caps Lock yields "Z".
+      if (event.key.toLowerCase() !== "z") return;
+
+      // Never hijack undo while the user is typing — the browser's own text
+      // undo is what they mean there.
       const target = event.target as HTMLElement | null;
-      // Single-letter and modifier shortcuts must never fire while the user is
-      // typing — the most common keyboard-UI bug there is.
-      const typing =
+      if (
         target?.tagName === "INPUT" ||
         target?.tagName === "TEXTAREA" ||
-        target?.isContentEditable;
-
-      if (typing) return;
-
-      if ((event.metaKey || event.ctrlKey) && event.key === "z") {
-        event.preventDefault();
-        undo();
+        target?.isContentEditable
+      ) {
+        return;
       }
+
+      event.preventDefault();
+      undo();
     }
 
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // Capture phase: nothing downstream gets to swallow the shortcut first.
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [undo]);
 
   useEffect(() => {
     if (!toast) return;
-    const timer = setTimeout(() => setToast(null), 2600);
+    const timer = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(timer);
   }, [toast]);
 
   const value = useMemo(
-    () => ({ record, undo, depth, pending: toast }),
-    [record, undo, depth, toast],
+    () => ({ record, undo, depth, nextLabel: nextUndoDescription() }),
+    [record, undo, depth],
   );
 
   return (
@@ -95,12 +106,35 @@ export function UndoProvider({ children }: { children: ReactNode }) {
       {toast ? (
         <div className="toast" role="status">
           <span>{toast}</span>
-          <button type="button" onClick={undo} disabled={depth === 0}>
-            Undo <kbd>⌘Z</kbd>
-          </button>
+          {depth > 0 ? (
+            <button type="button" onClick={undo}>
+              Undo again <kbd>⌘Z</kbd>
+            </button>
+          ) : null}
         </div>
       ) : null}
     </UndoContext.Provider>
+  );
+}
+
+/**
+ * A visible control, so undo does not depend on knowing a shortcut — and so
+ * the stack depth is observable rather than something you infer from behaviour.
+ */
+export function UndoButton() {
+  const { undo, depth, nextLabel } = useUndo();
+
+  return (
+    <button
+      type="button"
+      className="undo-button"
+      onClick={undo}
+      disabled={depth === 0}
+      title={depth > 0 ? `${nextLabel} · ⌘Z` : "Nothing to undo"}
+    >
+      <span aria-hidden>↩</span> Undo
+      {depth > 0 ? <span className="undo-depth">{depth}</span> : null}
+    </button>
   );
 }
 

@@ -3,7 +3,7 @@ import { executeCompiled, pool } from "@arbor/db";
 
 import { NewTaskRow } from "@/components/new-task";
 import { TaskRow, type TaskRowData } from "@/components/task-row";
-import { UndoProvider } from "@/components/undo";
+import { UndoButton, UndoProvider } from "@/components/undo";
 import { UserSwitcher } from "@/components/user-switcher";
 import { getCurrentUser, listSwitchableUsers } from "@/server/auth";
 
@@ -163,7 +163,7 @@ export default async function Page() {
               <strong>{data.list_name}</strong>
             </div>
             <div className="header-right">
-              <span className="kbd">⌘Z undo</span>
+              <UndoButton />
               <UserSwitcher users={users} currentId={viewer.id} />
             </div>
           </header>

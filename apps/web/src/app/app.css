@@ -532,3 +532,48 @@
   padding: 0 4px;
   color: var(--text-3);
 }
+
+/* ---------- undo control ---------- */
+.undo-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 22px;
+  padding: 0 var(--space-2);
+  background: none;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: var(--text-meta);
+  cursor: pointer;
+}
+
+.undo-button:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.undo-button:disabled {
+  color: var(--text-3);
+  cursor: default;
+  opacity: 0.6;
+}
+
+.undo-depth {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.row[data-failed] {
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+
+.row-error {
+  grid-column: 1 / -1;
+  font-size: var(--text-meta);
+  color: var(--danger);
+  padding-bottom: var(--space-1);
+}

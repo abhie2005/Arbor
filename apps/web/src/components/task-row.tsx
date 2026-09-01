@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import type { Operation } from "@arbor/core";
+import { useEffect, useState, useTransition } from "react";
 
 import { archiveTask, cycleStatus, renameTask, setPriority } from "@/server/actions";
 
@@ -23,27 +24,36 @@ export function TaskRow({ task }: { task: TaskRowData }) {
   const { record } = useUndo();
   const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
   // Optimistic name: the row shows the new value on keystroke and reconciles
   // when the server responds, rather than waiting for a round trip.
   const [name, setName] = useState(task.name);
 
-  function run(action: () => Promise<{ kind: string }[]>) {
+  function run(action: () => Promise<Operation[]>) {
     startTransition(async () => {
       try {
-        const inverse = await action();
-        record(inverse as never);
-      } catch {
-        // The server is authoritative: on failure, drop the optimistic value
-        // and let the revalidated render supply the truth.
+        record(await action());
+      } catch (error) {
+        // The server is authoritative: drop the optimistic value and let the
+        // revalidated render supply the truth. Surface the failure rather than
+        // swallowing it — a silent catch here is why a broken mutation would
+        // look like a UI that simply ignores clicks.
         setName(task.name);
+        setFailure(error instanceof Error ? error.message : "That change did not save");
       }
     });
   }
 
+  useEffect(() => {
+    if (!failure) return;
+    const timer = setTimeout(() => setFailure(null), 4000);
+    return () => clearTimeout(timer);
+  }, [failure]);
+
   const due = formatDue(task.dueAt);
 
   return (
-    <div className="row" data-pending={pending || undefined}>
+    <div className="row" data-pending={pending || undefined} data-failed={failure ? true : undefined}>
       <button
         type="button"
         className="dot-button"
@@ -122,6 +132,12 @@ export function TaskRow({ task }: { task: TaskRowData }) {
       >
         ×
       </button>
+
+      {failure ? (
+        <span className="row-error" role="alert">
+          {failure}
+        </span>
+      ) : null}
     </div>
   );
 }
