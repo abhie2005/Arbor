@@ -64,6 +64,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-034](#d-034) | Dev-mode user switcher before real auth | Auth |
 | [D-035](#d-035) | The mutation executor lives in the data layer, not the web app | Architecture |
 | [D-036](#d-036) | The server decides what an operation's inverse is | Architecture |
+| [D-037](#d-037) | Find the root `.env` by walking up, and never fall back to a default URL | Tooling |
 
 ---
 
@@ -805,3 +806,38 @@ slightly larger and the undo stack holds server-shaped data.
 
 *In one sentence:* only the server knows what the value actually was, so it
 computes the inverse and the client only chooses when to apply it.
+
+### D-037
+**Find the root `.env` by walking up, and never fall back to a default URL** · 2026-09-01 · active
+
+`packages/db/src/env.ts` searches upward from `process.cwd()` for a `.env` and
+loads it with `override: false`.
+
+**How this came up.** The user followed the README exactly — `cp .env.example
+.env` at the repo root — started the dev server, and got "Could not reach the
+database. DATABASE_URL is not set." In a workspace the `.env` lives at the root,
+but Next.js only reads its own app directory, and `npm run db:seed` starts in
+`packages/db`. Neither ever saw the file.
+
+**Why I hadn't caught it.** Every time I tested, I passed `DATABASE_URL=...`
+inline on the command line. That masked the bug completely — the code worked
+under my invocation and failed under the documented one. **A verification that
+doesn't use the documented path isn't verification.**
+
+**Alternatives.** *A `.env` copy per app* means several files drifting out of
+sync, and the secret exists in more places. *Requiring an inline variable* makes
+the quickstart worse for exactly the people the quickstart exists for.
+*Turbo's `globalEnv`* passes variables through but does not load the file.
+
+**`override: false` matters.** An inline variable and real production
+environment variables must always beat the file, or a stray `.env` on a server
+silently redirects the app.
+
+**The related fix.** `drizzle.config.ts` had a hardcoded
+`?? "postgres://arbor:arbor@localhost:5432/arbor"` fallback. Removed — a silent
+default to localhost is how a migration gets run against the wrong database:
+it succeeds locally, does nothing in production, and raises no error.
+
+*In one sentence:* the env file sits at the workspace root but processes start
+in subdirectories, so the loader walks up to find it — and I removed the
+hardcoded database fallback, because a silent default is worse than a crash.

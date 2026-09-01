@@ -1,7 +1,13 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
+import { envSearchOrigin, loadRootEnv } from "./env";
 import * as schema from "./schema";
+
+// Any process that touches the database gets the root .env, wherever it was
+// started from. Import order matters: this must run before the first read of
+// process.env.DATABASE_URL below.
+loadRootEnv();
 
 export type Database = ReturnType<typeof createDatabase>;
 
@@ -23,7 +29,8 @@ export function createPool(options: DatabaseOptions = {}): Pool {
 
   if (!connectionString) {
     throw new Error(
-      "DATABASE_URL is not set. Copy .env.example to .env, or run `npm run docker:up` to start Postgres locally.",
+      `DATABASE_URL is not set, and no .env file was found searching upward from ${envSearchOrigin()}. ` +
+        "Run `cp .env.example .env` at the repository root.",
     );
   }
 
