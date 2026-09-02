@@ -7,6 +7,8 @@
   "engines": {
     "node": ">=22"
   },
+  "//packageManager": "Turborepo refuses to resolve the workspace without this. npm, not pnpm — see D-004.",
+  "packageManager": "npm@11.9.0",
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -20,6 +22,7 @@
     "db:generate": "npm run db:generate -w @arbor/db",
     "db:migrate": "npm run db:migrate -w @arbor/db",
     "db:seed": "npm run db:seed -w @arbor/db",
+    "db:smoke": "npm run db:smoke -w @arbor/db",
     "db:studio": "npm run db:studio -w @arbor/db",
     "docker:up": "docker compose -f infra/docker/compose.yml up -d",
     "docker:down": "docker compose -f infra/docker/compose.yml down",
