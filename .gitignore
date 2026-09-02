@@ -32,3 +32,6 @@ npm-debug.log*
 
 # local agent/tooling config
 .claude/settings.local.json
+
+# TypeScript incremental build state — machine-local, regenerated on every build
+*.tsbuildinfo
