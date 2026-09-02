@@ -23,6 +23,7 @@
     "db:migrate": "npm run db:migrate -w @arbor/db",
     "db:seed": "npm run db:seed -w @arbor/db",
     "db:smoke": "npm run db:smoke -w @arbor/db",
+    "check:actions": "npm run check:actions -w @arbor/web",
     "db:studio": "npm run db:studio -w @arbor/db",
     "docker:up": "docker compose -f infra/docker/compose.yml up -d",
     "docker:down": "docker compose -f infra/docker/compose.yml down",

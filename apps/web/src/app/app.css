@@ -577,3 +577,434 @@
   color: var(--danger);
   padding-bottom: var(--space-1);
 }
+
+/* ---------- settings ---------- */
+.settings-body {
+  padding: var(--space-5) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 900px;
+}
+
+.settings-section {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.settings-section[data-pending] {
+  opacity: 0.6;
+}
+
+.settings-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.settings-heading {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.settings-subheading {
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--text-2);
+  margin: var(--space-3) 0 0;
+}
+
+.settings-note {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  line-height: 1.55;
+  margin: 0;
+  max-width: 72ch;
+}
+
+.settings-error {
+  font-size: var(--text-meta);
+  color: var(--danger);
+  margin: 0;
+}
+
+.settings-badge {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--accent-dim);
+  background: var(--accent-dim);
+  border-radius: var(--radius-chip);
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
+.settings-badge.quiet {
+  color: var(--text-3);
+  background: none;
+  border-color: var(--line-strong);
+}
+
+.settings-badge.warn {
+  color: var(--warning);
+  background: none;
+  border-color: var(--warning);
+}
+
+.settings-inline {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+.settings-inline select,
+.settings-confirm select,
+.settings-select {
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-meta);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  outline: none;
+  cursor: pointer;
+}
+
+.settings-select.wide {
+  min-width: 150px;
+}
+
+.settings-input {
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-row);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  outline: none;
+  min-width: 0;
+}
+
+.settings-input:focus {
+  border-color: var(--accent);
+}
+
+.settings-input.short {
+  width: 68px;
+}
+
+.settings-color {
+  width: 24px;
+  height: var(--control-h);
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  background: none;
+  cursor: pointer;
+}
+
+.settings-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  min-width: 24px;
+  text-align: right;
+}
+
+.settings-icon,
+.settings-quiet,
+.settings-primary,
+.settings-danger,
+.settings-add {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  font: inherit;
+  font-size: var(--text-meta);
+  height: var(--control-h);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.settings-icon {
+  width: var(--control-h);
+  padding: 0;
+  color: var(--text-3);
+}
+
+.settings-icon:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.settings-icon:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.settings-icon.danger:hover {
+  color: var(--danger);
+}
+
+.settings-quiet:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.settings-primary {
+  color: var(--accent-contrast);
+  background: var(--accent);
+  font-weight: 500;
+}
+
+.settings-primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.settings-danger {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.settings-danger:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.settings-add {
+  align-self: flex-start;
+  color: var(--text-3);
+  border: 1px dashed var(--line-strong);
+}
+
+.settings-add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.settings-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.settings-config {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.settings-config label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+.settings-config label.grow {
+  flex: 1;
+  min-width: 200px;
+}
+
+.settings-check,
+.settings-config label.settings-check {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  display: flex;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.settings-checks {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.settings-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-start;
+}
+
+.settings-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* ---------- status rows ---------- */
+.status-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.status-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto 30px auto auto auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.settings-confirm {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  padding: var(--space-2) var(--space-3);
+}
+
+/* ---------- resolution table ---------- */
+.resolution-table {
+  display: flex;
+  flex-direction: column;
+}
+
+.resolution-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-meta);
+}
+
+.resolution-row:last-child {
+  border-bottom: none;
+}
+
+.resolution-name {
+  color: var(--text);
+}
+
+.resolution-set {
+  color: var(--text-2);
+}
+
+.resolution-source {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+}
+
+/* ---------- field panels ---------- */
+.field-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.field-panel {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--bg);
+}
+
+.field-panel[data-pending] {
+  opacity: 0.6;
+}
+
+.field-panel[data-archived] .field-name {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.field-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  background: none;
+  border: none;
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.field-summary:hover {
+  background: var(--hover);
+}
+
+.field-caret {
+  color: var(--text-3);
+  font-size: 9px;
+  width: 10px;
+}
+
+.field-name {
+  font-size: var(--text-row);
+  color: var(--text);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-body {
+  padding: var(--space-3);
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.type-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.4fr) 30px auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.settings-link {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  text-decoration: none;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+}
+
+.settings-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}

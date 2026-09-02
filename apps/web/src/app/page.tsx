@@ -163,6 +163,9 @@ export default async function Page() {
               <strong>{data.list_name}</strong>
             </div>
             <div className="header-right">
+              <a className="settings-link" href="/settings/statuses" title="Workspace settings">
+                Settings
+              </a>
               <UndoButton />
               <UserSwitcher users={users} currentId={viewer.id} />
             </div>

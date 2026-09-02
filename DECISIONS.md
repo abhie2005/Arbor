@@ -74,6 +74,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-044](#d-044) | Configuration changes are in the same activity log as tasks | Architecture |
 | [D-045](#d-045) | Changing a field's type is a data migration with a confirmation | Data |
 | [D-046](#d-046) | Fields accumulate down the tree; status sets override | Data |
+| [D-047](#d-047) | Configuration actions return failures, they do not throw | Frontend |
+| [D-048](#d-048) | A check that drives server actions over HTTP | Testing |
 
 ---
 
@@ -1161,3 +1163,61 @@ explicit per-container suppression, not a change to the inheritance rule.
 *In one sentence:* a task has one status but many fields, so status sets
 resolve to the nearest definition while fields accumulate — and the difference
 is forced by the data, not a preference.
+
+### D-047
+**Configuration actions return failures, they do not throw** · 2026-09-02 · active
+
+Every action in `config-actions.ts` returns `{ ok: true }` or
+`{ ok: false, error }`. The task actions still throw.
+
+**Why the two differ.** A task action fails when something is genuinely wrong —
+the task was deleted, the database is unreachable. A configuration action fails
+*as part of normal use*: "that name is taken", "12 tasks still use this
+status", "a status set needs at least one done status". Those are answers, not
+exceptions. They belong beside the control that produced them, and they have to
+leave the half-filled form intact — an error boundary that replaces the screen
+loses the six options someone just typed into a dropdown editor.
+
+**Trade-off.** Callers can ignore the result and see nothing happen, which a
+throw would have made loud. That risk is contained by every caller going
+through the same `run()` helper, which sets the error state or refreshes.
+
+*In one sentence:* rejected configuration edits are expected outcomes, so they
+come back as values a form can render rather than exceptions that discard it.
+
+### D-048
+**A check that drives server actions over HTTP** · 2026-09-02 · active
+
+`npm run check:actions` POSTs to the settings page with a `Next-Action` header
+and the argument array — the same request a button click makes — and then
+asserts against Postgres.
+
+**Why.** Every layer already had coverage and the gap between them is where the
+bugs were. @arbor/core has 147 unit tests; `db:smoke` runs the services against
+real Postgres. Neither touches the seam where a handler calls a server action,
+and that seam is exactly where the undo bug survived two confident fixes
+(D-040) — both reasoned from the code, neither observed running.
+
+The check catches things no unit test can see: that arguments survive
+serialization, that the action runs with a real user, and that a *rejected*
+edit comes back as a message rather than a 500.
+
+**Alternatives.**
+
+| Option | Why not |
+|---|---|
+| Playwright or similar | The right long-term answer and much heavier: a browser, a driver, and a fixture story for a project that currently needs `node` and a running dev server. Worth adding when there are interactions worth recording. |
+| Trust the browser session | The browser extension has failed to connect across two sessions. A check that only runs when the tooling cooperates is not a check. |
+| Call the service functions directly | That is `db:smoke`, and it skips the entire boundary this is about. |
+
+**The honest limit.** This proves the action works when invoked. It does not
+prove a click is wired to it, and it never will — that still needs a browser.
+It converts "none of the screen is verified" into "the server half is".
+
+**Fragility accepted.** Action ids are content hashes assigned at build time, so
+the script reads the id-to-export mapping out of the dev build rather than
+hard-coding it. If Next changes that manifest format, the script breaks loudly
+at startup rather than silently passing.
+
+*In one sentence:* the seam between a click and a service had no test and two
+bugs, so there is now a check that sends exactly the request a click sends.
