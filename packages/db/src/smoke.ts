@@ -19,6 +19,15 @@ import { Pool } from "pg";
 
 import { loadFieldCatalog } from "./fields";
 import { applyOperations } from "./mutations";
+import {
+  addStatus,
+  createStatusSet,
+  deleteStatus,
+  previewStatusSetAttachment,
+  resolveStatusSetFor,
+  statusUsage,
+  updateStatus,
+} from "./statuses";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL ?? "postgres://arbor:arbor@localhost:5432/arbor",
@@ -397,6 +406,148 @@ async function main() {
     ],
     { actorId: viewer.id!, connection: pool },
   );
+
+  // --- configuration engine ------------------------------------------------
+  console.log("\nstatus sets → inheritance, validation, migration\n");
+
+  const config = { actorId: viewer.id!, connection: pool };
+
+  const resolved = await resolveStatusSetFor(ws.id!, list.id!, pool);
+  report(
+    "a list inherits its status set from an ancestor",
+    resolved.set.statuses.length === 5 && !resolved.isOwn && resolved.sourceName === "Engineering"
+      ? null
+      : `got ${resolved.set.statuses.length} statuses from ${resolved.sourceName} (own=${resolved.isOwn})`,
+  );
+
+  const preview = await previewStatusSetAttachment(ws.id!, space.id!, pool);
+  report(
+    "attaching a set reports which containers it would change",
+    preview.affectedContainerIds.length >= 3
+      ? null
+      : `expected the space and its descendants, got ${preview.affectedContainerNames.join(", ")}`,
+  );
+
+  report(
+    "a set with nothing terminal is refused",
+    await expectRejection(() =>
+      createStatusSet(
+        {
+          workspaceId: ws.id!,
+          name: "Broken",
+          statuses: [
+            { name: "One", group: "not_started", color: "#6B7686", position: 0 },
+            { name: "Two", group: "active", color: "#5B8DEF", position: 1 },
+          ],
+        },
+        config,
+      ),
+    ),
+  );
+
+  const kanban = await createStatusSet(
+    { workspaceId: ws.id!, name: `Kanban ${Date.now()}`, templateKey: "kanban" },
+    config,
+  );
+  report(
+    "a template creates a usable set",
+    kanban.statuses.length === 4 && kanban.statuses[0]?.position === 0
+      ? null
+      : `got ${kanban.statuses.length} statuses`,
+  );
+
+  const extra = await addStatus(
+    kanban.id,
+    { name: "Verifying", group: "active", color: "#C77DD8" },
+    config,
+  );
+  report("a status can be added to a set", extra.position === 4 ? null : `position ${extra.position}`);
+
+  report(
+    "a status cannot be renamed onto an existing name",
+    await expectRejection(() => updateStatus(extra.id, { name: "Blocked" }, config)),
+  );
+
+  const shipped = kanban.statuses.find((st) => st.name === "Shipped");
+  if (!shipped) throw new Error("smoke: Kanban template lost its Shipped status");
+
+  report(
+    "the last terminal status cannot be regrouped away",
+    await expectRejection(() => updateStatus(shipped.id, { group: "active" }, config)),
+  );
+
+  // Park a task on a status that is about to be deleted, then delete it.
+  const migrant = await one(`SELECT id, status_id FROM tasks WHERE key = 'ENG-417'`);
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: migrant.id!,
+        field: "statusId",
+        from: migrant.status_id!,
+        to: extra.id,
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const usage = await statusUsage(extra.id, pool);
+  report(
+    "deleting a status reports how many tasks would move",
+    usage.taskCount === 1 && usage.blockedReason === null && usage.replacements.length === 4
+      ? null
+      : `count=${usage.taskCount} blocked=${usage.blockedReason} replacements=${usage.replacements.length}`,
+  );
+
+  report(
+    "a replacement from another set is refused",
+    await expectRejection(() => deleteStatus(extra.id, nextStatus.id!, config)),
+  );
+
+  const blocked = kanban.statuses.find((st) => st.name === "Blocked")!;
+  const deletion = await deleteStatus(extra.id, blocked.id, config);
+  const movedTask = await one(`SELECT status_id FROM tasks WHERE id = '${migrant.id}'`);
+  report(
+    "deleting a status migrates its tasks rather than orphaning them",
+    deletion.movedTasks === 1 && movedTask.status_id === blocked.id
+      ? null
+      : `moved ${deletion.movedTasks}, task now on ${movedTask.status_id}`,
+  );
+
+  const migrationEvents = await one(
+    `SELECT COUNT(*)::int AS n FROM activity
+     WHERE object_id = '${migrant.id}' AND verb = 'task.status_id_changed'`,
+  );
+  report(
+    "the migration is in each task's history, not just the status's",
+    Number(migrationEvents.n) >= 2 ? null : `only ${migrationEvents.n} status events on the task`,
+  );
+
+  const configEvent = await one(
+    `SELECT object_kind, verb, actor_id FROM activity
+     WHERE object_kind = 'status' ORDER BY id DESC LIMIT 1`,
+  );
+  report(
+    "a configuration change is attributable in the activity log",
+    configEvent.verb === "status.deleted" && configEvent.actor_id === viewer.id
+      ? null
+      : `got ${configEvent.verb} by ${configEvent.actor_id}`,
+  );
+
+  // Restore ENG-417 so re-running the smoke suite starts from the seeded state.
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: migrant.id!,
+        field: "statusId",
+        from: blocked.id,
+        to: migrant.status_id!,
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
+  );
+  await pool.query(`DELETE FROM status_sets WHERE id = $1`, [kanban.id]);
 
   report(
     "an operation without an actor is refused",

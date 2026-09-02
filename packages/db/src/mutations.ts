@@ -70,6 +70,18 @@ export interface ApplyContext {
   /** Who is making the change. Required — see the note on logActivity. */
   actorId: string;
   connection?: Pool;
+  /**
+   * An open transaction to join instead of opening one.
+   *
+   * Configuration changes need this: deleting a status moves every task that
+   * used it and then removes the status, and those two must not be separable.
+   * Without it the caller either gives up atomicity or reimplements the
+   * executor, and a second executor is how the activity log starts missing rows.
+   *
+   * The caller owns the transaction — this will not COMMIT or ROLLBACK one it
+   * did not open.
+   */
+  client?: PoolClient;
 }
 
 export async function applyOperations(
@@ -87,6 +99,17 @@ export async function applyOperations(
   const meaningful = ops.filter((op) => !isNoop(op));
   if (meaningful.length === 0) return { applied: 0, skipped: ops.length };
 
+  const result = { applied: meaningful.length, skipped: ops.length - meaningful.length };
+
+  // Joining a caller's transaction: no BEGIN, no COMMIT, no release. Throwing
+  // is still correct — the caller's rollback covers these statements too.
+  if (context.client) {
+    for (const op of meaningful) {
+      await applyOne(context.client, op, context.actorId);
+    }
+    return result;
+  }
+
   const client = await (context.connection ?? pool()).connect();
 
   try {
@@ -97,7 +120,7 @@ export async function applyOperations(
     }
 
     await client.query("COMMIT");
-    return { applied: meaningful.length, skipped: ops.length - meaningful.length };
+    return result;
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

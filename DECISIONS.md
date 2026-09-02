@@ -70,6 +70,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-040](#d-040) | Server actions run inside a transition and are always awaited | Frontend |
 | [D-041](#d-041) | One declaration table for field types, validated by hand | Data |
 | [D-042](#d-042) | The field decides its column; the compiler requires a catalog | Query |
+| [D-043](#d-043) | Deleting a status is a task migration, not a delete | Data |
+| [D-044](#d-044) | Configuration changes are in the same activity log as tasks | Architecture |
 
 ---
 
@@ -1034,3 +1036,68 @@ same mechanism derived fields already use. The interface does not change.
 from the type of the filter value, so a mistyped filter returned an empty view
 instead of an error — now the field is asked, and a view that references a
 field nobody loaded refuses to compile.
+
+### D-043
+**Deleting a status is a task migration, not a delete** · 2026-09-02 · active
+
+`deleteStatus(statusId, replacementId)` moves every task using the status
+first, as ordinary `setField` operations through `applyOperations`, and only
+then removes the row. The replacement is a required argument.
+
+**Why it cannot just be a delete.** `tasks.status_id` is `ON DELETE SET NULL`
+(D-015 keeps everything else soft, but a status is genuinely gone). Deleting a
+status therefore nulls the status of every task that used it — and a task with
+a null status does not appear under any group header in a grouped view. From
+the user's side, deleting the "Done" column silently empties it *and* hides the
+work that was in it. The tasks are still there; nothing in the interface says so.
+
+**Alternatives.**
+
+| Option | Why not |
+|---|---|
+| `UPDATE tasks SET status_id = $new WHERE status_id = $old` | One statement, and it defeats the entire mutation layer: no activity row per task, no undo, no history on the tasks that moved. A user who picked the wrong replacement for 200 tasks has no way back. |
+| Default the replacement to "the first status in the same group" | Silently reopens finished work when the deleted status was the only `done` one. A wrong guess here is invisible until a report is already wrong. |
+| Soft-delete the status instead | Then a grouped view has to decide whether to render an archived column, filters have to hide it, and "restore" has to handle a set that has since changed shape. The migration is simpler and leaves nothing dormant. |
+
+**What it costs.** 200 tasks is 200 operations and 200 activity rows in one
+transaction, where the bulk UPDATE was one statement. That is the price of the
+history, and it is the same price every other bulk edit in the product already
+pays.
+
+**One transaction, not two.** `applyOperations` gained an optional `client` so
+it can join a transaction the caller already opened. Without it the migration
+and the delete would commit separately, and a failure between them leaves tasks
+moved for a status that still exists.
+
+*In one sentence:* deleting a status nulls the status of every task that used
+it, so the delete is preceded by a real migration expressed as undoable
+operations — the user is asked where the tasks should go, and each one's move
+shows up in its own history.
+
+### D-044
+**Configuration changes are in the same activity log as tasks** · 2026-09-02 · active
+
+`object_kind` gained `status`, `status_set`, and `task_type`. Creating a
+status, regrouping one, attaching a set to a folder — all write an `activity`
+row with the actor, the old value, and the new one.
+
+**Why.** "Who deleted the Done status?" and "why did every task in this list
+change status on Tuesday?" are the two questions a shared workspace generates
+after any configuration accident, and neither is answerable from the tasks
+alone — the task rows show *what* changed, and attribute it to whoever
+triggered the migration, but nothing records that a configuration edit was the
+cause. A separate config-audit table would answer it, at the cost of two logs
+to consult and two schemas to keep aligned.
+
+**Trade-off.** The activity table now mixes two rates of change: task edits
+(constant) and configuration edits (rare). The indexes are on
+`(object_kind, object_id, at)`, so a task feed never scans configuration rows,
+but a naive "everything that happened today" query now returns both — which is
+usually what someone asking that question wants.
+
+**What would change our mind.** If configuration events ever need a different
+retention policy from task events — plausible under a compliance requirement —
+they split into their own table, keeping the same row shape.
+
+*In one sentence:* configuration edits go in the same append-only log as task
+edits, because the question people actually ask after an accident spans both.

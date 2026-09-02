@@ -64,6 +64,12 @@ export const permission = pgEnum("permission", ["view", "comment", "edit", "mana
 
 export const taskLinkKind = pgEnum("task_link_kind", ["blocks", "waits_on", "relates"]);
 
+/**
+ * What an activity row is about. Configuration objects are in here alongside
+ * tasks on purpose: "who deleted the Done status, and when" is a question the
+ * activity log has to be able to answer, and a change nobody can attribute is
+ * exactly the kind that erodes trust in a shared workspace.
+ */
 export const objectKind = pgEnum("object_kind", [
   "workspace",
   "container",
@@ -72,4 +78,7 @@ export const objectKind = pgEnum("object_kind", [
   "doc",
   "comment",
   "field",
+  "status",
+  "status_set",
+  "task_type",
 ]);
