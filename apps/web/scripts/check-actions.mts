@@ -18,8 +18,9 @@
  * the handler. That still needs a real browser.
  *
  *   npx next dev -p 3100        # in apps/web
- *   node scripts/check-actions.mjs [port]
+ *   npm run check:actions -- 3100
  */
+import { UndoStack } from "@arbor/core";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
 
@@ -32,8 +33,8 @@ const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://arbor:arbor@localho
  * hard-coded. The compiled server bundle carries the id-to-export mapping in a
  * url-encoded manifest string; this reads it out of the dev build.
  */
-function actionIds() {
-  const bundle = ".next/server/app/settings/statuses/page.js";
+function actionIds(route = "app/settings/statuses/page"): Record<string, string> {
+  const bundle = `.next/server/${route}.js`;
   let source;
   try {
     source = readFileSync(bundle, "utf8");
@@ -43,7 +44,7 @@ function actionIds() {
     );
   }
 
-  const ids = {};
+  const ids: Record<string, string> = {};
   const pattern = /%22id%22%3A%22([0-9a-f]{40,44})%22%2C%22exportedName%22%3A%22(\w+)%22/g;
   for (const match of source.matchAll(pattern)) ids[match[2]] = match[1];
 
@@ -56,7 +57,7 @@ function actionIds() {
 const IDS = actionIds();
 let failures = 0;
 
-function report(label, problem) {
+function report(label: string, problem: string | null) {
   if (problem) {
     failures++;
     console.log(`  FAIL  ${label}\n        ${problem}`);
@@ -65,11 +66,8 @@ function report(label, problem) {
   }
 }
 
-async function call(name, args) {
-  const id = IDS[name];
-  if (!id) throw new Error(`No action id for ${name}`);
-
-  const response = await fetch(PAGE, {
+async function callOn(url: string, id: string, args: unknown) {
+  const response = await fetch(url, {
     method: "POST",
     headers: { "Next-Action": id, "Content-Type": "text/plain;charset=UTF-8" },
     body: JSON.stringify(args),
@@ -78,17 +76,23 @@ async function call(name, args) {
   return { status: response.status, text: await response.text() };
 }
 
+async function call(name: string, args: unknown) {
+  const id = IDS[name];
+  if (!id) throw new Error(`No action id for ${name}`);
+  return callOn(PAGE, id, args);
+}
+
 /** The action's return value arrives inside the RSC flight stream. */
-function returned(text) {
+function returned(text: string): { ok: boolean; error?: string } | null {
   if (/"ok":true/.test(text)) return { ok: true };
   const error = text.match(/"error":"((?:[^"\\]|\\.)*)"/);
-  if (error) return { ok: false, error: JSON.parse(`"${error[1]}"`) };
+  if (error) return { ok: false, error: JSON.parse(`"${error[1]}"`) as string };
   return null;
 }
 
 const db = new Client({ connectionString: DATABASE_URL });
 await db.connect();
-const one = async (sql, params = []) => (await db.query(sql, params)).rows[0];
+const one = async (sql: string, params: unknown[] = []) => (await db.query(sql, params)).rows[0];
 
 console.log("\nsettings actions → server → postgres\n");
 
@@ -132,12 +136,12 @@ report(
 );
 
 result = await call("moveStatusAction", [statuses[2].id, 0]);
-const moved = (
+const reordered = (
   await db.query(`SELECT name FROM statuses WHERE status_set_id = $1 ORDER BY position`, [set.id])
 ).rows.map((row) => row.name);
 report(
   "reordering renumbers the whole set",
-  returned(result.text)?.ok && moved[0] === "Done" ? null : moved.join(", "),
+  returned(result.text)?.ok && reordered[0] === "Done" ? null : reordered.join(", "),
 );
 
 await call("addStatusAction", [set.id, "Blocked", "active", "#ec5b5b"]);
@@ -182,6 +186,55 @@ report(
   result.status === 200 && badConfig && !badConfig.ok && /at least one option/.test(badConfig.error)
     ? null
     : `${result.status} → ${JSON.stringify(badConfig)}`,
+);
+
+// --- undo, through the real stack ------------------------------------------
+//
+// The regression that was missing. Every layer passed on its own: `invert` has
+// unit tests, `db:smoke` proves the write path, and the stack had seven tests —
+// all of them exercising it in isolation with a forward operation. Nothing
+// tested the *composition* of "the server returns the inverse" (D-036) with "the
+// stack inverts on pop", which is where the double inversion lived (D-049).
+//
+// So this runs the composition: the real action, the real stack, the real
+// database.
+console.log("\nundo → the real stack → postgres\n");
+
+const PAGE_ACTIONS = actionIds("app/page");
+const task = await one(`SELECT id, status_id FROM tasks WHERE key = 'ENG-415'`);
+
+const cycled = await callOn(
+  "http://localhost:" + PORT + "/",
+  PAGE_ACTIONS.cycleStatus!,
+  [task.id],
+);
+const inverse = cycled.text.match(/\[\{"kind":"setField".*?\}\]/);
+const moved = await one(`SELECT status_id FROM tasks WHERE id = $1`, [task.id]);
+
+report(
+  "clicking a status dot moves the task and returns an inverse",
+  inverse && moved.status_id !== task.status_id ? null : "no inverse came back",
+);
+
+const stack = new UndoStack(20);
+stack.push(JSON.parse(inverse![0]));
+const toApply = stack.pop();
+
+report(
+  "the stack hands back the server's inverse unchanged",
+  toApply?.[0] && (toApply[0] as { to: string }).to === task.status_id
+    ? null
+    : `stack produced ${JSON.stringify(toApply)}`,
+);
+
+await callOn("http://localhost:" + PORT + "/", PAGE_ACTIONS.undo!, [toApply]);
+const restored = await one(`SELECT status_id FROM tasks WHERE id = $1`, [task.id]);
+
+report(
+  "undo puts the task back where it started",
+  restored.status_id === task.status_id
+    ? null
+    : "the row did not move back — the double inversion is back",
 );
 
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);

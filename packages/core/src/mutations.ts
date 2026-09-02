@@ -208,7 +208,19 @@ function sameValue(a: unknown, b: unknown): boolean {
 }
 
 /**
- * A bounded undo stack.
+ * A bounded stack of inverse batches, ready to apply.
+ *
+ * **It stores inverses, and `pop` returns them unchanged.** That is the whole
+ * contract, and it is stated this loudly because getting it wrong is invisible:
+ * the stack used to hold operations *as applied* and invert them on the way
+ * out, while every server action already returns the inverse (D-036). The two
+ * conventions composed into a double inversion, so undo re-applied the change
+ * it was meant to reverse — the row did not move, and the toast still said it
+ * had (D-049).
+ *
+ * The inversion belongs on the server because only the server knows the value a
+ * field held before the write. A ten-minute-old tab does not. So the client's
+ * job is to hold what it was handed and hand it back.
  *
  * Bounded deliberately: an unbounded stack in a long-lived tab is a memory leak,
  * and undo more than a few dozen steps back is not something anyone actually
@@ -219,18 +231,22 @@ export class UndoStack {
 
   constructor(private readonly limit = 20) {}
 
-  push(ops: readonly Operation[]): void {
-    const meaningful = ops.filter((op) => !isNoop(op));
+  /** Records an inverse batch, exactly as the server returned it. */
+  push(inverse: readonly Operation[]): void {
+    const meaningful = inverse.filter((op) => !isNoop(op));
     if (meaningful.length === 0) return;
 
     this.entries.push(meaningful);
     if (this.entries.length > this.limit) this.entries.shift();
   }
 
-  /** Returns the inverse batch to apply, or undefined when there's nothing left. */
+  /**
+   * The inverse batch to apply, unchanged, or undefined when nothing is left.
+   *
+   * Do not invert here. The batch is already an inverse.
+   */
   pop(): Operation[] | undefined {
-    const last = this.entries.pop();
-    return last ? invertBatch(last) : undefined;
+    return this.entries.pop();
   }
 
   peekDescription(): string | undefined {

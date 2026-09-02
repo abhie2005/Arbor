@@ -76,6 +76,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-046](#d-046) | Fields accumulate down the tree; status sets override | Data |
 | [D-047](#d-047) | Configuration actions return failures, they do not throw | Frontend |
 | [D-048](#d-048) | A check that drives server actions over HTTP | Testing |
+| [D-049](#d-049) | The undo stack stores inverses and does not invert again | Frontend |
 
 ---
 
@@ -1221,3 +1222,67 @@ at startup rather than silently passing.
 
 *In one sentence:* the seam between a click and a service had no test and two
 bugs, so there is now a check that sends exactly the request a click sends.
+
+### D-049
+**The undo stack stores inverses and does not invert again** · 2026-09-02 · active
+
+`UndoStack.pop()` returns the batch it was given, unchanged. It used to return
+`invertBatch(batch)`.
+
+**This is the root cause of the undo bug**, open since 2026-09-01 and the
+subject of two previous fixes that were both real bugs and neither the
+explanation (D-038, D-040).
+
+**The composition nobody tested.** Two correct decisions met and produced a
+wrong result:
+
+- **D-036** — the server decides what an operation's inverse is, because only
+  the server knows the value a field held before the write. Every action
+  therefore *returns the inverse*: `cycleStatus` applies `todo → doing` and
+  hands back `{ from: doing, to: todo }`.
+- **UndoStack** — modelled as a stack of operations *as applied*, inverting on
+  the way out. That is the textbook design, and it is right when the stack
+  holds forward operations.
+
+The client pushed the server's inverse into a stack that inverted again. Undo
+therefore re-applied the original change. The task was already in that state, so
+the row did not move — and because the operation was not a no-op by
+`from`/`to` comparison, it wrote a row, logged activity, and returned success.
+The toast said "Changed status" and nothing happened. Exactly the reported
+symptom.
+
+**Why every test passed.** This is the instructive part. `invert` had 24 unit
+tests. `db:smoke` proved the write path against real Postgres — it calls
+`invertBatch` on the *forward* operation, which is the correct single
+inversion. `UndoStack` had seven tests, every one of them pushing a forward
+operation and asserting the pop was inverted. Each layer was correct in
+isolation and tested in isolation. The defect existed only in the seam, and
+nothing tested the seam.
+
+**Why the two earlier fixes missed it.** Both were reasoned from reading the
+code, because the browser extension would not connect. Reading finds bugs in a
+layer. It does not find a disagreement between two layers that each look right,
+because the reader carries one mental model into both.
+
+**How it was actually found.** By sending the `undo` server action the request
+a click sends and checking Postgres afterwards. The write landed *and* the
+response carried a refreshed payload — which ruled out both hypotheses the
+status file was holding, and pointed at the only remaining place: what the
+client had put in the request.
+
+**The fix, and why it is that direction.** The stack now stores what it is
+given. The inversion has to stay on the server (D-036), so the client's job is
+to hold the inverse and hand it back. `pop()` carries a one-line comment saying
+so, and `check:actions` runs the whole composition — real action, real stack,
+real database — so reintroducing the double inversion fails a check rather than
+shipping.
+
+**The general lesson.** When two layers can each perform a transformation,
+exactly one of them must, and which one has to be written down where both can
+see it. Unit tests cannot catch this class of bug by construction: each layer
+passes its own tests precisely because each is doing what it was designed to do.
+
+*In one sentence:* the server returns the inverse and the stack inverted it
+again, so undo re-applied the change it was meant to reverse — two correct
+layers composing into a wrong answer, which is why isolated tests all passed and
+only a request that crossed both found it.

@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
-    "check:actions": "node scripts/check-actions.mjs"
+    "check:actions": "tsx scripts/check-actions.mts"
   },
   "dependencies": {
     "@arbor/core": "*",

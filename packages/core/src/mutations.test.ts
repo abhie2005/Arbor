@@ -151,13 +151,36 @@ describe("describeBatch", () => {
 });
 
 describe("UndoStack", () => {
-  it("returns the inverse of the last batch", () => {
+  it("returns the batch it was given, unchanged", () => {
     const stack = new UndoStack();
-    stack.push([setStatus]);
+    // What a server action hands back: already the inverse.
+    stack.push([{ ...setStatus, from: "doing", to: "todo" }]);
 
     const undone = stack.pop();
     expect(undone?.[0]).toMatchObject({ from: "doing", to: "todo" });
     expect(stack.depth).toBe(0);
+  });
+
+  it("does not invert what it stores — the round trip returns to the start", () => {
+    // The exact composition that was broken (D-049). The server applied
+    // todo → doing and handed back its inverse; the stack inverted it a second
+    // time, so pressing undo re-applied todo → doing. The row never moved and
+    // the toast still reported success.
+    const applied: Operation = { ...setStatus, from: "todo", to: "doing" };
+    const fromServer = invert(applied);
+
+    const stack = new UndoStack();
+    stack.push([fromServer]);
+
+    const toApply = stack.pop();
+    expect(toApply?.[0]).toMatchObject({ from: "doing", to: "todo" });
+  });
+
+  it("holds the inverse of a creation, not another creation", () => {
+    const stack = new UndoStack();
+    // createTask inverts to archiveTask on the server; the client stores that.
+    stack.push([{ kind: "archiveTask", taskId: TASK }]);
+    expect(stack.pop()?.[0]).toMatchObject({ kind: "archiveTask" });
   });
 
   it("returns undefined when empty", () => {
