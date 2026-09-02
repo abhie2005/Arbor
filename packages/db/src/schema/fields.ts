@@ -35,7 +35,8 @@ export const fields = pgTable(
     /**
      * Shape depends on `type`: dropdown options, currency precision and code,
      * progress start/end, formula expression, rollup target and aggregation.
-     * Validated by a per-type zod schema in @arbor/core.
+     * Parsed and validated by `parseFieldConfig()` in @arbor/core, which also
+     * drops unknown keys so a stale client cannot smuggle state into the blob.
      */
     typeConfig: jsonb("type_config").$type<Record<string, unknown>>().notNull().default({}),
     description: text("description"),

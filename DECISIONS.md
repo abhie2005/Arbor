@@ -68,6 +68,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-038](#d-038) | The undo stack lives at module scope, not in React state | Frontend |
 | [D-039](#d-039) | Every keyboard shortcut needs a visible equivalent | Frontend |
 | [D-040](#d-040) | Server actions run inside a transition and are always awaited | Frontend |
+| [D-041](#d-041) | One declaration table for field types, validated by hand | Data |
 
 ---
 
@@ -937,3 +938,40 @@ path that reports success before both have happened is lying to the user.
 *In one sentence:* a fire-and-forget server action skips the re-render Next.js
 does on revalidation and reports success before the server answers, so every
 action is now awaited inside a transition and only confirms once it has landed.
+
+### D-041
+**One declaration table for field types, validated by hand** · 2026-09-02 · active
+
+Every custom field type is declared once in `packages/core/src/fields.ts`:
+its storage column, its legal filter operators, whether it is multi-valued,
+whether it is computed, and a parser for its `typeConfig` blob. The parsers are
+written by hand — @arbor/core still has exactly one dependency.
+
+**Why a table at all.** The knowledge was previously spread across three places
+that each re-derived it and could disagree: the compiler guessed the storage
+column from the JavaScript type of a filter value, the mutation executor
+guessed it again from the value being written, and nothing at all knew which
+operators a type supports. Three guesses, three chances to differ. Now the
+field is asked, and there is one answer.
+
+**Alternatives.**
+
+| Option | Why not |
+|---|---|
+| A schema library (zod, valibot) | The obvious pick, and the original code comment promised it. But every one of these needs a domain-specific message a generic validator won't produce — "S1 is not one of this field's options", "a rating must be a whole number between 0 and 3" — so the schemas would be as long as the parsers, plus a dependency. @arbor/core ships to the browser (`UndoStack` is imported by a client component), so its dependency list is bundle weight on every page. |
+| Validate in the database with `CHECK` constraints | Cannot express "this option id exists in this field's own config blob", and a constraint violation surfaces as a Postgres error string, not a message a form can render next to the offending input. |
+| Validate only in the UI | The API boundary is a server action; anything that trusts the client for shape has no boundary at all. |
+
+**Trade-off.** Hand-written validators are more code than a schema library, and
+adding a twenty-first field type means touching the table, the parser, and the
+value parser rather than one schema. That is the intended cost: those three
+places are exactly the three that must agree, and a compiler error at each is
+how a new type gets finished rather than half-added.
+
+**What would change our mind.** If `typeConfig` grows nested, recursive shapes —
+a formula AST rather than an expression string — hand parsing stops paying and
+a real schema library wins.
+
+*In one sentence:* the field type is the single source of truth for storage,
+operators, and validation, because the three places that used to infer it
+separately were free to disagree — and one of them was already wrong.
