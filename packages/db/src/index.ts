@@ -8,11 +8,31 @@ export {
   type Database,
   type DatabaseOptions,
 } from "./client";
+export { loadContainerTree } from "./containers";
 export {
   FieldNotFound,
+  archiveField,
+  changeFieldType,
+  createField,
+  fieldsAvailableOn,
   loadField,
   loadFieldCatalog,
+  loadFieldPlacements,
+  previewFieldTypeChange,
+  setFieldScopes,
+  updateField,
+  type CreateFieldInput,
+  type FieldTypeChangePreview,
+  type UpdateFieldPatch,
 } from "./fields";
+export {
+  createTaskType,
+  deleteTaskType,
+  listTaskTypes,
+  setDefaultTaskType,
+  updateTaskType,
+  type TaskType,
+} from "./task-types";
 export {
   ConfigError,
   type ConfigContext,
@@ -22,7 +42,6 @@ export {
   attachStatusSet,
   createStatusSet,
   deleteStatus,
-  loadContainerTree,
   loadStatusSets,
   moveStatus,
   previewStatusSetAttachment,

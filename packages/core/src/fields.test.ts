@@ -5,7 +5,10 @@ import {
   FIELD_TYPE_META,
   FieldError,
   type FieldDefinition,
+  type FieldPlacement,
   fieldSupportsOp,
+  fieldsForContainer,
+  fieldsForTaskType,
   fieldValueColumn,
   parseFieldConfig,
   parseFieldValue,
@@ -217,5 +220,68 @@ describe("parseFilterValue — the API boundary D-013 was missing", () => {
   it("allows filtering a computed field even though writing one is refused", () => {
     const formula = field("formula", { expression: "1 + 1" });
     expect(parseFilterValue(formula, "gt", 10)).toBe(10);
+  });
+});
+
+describe("field placement", () => {
+  const containers = new Map([
+    ["space", { id: "space", parentId: null }],
+    ["folder", { id: "folder", parentId: "space" }],
+    ["list", { id: "list", parentId: "folder" }],
+    ["other", { id: "other", parentId: null }],
+  ]);
+
+  function placed(
+    id: string,
+    containerId: string | null,
+    position: number,
+    scopes: string[] = [],
+    archived = false,
+  ): FieldPlacement {
+    return {
+      id,
+      name: id,
+      type: "number",
+      typeConfig: {},
+      containerId,
+      position,
+      scopeTaskTypeIds: scopes,
+      archived,
+    };
+  }
+
+  const all = [
+    placed("local", "list", 0),
+    placed("workspace-wide", null, 0),
+    placed("space-level", "space", 1),
+    placed("elsewhere", "other", 0),
+    placed("retired", "space", 2, [], true),
+  ];
+
+  it("accumulates down the tree instead of overriding", () => {
+    const available = fieldsForContainer("list", containers, all);
+    // A local field adds to the space's fields; it does not replace them.
+    expect(available.map((f) => f.id)).toEqual(["workspace-wide", "space-level", "local"]);
+  });
+
+  it("excludes fields from a container that is not an ancestor", () => {
+    const ids = fieldsForContainer("list", containers, all).map((f) => f.id);
+    expect(ids).not.toContain("elsewhere");
+  });
+
+  it("excludes archived fields", () => {
+    const ids = fieldsForContainer("list", containers, all).map((f) => f.id);
+    expect(ids).not.toContain("retired");
+  });
+
+  it("shows a scoped field only on the types it names", () => {
+    const fields = [placed("severity", "space", 0, ["bug"]), placed("points", "space", 1)];
+    expect(fieldsForTaskType(fields, "bug").map((f) => f.id)).toEqual(["severity", "points"]);
+    expect(fieldsForTaskType(fields, "task").map((f) => f.id)).toEqual(["points"]);
+  });
+
+  it("gives a task with no type only the unscoped fields", () => {
+    const fields = [placed("severity", "space", 0, ["bug"]), placed("points", "space", 1)];
+    expect(fieldsForTaskType(fields, null).map((f) => f.id)).toEqual(["points"]);
   });
 });

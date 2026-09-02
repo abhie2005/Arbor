@@ -714,3 +714,74 @@ export type FieldCatalog = ReadonlyMap<string, FieldDefinition>;
 export function indexFields(fields: readonly FieldDefinition[]): FieldCatalog {
   return new Map(fields.map((field) => [field.id, field]));
 }
+
+/**
+ * A field as it is placed in the hierarchy, which is what decides where it
+ * shows up. The definition alone says how a value behaves; this says who sees it.
+ */
+export interface FieldPlacement extends FieldDefinition {
+  name: string;
+  /** Null means workspace-wide. Otherwise the container it was defined on. */
+  containerId: string | null;
+  position: number;
+  /** Task types this field is restricted to. Empty means every type. */
+  scopeTaskTypeIds: string[];
+  archived: boolean;
+}
+
+/**
+ * The fields available on a container.
+ *
+ * A field defined on a space is available to every list beneath it; one defined
+ * on a list is local to it. That is the same inheritance rule as status sets,
+ * with one deliberate difference: fields **accumulate** down the tree rather
+ * than overriding. A list does not replace its space's fields, it adds to them —
+ * otherwise defining one local field would hide every shared one, which is
+ * never what the person adding it meant.
+ *
+ * Ordered outermost-first (workspace, then space, then folder, then list) so a
+ * task form reads from general to specific, and stably within each level by the
+ * field's own position.
+ */
+export function fieldsForContainer(
+  containerId: string,
+  containers: ReadonlyMap<string, { id: string; parentId: string | null }>,
+  fields: readonly FieldPlacement[],
+): FieldPlacement[] {
+  // Distance from the container: 0 is the container itself, larger is further
+  // up. Workspace-wide fields sit beyond the root.
+  const distance = new Map<string | null, number>();
+  let current = containers.get(containerId);
+  let depth = 0;
+
+  while (current) {
+    distance.set(current.id, depth++);
+    current = current.parentId ? containers.get(current.parentId) : undefined;
+    if (depth > 64) throw new FieldError("Container tree exceeds 64 levels — cycle?");
+  }
+  distance.set(null, depth);
+
+  return fields
+    .filter((field) => !field.archived && distance.has(field.containerId))
+    .sort((a, b) => {
+      const byDepth = (distance.get(b.containerId) ?? 0) - (distance.get(a.containerId) ?? 0);
+      return byDepth !== 0 ? byDepth : a.position - b.position;
+    });
+}
+
+/**
+ * Narrows a set of fields to one task type.
+ *
+ * An unscoped field applies to everything — absence of a restriction is not
+ * absence of applicability. A task with no type gets only the unscoped fields,
+ * because a scoped field's whole purpose is that a Task never renders Severity.
+ */
+export function fieldsForTaskType(
+  fields: readonly FieldPlacement[],
+  taskTypeId: string | null,
+): FieldPlacement[] {
+  return fields.filter((field) => {
+    if (field.scopeTaskTypeIds.length === 0) return true;
+    return taskTypeId !== null && field.scopeTaskTypeIds.includes(taskTypeId);
+  });
+}

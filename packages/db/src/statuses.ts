@@ -1,12 +1,10 @@
 import {
-  type ContainerNode,
   type StatusDefinition,
   type StatusGroup,
   type StatusSetDefinition,
   assertUsableStatusSet,
   canDeleteStatus,
   containersAffectedBy,
-  indexById,
   isStatusGroup,
   planStatusDeletion,
   reorderStatuses,
@@ -16,6 +14,7 @@ import {
 import type { Pool, PoolClient } from "pg";
 
 import { pool } from "./client";
+import { loadContainerTree } from "./containers";
 import {
   type ConfigContext,
   ConfigError,
@@ -66,35 +65,6 @@ function toStatus(row: StatusRow): StatusDefinition {
     color: row.color,
     position: row.position,
   };
-}
-
-/** Every container in a workspace, in the shape @arbor/core walks. */
-export async function loadContainerTree(
-  workspaceId: string,
-  connection: Pool | PoolClient = pool(),
-): Promise<Map<string, ContainerNode>> {
-  const result = await connection.query<{
-    id: string;
-    parent_id: string | null;
-    kind: ContainerNode["kind"];
-    name: string;
-    is_private: boolean;
-  }>(
-    `SELECT id, parent_id, kind, name, is_private
-     FROM containers
-     WHERE workspace_id = $1 AND archived_at IS NULL`,
-    [workspaceId],
-  );
-
-  return indexById(
-    result.rows.map((row) => ({
-      id: row.id,
-      parentId: row.parent_id,
-      kind: row.kind,
-      name: row.name,
-      isPrivate: row.is_private,
-    })),
-  );
 }
 
 /** Every status set in a workspace, statuses included, ordered by position. */

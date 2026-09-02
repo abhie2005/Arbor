@@ -72,6 +72,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-042](#d-042) | The field decides its column; the compiler requires a catalog | Query |
 | [D-043](#d-043) | Deleting a status is a task migration, not a delete | Data |
 | [D-044](#d-044) | Configuration changes are in the same activity log as tasks | Architecture |
+| [D-045](#d-045) | Changing a field's type is a data migration with a confirmation | Data |
+| [D-046](#d-046) | Fields accumulate down the tree; status sets override | Data |
 
 ---
 
@@ -1101,3 +1103,61 @@ they split into their own table, keeping the same row shape.
 
 *In one sentence:* configuration edits go in the same append-only log as task
 edits, because the question people actually ask after an accident spans both.
+
+### D-045
+**Changing a field's type is a data migration with a confirmation** · 2026-09-02 · active
+
+`changeFieldType()` reads every stored value, re-parses it against the new
+type, and refuses to run if any value would be lost unless the caller passes
+`discardUnconvertible`. `previewFieldTypeChange()` returns the counts and a few
+examples so the confirmation can say what is about to go.
+
+**Why it is not a metadata edit.** Typed EAV (D-013) means values live in the
+column their type chose. A `short_text` field becoming a `number` has to
+physically move every value from `value_text` to `value_num`; leaving them
+where they are produces a field that renders empty while its data sits in a
+column nothing reads. So the choice is not "allow or forbid the edit" — it is
+"which migration runs".
+
+**Alternatives.**
+
+| Option | Why not |
+|---|---|
+| Refuse type changes; tell the user to make a new field | Honest, and what the constraint tempts you into. But it pushes the migration onto the user as copy-paste across two columns, which loses history and is exactly the operation a computer should do. |
+| Convert silently, dropping what fails | "About a week" is not a number, and there is no correct number to store. Dropping it without asking is data loss the user finds out about later, if at all. |
+| Keep the old value in its old column as a backup | A row would hold two live values in different columns, and every reader would have to know which one counts. The activity row records the counts instead. |
+
+**Trade-off.** The conversion writes one UPDATE per row rather than one
+statement for the field. Fields hold at most one value per task, and a type
+change is a rare deliberate act, so the cost lands where someone is already
+waiting for a confirmation dialog.
+
+*In one sentence:* typed columns mean a type change physically moves data, so
+it runs as a real migration that reports what will not survive and refuses to
+proceed until someone accepts that.
+
+### D-046
+**Fields accumulate down the tree; status sets override** · 2026-09-02 · active
+
+A container's status set is the *nearest* one — its own, else an ancestor's.
+Its custom fields are the *union* of every ancestor's, plus its own.
+
+**Why the two rules differ.** A task has exactly one status, so two applicable
+sets would be a contradiction the resolver has to break arbitrarily —
+inheritance must pick one. A task can hold any number of custom fields, so
+there is nothing to break: a list defining "Sprint" alongside its space's
+"Story Points" is a complete, sensible answer.
+
+Making fields override instead would mean defining a single local field
+silently hides every shared one — never what the person adding it meant, and
+invisible until someone notices a column is gone.
+
+**Trade-off.** Fields cannot be *hidden* lower in the tree, only added. A list
+that wants fewer fields than its space has no way to say so; the tool for that
+is task-type scoping, which is a statement about the kind of work rather than
+about the container. If a real case for hiding appears, it should be an
+explicit per-container suppression, not a change to the inheritance rule.
+
+*In one sentence:* a task has one status but many fields, so status sets
+resolve to the nearest definition while fields accumulate — and the difference
+is forced by the data, not a preference.

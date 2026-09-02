@@ -17,8 +17,18 @@ import {
 } from "@arbor/core";
 import { Pool } from "pg";
 
-import { loadFieldCatalog } from "./fields";
+import {
+  archiveField,
+  changeFieldType,
+  createField,
+  fieldsAvailableOn,
+  loadFieldCatalog,
+  previewFieldTypeChange,
+  setFieldScopes,
+  updateField,
+} from "./fields";
 import { applyOperations } from "./mutations";
+import { createTaskType, deleteTaskType, listTaskTypes } from "./task-types";
 import {
   addStatus,
   createStatusSet,
@@ -66,6 +76,7 @@ async function main() {
   const viewer = await one("SELECT id FROM users WHERE email='riley@example.com'");
   const stranger = await one("SELECT gen_random_uuid() AS id");
   const list = await one("SELECT id FROM containers WHERE name='Sprint 24'");
+  const backlog = await one("SELECT id FROM containers WHERE name='Backlog'");
   const space = await one("SELECT id FROM containers WHERE name='Engineering'");
   const points = await one("SELECT id FROM fields WHERE name='Story Points'");
   const componentsField = await one(
@@ -548,6 +559,168 @@ async function main() {
     { actorId: viewer.id!, connection: pool },
   );
   await pool.query(`DELETE FROM status_sets WHERE id = $1`, [kanban.id]);
+
+  // --- custom fields and task types ----------------------------------------
+  console.log("\ncustom fields → placement, scoping, type change\n");
+
+  const bugType = await one(`SELECT id FROM task_types WHERE name = 'Bug'`);
+
+  const onSprint = await fieldsAvailableOn(ws.id!, list.id!, null, pool);
+  report(
+    "a list inherits its space's fields and excludes scoped ones",
+    onSprint.some((f) => f.name === "Story Points") && !onSprint.some((f) => f.name === "Severity")
+      ? null
+      : `got ${onSprint.map((f) => f.name).join(", ")}`,
+  );
+
+  const onBug = await fieldsAvailableOn(ws.id!, list.id!, bugType.id!, pool);
+  report(
+    "a Bug sees the field scoped to it",
+    onBug.some((f) => f.name === "Severity") ? null : "Severity was not offered to a Bug",
+  );
+
+  const estimate = await createField(
+    {
+      workspaceId: ws.id!,
+      containerId: list.id!,
+      name: `Estimate ${Date.now()}`,
+      type: "short_text",
+    },
+    config,
+  );
+  report(
+    "a field created on a list is local to it",
+    estimate.containerId === list.id ? null : `landed on ${estimate.containerId}`,
+  );
+
+  const onBacklog = await fieldsAvailableOn(ws.id!, backlog.id!, null, pool);
+  report(
+    "a sibling list does not see it",
+    onBacklog.every((f) => f.id !== estimate.id) ? null : "a list-local field leaked sideways",
+  );
+
+  // Two values: one that reads as a number, one that does not.
+  const [firstTask, secondTask] = (
+    await pool.query<{ id: string }>(
+      `SELECT id FROM tasks WHERE home_list_id = $1 AND parent_task_id IS NULL LIMIT 2`,
+      [list.id],
+    )
+  ).rows;
+
+  await applyOperations(
+    [
+      { kind: "setCustomField", taskId: firstTask!.id, fieldId: estimate.id, from: null, to: "8" },
+      {
+        kind: "setCustomField",
+        taskId: secondTask!.id,
+        fieldId: estimate.id,
+        from: null,
+        to: "about a week",
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const conversion = await previewFieldTypeChange(estimate.id, "number", {}, pool);
+  report(
+    "changing a field's type reports what would be lost first",
+    conversion.convertible === 1 &&
+      conversion.unconvertible === 1 &&
+      conversion.samples.length === 1
+      ? null
+      : `convertible=${conversion.convertible} unconvertible=${conversion.unconvertible}`,
+  );
+
+  report(
+    "an unconfirmed type change that would lose values is refused",
+    await expectRejection(() =>
+      changeFieldType(estimate.id, "number", {}, {}, config),
+    ),
+  );
+
+  const changed = await changeFieldType(
+    estimate.id,
+    "number",
+    {},
+    { discardUnconvertible: true },
+    config,
+  );
+  const moved = await one(
+    `SELECT value_num, value_text FROM field_values
+     WHERE field_id = '${estimate.id}' AND task_id = '${firstTask!.id}'`,
+  );
+  report(
+    "a confirmed type change moves values into the new column and clears the old",
+    changed.converted === 1 &&
+      changed.discarded === 1 &&
+      Number(moved.value_num) === 8 &&
+      moved.value_text === null
+      ? null
+      : `converted=${changed.converted} discarded=${changed.discarded} num=${moved.value_num} text=${moved.value_text}`,
+  );
+
+  report(
+    "removing a dropdown option that tasks still use is refused",
+    await expectRejection(() =>
+      updateField(
+        componentsField.id!,
+        { typeConfig: { options: componentOptions.filter((o) => o.name !== "API") } },
+        config,
+      ),
+    ),
+  );
+
+  await setFieldScopes(estimate.id, [bugType.id!], config);
+  const afterScope = await fieldsAvailableOn(ws.id!, list.id!, null, pool);
+  report(
+    "scoping a field hides it from other task types immediately",
+    afterScope.every((f) => f.id !== estimate.id) ? null : "a scoped field still showed on a Task",
+  );
+
+  await archiveField(estimate.id, true, config);
+  const catalogAfterArchive = await loadFieldCatalog(ws.id!, pool);
+  const visibleAfterArchive = await fieldsAvailableOn(ws.id!, list.id!, bugType.id!, pool);
+  report(
+    "archiving a field hides it from forms but keeps saved views compiling",
+    catalogAfterArchive.has(estimate.id) && visibleAfterArchive.every((f) => f.id !== estimate.id)
+      ? null
+      : "an archived field was dropped from the catalog, which breaks views that filter on it",
+  );
+
+  console.log("\ntask types → default, deletion, field scoping\n");
+
+  const epic = await createTaskType({ workspaceId: ws.id!, name: `Epic ${Date.now()}` }, config);
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: firstTask!.id,
+        field: "taskTypeId",
+        from: null,
+        to: epic.id,
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const typed = await listTaskTypes(ws.id!, pool);
+  report(
+    "task types report how many tasks use them",
+    typed.find((t) => t.id === epic.id)?.taskCount === 1
+      ? null
+      : `got ${typed.find((t) => t.id === epic.id)?.taskCount}`,
+  );
+
+  const removal = await deleteTaskType(epic.id, null, config);
+  const untyped = await one(`SELECT task_type_id FROM tasks WHERE id = '${firstTask!.id}'`);
+  report(
+    "deleting a task type clears it from tasks rather than orphaning them",
+    removal.movedTasks === 1 && untyped.task_type_id === null
+      ? null
+      : `moved ${removal.movedTasks}, task now ${untyped.task_type_id}`,
+  );
+
+  await pool.query(`DELETE FROM fields WHERE id = $1`, [estimate.id]);
 
   report(
     "an operation without an actor is refused",
