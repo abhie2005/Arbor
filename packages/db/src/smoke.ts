@@ -17,6 +17,7 @@ import {
 } from "@arbor/core";
 import { Pool } from "pg";
 
+import { loadFieldCatalog } from "./fields";
 import { applyOperations } from "./mutations";
 
 const pool = new Pool({
@@ -58,10 +59,20 @@ async function main() {
   const list = await one("SELECT id FROM containers WHERE name='Sprint 24'");
   const space = await one("SELECT id FROM containers WHERE name='Engineering'");
   const points = await one("SELECT id FROM fields WHERE name='Story Points'");
+  const componentsField = await one(
+    "SELECT id, type_config::text AS config FROM fields WHERE name='Components'",
+  );
+  const componentOptions = (
+    JSON.parse(componentsField.config!) as { options: { id: string; name: string }[] }
+  ).options;
+  const apiOption = componentOptions.find((o) => o.name === "API")!.id;
 
+  // The compiler refuses a `cf:` reference without the fields it names (D-042),
+  // so the catalog is loaded once and passed with every definition.
   const base = {
     workspaceId: ws.id!,
     viewerId: viewer.id!,
+    fields: await loadFieldCatalog(ws.id!, pool),
   };
 
   console.log("\nview compiler → postgres\n");
@@ -146,6 +157,57 @@ async function main() {
       },
     }),
     (rows) => (rows.length > 0 ? null : "expected tasks with 5+ story points"),
+  );
+
+  await check(
+    "a multi-value custom field filters by JSONB containment",
+    compileViewQuery({
+      ...base,
+      scope: { kind: "list", id: list.id! },
+      definition: {
+        ...DEFAULT_VIEW_DEFINITION,
+        grouping: { field: "none", dir: "asc" },
+        filters: {
+          op: "AND",
+          conditions: [{ field: `cf:${componentsField.id}`, op: "eq", value: apiOption }],
+        },
+      },
+    }),
+    (rows) => (rows.length === 2 ? null : `expected the two API tasks, got ${rows.length}`),
+  );
+
+  await check(
+    "'does not have this label' includes tasks with no labels at all",
+    compileViewQuery({
+      ...base,
+      scope: { kind: "list", id: list.id! },
+      definition: {
+        ...DEFAULT_VIEW_DEFINITION,
+        grouping: { field: "none", dir: "asc" },
+        filters: {
+          op: "AND",
+          conditions: [{ field: `cf:${componentsField.id}`, op: "neq", value: apiOption }],
+        },
+      },
+    }),
+    (rows) => (rows.length > 2 ? null : "tasks with no Components value were excluded"),
+  );
+
+  await check(
+    "an empty custom field means no row, not a row holding null",
+    compileViewQuery({
+      ...base,
+      scope: { kind: "list", id: list.id! },
+      definition: {
+        ...DEFAULT_VIEW_DEFINITION,
+        grouping: { field: "none", dir: "asc" },
+        filters: {
+          op: "AND",
+          conditions: [{ field: `cf:${componentsField.id}`, op: "isNull" }],
+        },
+      },
+    }),
+    (rows) => (rows.length > 0 ? null : "expected the tasks with no Components value"),
   );
 
   await check(
@@ -272,6 +334,68 @@ async function main() {
   report(
     "moving back out clears completed_at",
     reopened.completed_at === null ? null : "completed_at was not cleared",
+  );
+
+  // A custom-field write must land in the column the field's type declares,
+  // not the one its JavaScript value suggests.
+  const beforeValue = await one(
+    `SELECT value_num FROM field_values
+     WHERE task_id = '${target.id}' AND field_id = '${points.id}'`,
+  );
+
+  await applyOperations(
+    [
+      {
+        kind: "setCustomField",
+        taskId: target.id!,
+        fieldId: points.id!,
+        from: Number(beforeValue.value_num),
+        to: 13,
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const afterValue = await one(
+    `SELECT value_num, value_text FROM field_values
+     WHERE task_id = '${target.id}' AND field_id = '${points.id}'`,
+  );
+  report(
+    "a custom-field write lands in the column its type declares",
+    Number(afterValue.value_num) === 13 && afterValue.value_text === null
+      ? null
+      : `got value_num=${afterValue.value_num} value_text=${afterValue.value_text}`,
+  );
+
+  report(
+    "a value the field type rejects never reaches the database",
+    await expectRejection(() =>
+      applyOperations(
+        [
+          {
+            kind: "setCustomField",
+            taskId: target.id!,
+            fieldId: points.id!,
+            from: 13,
+            to: "not a number",
+          },
+        ],
+        { actorId: viewer.id!, connection: pool },
+      ),
+    ),
+  );
+
+  await applyOperations(
+    [
+      {
+        kind: "setCustomField",
+        taskId: target.id!,
+        fieldId: points.id!,
+        from: 13,
+        to: Number(beforeValue.value_num),
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
   );
 
   report(

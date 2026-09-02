@@ -700,3 +700,17 @@ function parseOptions(raw: unknown): FieldOption[] {
 function dedupe(values: string[]): string[] {
   return [...new Set(values)];
 }
+
+/**
+ * Field definitions by id, as the compiler and the mutation executor need them.
+ *
+ * Deliberately a map handed in by the caller rather than something either
+ * module fetches: @arbor/core cannot reach a database, and making the catalog
+ * an explicit input is what forces the API boundary to load the fields a view
+ * references before compiling it.
+ */
+export type FieldCatalog = ReadonlyMap<string, FieldDefinition>;
+
+export function indexFields(fields: readonly FieldDefinition[]): FieldCatalog {
+  return new Map(fields.map((field) => [field.id, field]));
+}

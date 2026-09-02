@@ -200,6 +200,30 @@ async function main() {
     .returning();
   if (!storyPoints) throw new Error("seed: story points field insert failed");
 
+  // A multi-value field, so `value_json` and the JSONB containment path in the
+  // compiler are exercised by the seed rather than only by unit tests.
+  const componentOptions = ["API", "Web", "Infra"].map((name, i) => ({
+    id: randomUUID(),
+    name,
+    color: ["#5B8DEF", "#C77DD8", "#43B581"][i]!,
+    orderindex: i,
+  }));
+
+  const [components] = await db
+    .insert(s.fields)
+    .values({
+      workspaceId: workspace.id,
+      containerId: space.id,
+      name: "Components",
+      type: "labels",
+      position: 2,
+      typeConfig: { options: componentOptions },
+    })
+    .returning();
+  if (!components) throw new Error("seed: components field insert failed");
+
+  const componentId = Object.fromEntries(componentOptions.map((o) => [o.name, o.id]));
+
   // --- tags -----------------------------------------------------------------
   const tagRows = await db
     .insert(s.tags)
@@ -224,6 +248,7 @@ async function main() {
       dueInDays: 2,
       type: bugType.id,
       severity: "S1",
+      components: ["API", "Web"],
     },
     {
       key: "ENG-398",
@@ -234,6 +259,7 @@ async function main() {
       tags: ["platform"],
       points: "5",
       dueInDays: 5,
+      components: ["API"],
     },
     {
       key: "ENG-411",
@@ -244,6 +270,7 @@ async function main() {
       tags: ["infra"],
       points: "8",
       dueInDays: null,
+      components: ["Infra"],
     },
     {
       key: "ENG-415",
@@ -353,6 +380,14 @@ async function main() {
       valueNum: Number(t.points),
     });
 
+    if (t.components) {
+      await db.insert(s.fieldValues).values({
+        taskId: task.id,
+        fieldId: components.id,
+        valueJson: t.components.map((name) => componentId[name]),
+      });
+    }
+
     await db.insert(s.activity).values({
       workspaceId: workspace.id,
       actorId: avery.id,
@@ -459,7 +494,7 @@ async function main() {
       `  Members     ${users.length}`,
       `  Hierarchy   ${space.name} › ${folder.name} › ${sprint.name}  (+ folderless "${backlog.name}")`,
       `  Statuses    ${statusRows.map((r) => r.name).join(", ")}`,
-      `  Fields      Severity (Bug only), Story Points`,
+      `  Fields      Severity (Bug only), Story Points, Components`,
       `  Tasks       ${taskCount}`,
       "",
       "  Seed complete.",

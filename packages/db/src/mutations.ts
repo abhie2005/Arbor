@@ -1,7 +1,14 @@
-import { type Operation, activityVerb, isNoop } from "@arbor/core";
+import {
+  type Operation,
+  activityVerb,
+  fieldValueColumn,
+  isNoop,
+  parseFieldValue,
+} from "@arbor/core";
 import type { Pool, PoolClient } from "pg";
 
 import { pool } from "./client";
+import { loadField } from "./fields";
 
 /**
  * Applies operations and records them.
@@ -39,6 +46,12 @@ const FIELD_COLUMNS = {
   taskTypeId: "task_type_id",
   position: "position",
 } as const;
+
+/**
+ * Every typed column on `field_values`. A row populates exactly one of them,
+ * chosen by the field's type; the rest are cleared on write.
+ */
+const VALUE_COLUMNS = ["value_text", "value_num", "value_date", "value_bool", "value_json"] as const;
 
 const RELATION_TABLES = {
   assignee: { table: "task_assignees", column: "user_id" },
@@ -133,15 +146,32 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
     }
 
     case "setCustomField": {
-      const column = customFieldColumn(op.to ?? op.from);
+      // The field decides the column and validates the value. Inferring either
+      // from the JavaScript type of `op.to` — what this did before — writes a
+      // number into value_num on a text field, where no filter will ever find
+      // it again (D-042).
+      const field = await loadField(op.fieldId, client);
+      const column = fieldValueColumn(field);
+      const value = parseFieldValue(field, op.to);
 
-      // Upsert: a task may have no row for this field yet.
+      // jsonb wants a JSON string; handing node-postgres a JS array gets it
+      // encoded as a Postgres array literal instead, which the column rejects.
+      const param = column === "value_json" && value !== null ? JSON.stringify(value) : value;
+
+      // Upsert: a task may have no row for this field yet. The other typed
+      // columns are cleared in the same statement, so a row always holds
+      // exactly one value — a field whose type was changed cannot leave a stale
+      // number sitting in value_num where a later report would still find it.
+      const cleared = VALUE_COLUMNS.filter((c) => c !== column)
+        .map((c) => `${c} = NULL`)
+        .join(", ");
+
       await client.query(
         `INSERT INTO field_values (task_id, field_id, ${column}, updated_at)
          VALUES ($1, $2, $3, now())
          ON CONFLICT (task_id, field_id)
-         DO UPDATE SET ${column} = EXCLUDED.${column}, updated_at = now()`,
-        [op.taskId, op.fieldId, op.to],
+         DO UPDATE SET ${column} = EXCLUDED.${column}, ${cleared}, updated_at = now()`,
+        [op.taskId, op.fieldId, param],
       );
 
       const meta = await taskMeta(client, op.taskId);
@@ -263,15 +293,6 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
       throw new MutationRejected(`Unhandled operation: ${JSON.stringify(exhaustive)}`);
     }
   }
-}
-
-/** Same typed-column choice the view compiler makes when filtering (D-013). */
-function customFieldColumn(sample: unknown): string {
-  if (typeof sample === "number") return "value_num";
-  if (typeof sample === "boolean") return "value_bool";
-  if (sample instanceof Date) return "value_date";
-  if (sample !== null && typeof sample === "object") return "value_json";
-  return "value_text";
 }
 
 interface TaskMeta {

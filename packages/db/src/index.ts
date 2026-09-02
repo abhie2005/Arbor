@@ -9,6 +9,11 @@ export {
   type DatabaseOptions,
 } from "./client";
 export {
+  FieldNotFound,
+  loadField,
+  loadFieldCatalog,
+} from "./fields";
+export {
   applyOperations,
   MutationRejected,
   type ApplyContext,

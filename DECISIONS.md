@@ -69,6 +69,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-039](#d-039) | Every keyboard shortcut needs a visible equivalent | Frontend |
 | [D-040](#d-040) | Server actions run inside a transition and are always awaited | Frontend |
 | [D-041](#d-041) | One declaration table for field types, validated by hand | Data |
+| [D-042](#d-042) | The field decides its column; the compiler requires a catalog | Query |
 
 ---
 
@@ -975,3 +976,61 @@ a real schema library wins.
 *In one sentence:* the field type is the single source of truth for storage,
 operators, and validation, because the three places that used to infer it
 separately were free to disagree — and one of them was already wrong.
+
+### D-042
+**The field decides its column; the compiler requires a catalog** · 2026-09-02 · active
+
+`compileViewQuery` now takes a `fields` catalog, and refuses to compile a
+definition that mentions a `cf:` field it was not given. The storage column
+comes from the field's declared type, never from the JavaScript type of the
+filter value.
+
+**The bug this closes.** D-013 recorded it as a sharp edge and left it open:
+
+```ts
+// before — column chosen by inspecting the value
+function valueColumnFor(value: unknown) {
+  if (typeof value === "number") return "value_num";
+  ...
+}
+```
+
+Filter a *text* field with `op: "eq", value: 3` and the compiler emitted
+`fv.value_num = 3`. Valid SQL, correct index, zero rows — and zero rows is
+exactly what an empty list looks like. The failure was invisible: no error, no
+warning, just a view that appeared to have nothing in it. A user's only
+available conclusion is "there are no matching tasks", which is false.
+
+**Alternatives.**
+
+| Option | Why not |
+|---|---|
+| Keep inferring, but warn on a mismatch | There is nothing to compare against at that point. Inference *is* the guess; a warning would need the field's real type, and once you have that you no longer need to guess. |
+| Look the field up inside the compiler | @arbor/core would need a database handle, which is the one thing it does not have and the reason its 118 tests need no fixtures. |
+| Make the catalog optional, infer when it is absent | Two code paths, one of them known-wrong, and every caller that forgets the catalog silently gets the broken one. An optional correctness feature is not a correctness feature. |
+
+**What the requirement bought beyond the fix.** Once the compiler knows the
+type it can also refuse operators that make no sense (`>` on a dropdown),
+route multi-value fields to JSONB containment instead of a scalar comparison,
+sort a number column numerically rather than as text — `COALESCE(...::text)`
+put 10 before 9 — and reject grouping by a field a task can hold several values
+of at once.
+
+**A second bug found on the way.** `isNull` on a custom field compiled to
+`EXISTS (... AND fv.value_num IS NULL)`, which finds only tasks that have a row
+holding a null — not the far larger set that has no row at all. "Is empty" now
+means `NOT EXISTS (... IS NOT NULL)`.
+
+**Trade-off.** Every call site that compiles a view must first load the fields
+that view references — one extra query per request, and a new failure mode
+("field not in the catalog") that used to be silent. That is the trade: a loud
+failure at the boundary instead of a quiet wrong answer in the results.
+
+**What would change our mind.** If catalog loading ever shows up in a profile,
+cache it per workspace with the activity log as the invalidation signal — the
+same mechanism derived fields already use. The interface does not change.
+
+*In one sentence:* the compiler used to guess a custom field's storage column
+from the type of the filter value, so a mistyped filter returned an empty view
+instead of an error — now the field is asked, and a view that references a
+field nobody loaded refuses to compile.

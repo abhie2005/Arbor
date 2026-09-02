@@ -1,3 +1,11 @@
+import {
+  FIELD_TYPE_META,
+  FieldError,
+  type FieldCatalog,
+  type FieldDefinition,
+  fieldValueColumn,
+  parseFilterValue,
+} from "../fields";
 import type {
   BuiltinField,
   FieldRef,
@@ -20,6 +28,12 @@ import type {
  *    definition is untrusted input — it arrives from the client.
  * 3. **Custom-field predicates are EXISTS subqueries** against the typed EAV
  *    columns, so each one uses an index instead of widening the row.
+ * 4. **A custom field is asked for its type, never inspected for one.** The
+ *    caller supplies a catalog of the fields the definition references, and the
+ *    storage column comes from the declared type. Inferring it from the
+ *    JavaScript type of the filter value — what this did before — produced a
+ *    query against the wrong column that matched nothing and reported an empty
+ *    view rather than an error (D-013, D-042).
  */
 
 export interface CompileOptions {
@@ -28,6 +42,11 @@ export interface CompileOptions {
   viewerId: string;
   definition: ViewDefinition;
   scope: ViewScope;
+  /**
+   * The custom fields this definition references, by id. Required whenever the
+   * definition mentions a `cf:` field anywhere — filter, sort, or grouping.
+   */
+  fields?: FieldCatalog;
   limit?: number;
   /** Keyset cursor from the previous page. */
   after?: { sortValues: unknown[]; id: string };
@@ -107,15 +126,26 @@ function builtinSql(field: FieldRef): string {
 }
 
 /**
- * Which typed column on `field_values` a comparison should read. Storing values
- * in typed columns rather than a JSON blob is what keeps sorted, filtered views
- * on an index.
+ * The field a `cf:` reference names, or a compile error.
+ *
+ * Refusing to compile without the catalog is the point: a view that silently
+ * queries the wrong column is worse than one that fails to open, because the
+ * first looks like an empty list and the second looks like a bug.
  */
-function valueColumnFor(value: unknown): "value_num" | "value_date" | "value_bool" | "value_text" {
-  if (typeof value === "number") return "value_num";
-  if (typeof value === "boolean") return "value_bool";
-  if (value instanceof Date) return "value_date";
-  return "value_text";
+function requireField(field: `cf:${string}`, catalog: FieldCatalog | undefined): FieldDefinition {
+  const id = customFieldId(field);
+
+  if (!catalog) {
+    throw new ViewCompileError(
+      `This view references custom field ${id}, so compiling it needs a field catalog`,
+    );
+  }
+
+  const definition = catalog.get(id);
+  if (!definition) {
+    throw new ViewCompileError(`Custom field ${id} is not in the catalog`);
+  }
+  return definition;
 }
 
 class ParamBag {
@@ -179,17 +209,88 @@ function escapeLike(input: string): string {
   return input.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
-function conditionSql(condition: FilterCondition, params: ParamBag): string {
+/**
+ * A predicate on one custom field.
+ *
+ * Everything about the shape of this comes from the field's declared type: the
+ * column, whether the comparison is a scalar test or a JSONB containment test,
+ * and whether the operator is legal at all. The value is validated and coerced
+ * on the way through, so `parseFilterValue` rejects a filter the query would
+ * otherwise run and quietly return nothing for.
+ */
+function customFieldSql(
+  ref: `cf:${string}`,
+  condition: FilterCondition,
+  params: ParamBag,
+  catalog: FieldCatalog | undefined,
+): string {
+  const field = requireField(ref, catalog);
+  const meta = FIELD_TYPE_META[field.type];
+  const { op } = condition;
+
+  let value: unknown;
+  try {
+    value = parseFilterValue(field, op, condition.value);
+  } catch (error) {
+    // The field module speaks in terms a form can render; the compiler's
+    // callers catch ViewCompileError. Keep the message, change the type.
+    if (error instanceof FieldError) throw new ViewCompileError(error.message);
+    throw error;
+  }
+
+  const idParam = params.add(field.id);
+  const rowFor = (predicate: string) =>
+    `EXISTS (
+      SELECT 1 FROM field_values fv
+      WHERE fv.task_id = t.id AND fv.field_id = ${idParam} AND ${predicate}
+    )`;
+
+  if (meta.multi) {
+    // Values are a JSON array of ids. `jsonb_exists` is the function behind the
+    // `?` operator — spelled out because a bare `?` in query text is a
+    // placeholder to several drivers, even though node-postgres is not one.
+    const nonEmpty = `jsonb_array_length(COALESCE(fv.value_json, '[]'::jsonb)) > 0`;
+
+    switch (op) {
+      case "isNull":
+        return `NOT ${rowFor(nonEmpty)}`;
+      case "isNotNull":
+        return rowFor(nonEmpty);
+      case "eq":
+        return rowFor(`jsonb_exists(fv.value_json, ${params.add(value)})`);
+      case "neq":
+        // "does not have this label" must include tasks with no labels at all,
+        // which an EXISTS with a negated inner predicate would miss.
+        return `NOT ${rowFor(`jsonb_exists(fv.value_json, ${params.add(value)})`)}`;
+      case "in":
+        return rowFor(`jsonb_exists_any(fv.value_json, ${params.add(value)}::text[])`);
+      case "nin":
+        return `NOT ${rowFor(`jsonb_exists_any(fv.value_json, ${params.add(value)}::text[])`)}`;
+      default:
+        throw new ViewCompileError(`Operator "${op}" does not apply to a ${meta.label} field`);
+    }
+  }
+
+  const column = `fv.${fieldValueColumn(field)}`;
+
+  // A task with no row for the field has no value for it. Testing `IS NULL`
+  // inside the EXISTS would only find tasks that have a row holding a null,
+  // which is not what "is empty" means to anyone.
+  if (op === "isNull") return `NOT ${rowFor(`${column} IS NOT NULL`)}`;
+  if (op === "isNotNull") return rowFor(`${column} IS NOT NULL`);
+
+  return rowFor(comparisonSql(column, { ...condition, value }, params));
+}
+
+function conditionSql(
+  condition: FilterCondition,
+  params: ParamBag,
+  fields: FieldCatalog | undefined,
+): string {
   const { field } = condition;
 
   if (isCustomField(field)) {
-    const fieldId = customFieldId(field);
-    const column = valueColumnFor(condition.value);
-    const inner = comparisonSql(`fv.${column}`, condition, params);
-    return `EXISTS (
-      SELECT 1 FROM field_values fv
-      WHERE fv.task_id = t.id AND fv.field_id = ${params.add(fieldId)} AND ${inner}
-    )`;
+    return customFieldSql(field, condition, params, fields);
   }
 
   const builtin = field as BuiltinField;
@@ -237,19 +338,30 @@ function scopeSql(scope: ViewScope, params: ParamBag): string | null {
   }
 }
 
-function orderExpr(sort: SortField, params: ParamBag): string {
+function orderExpr(sort: SortField, params: ParamBag, fields: FieldCatalog | undefined): string {
   const direction = sort.dir === "desc" ? "DESC" : "ASC";
   // Always nulls last, in both directions: "no due date" belongs at the bottom
   // of the list whether the sort is ascending or descending.
   const nulls = "NULLS LAST";
 
   if (isCustomField(sort.field)) {
-    const fieldId = customFieldId(sort.field);
+    const field = requireField(sort.field, fields);
+    const meta = FIELD_TYPE_META[field.type];
+
+    if (meta.multi) {
+      throw new ViewCompileError(
+        `Cannot sort by "${field.type}" field ${field.id} — it holds a set, which has no order`,
+      );
+    }
+
     // A correlated scalar subquery keeps the sort key out of the join, so a
     // task with no value for the field sorts as NULL rather than dropping out.
-    return `(SELECT COALESCE(fv.value_num::text, fv.value_text, fv.value_date::text)
+    // The column comes from the declared type, so a number sorts numerically
+    // and a date chronologically — the COALESCE-to-text this used to do sorted
+    // 10 before 9 and 2026-01 before 2025-12.
+    return `(SELECT fv.${fieldValueColumn(field)}
              FROM field_values fv
-             WHERE fv.task_id = t.id AND fv.field_id = ${params.add(fieldId)}) ${direction} ${nulls}`;
+             WHERE fv.task_id = t.id AND fv.field_id = ${params.add(field.id)}) ${direction} ${nulls}`;
   }
 
   if (MULTI_VALUE_FIELDS.has(sort.field as BuiltinField)) {
@@ -313,7 +425,7 @@ function buildBase(options: CompileOptions): QueryBase {
 
   if (filters.conditions.length > 0) {
     const joiner = filters.op === "OR" ? " OR " : " AND ";
-    const parts = filters.conditions.map((c) => conditionSql(c, params));
+    const parts = filters.conditions.map((c) => conditionSql(c, params, options.fields));
     where.push(`(${parts.join(joiner)})`);
   }
 
@@ -350,12 +462,12 @@ export function compileViewQuery(options: CompileOptions): CompiledQuery {
     // Selected as `group_key` so the renderer gets the header value for free,
     // and so ORDER BY can reference the output alias instead of repeating a
     // correlated subquery.
-    columns.push(`${groupKeyExpr(grouping.field, params)} AS group_key`);
+    columns.push(`${groupKeyExpr(grouping.field, params, options.fields)} AS group_key`);
     order.push(`group_key ${grouping.dir === "desc" ? "DESC" : "ASC"} NULLS LAST`);
   }
 
   for (const sort of definition.sort.slice(0, MAX_SORTS)) {
-    order.push(orderExpr(sort, params));
+    order.push(orderExpr(sort, params, options.fields));
   }
   order.push("t.id ASC");
 
@@ -384,7 +496,7 @@ export function compileGroupCounts(options: CompileOptions): CompiledQuery {
   }
 
   const { joins, where, params } = buildBase(options);
-  const keyExpr = groupKeyExpr(groupField, params);
+  const keyExpr = groupKeyExpr(groupField, params, options.fields);
 
   return {
     text: `SELECT ${keyExpr} AS group_key, COUNT(*)::int AS count
@@ -397,12 +509,30 @@ ORDER BY group_key ASC NULLS LAST`,
   };
 }
 
-function groupKeyExpr(field: FieldRef, params: ParamBag): string {
+function groupKeyExpr(
+  field: FieldRef,
+  params: ParamBag,
+  fields: FieldCatalog | undefined,
+): string {
   if (isCustomField(field)) {
-    const fieldId = customFieldId(field);
-    return `(SELECT COALESCE(fv.value_text, fv.value_num::text, fv.value_date::text)
+    const definition = requireField(field, fields);
+    const meta = FIELD_TYPE_META[definition.type];
+
+    // A task with three labels belongs to three groups. Grouping by one is a
+    // renderer feature (a card appearing in several columns), not something a
+    // single group key can express, so refuse rather than pick a member.
+    if (meta.multi) {
+      throw new ViewCompileError(
+        `Cannot group by "${definition.type}" field ${definition.id} — a task can hold several values at once`,
+      );
+    }
+
+    // Cast to text because the group key is a header label and a map key on the
+    // renderer side; the ordering of groups is the grouping direction, not the
+    // field's natural order.
+    return `(SELECT fv.${fieldValueColumn(definition)}::text
             FROM field_values fv
-            WHERE fv.task_id = t.id AND fv.field_id = ${params.add(fieldId)})`;
+            WHERE fv.task_id = t.id AND fv.field_id = ${params.add(definition.id)})`;
   }
   return builtinSql(field);
 }

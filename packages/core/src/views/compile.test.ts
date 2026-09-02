@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { type FieldDefinition, indexFields } from "../fields";
 import { ViewCompileError, compileGroupCounts, compileViewQuery } from "./compile";
 import { DEFAULT_VIEW_DEFINITION, type ViewDefinition } from "./types";
 
@@ -7,12 +8,31 @@ const WORKSPACE = "11111111-1111-4111-8111-111111111111";
 const VIEWER = "22222222-2222-4222-8222-222222222222";
 const LIST = "33333333-3333-4333-8333-333333333333";
 const FIELD = "44444444-4444-4444-8444-444444444444";
+const TEXT_FIELD = "55555555-5555-4555-8555-555555555555";
+const LABELS_FIELD = "66666666-6666-4666-8666-666666666666";
+const OPTION = "77777777-7777-4777-8777-777777777777";
+
+/**
+ * The fields a view definition is allowed to reference. Compiling a `cf:`
+ * filter without one is now an error, so every custom-field test declares what
+ * it is filtering on — which is the point of the change (D-042).
+ */
+const CATALOG = indexFields([
+  { id: FIELD, type: "number", typeConfig: {} },
+  { id: TEXT_FIELD, type: "short_text", typeConfig: {} },
+  {
+    id: LABELS_FIELD,
+    type: "labels",
+    typeConfig: { options: [{ id: OPTION, name: "infra", color: "#43B581", orderindex: 0 }] },
+  },
+] as FieldDefinition[]);
 
 function compile(overrides: Partial<ViewDefinition> = {}, scopeId = LIST) {
   return compileViewQuery({
     workspaceId: WORKSPACE,
     viewerId: VIEWER,
     scope: { kind: "list", id: scopeId },
+    fields: CATALOG,
     definition: { ...DEFAULT_VIEW_DEFINITION, ...overrides },
   });
 }
@@ -84,14 +104,99 @@ describe("compileViewQuery", () => {
     expect(params).toContain(100);
   });
 
-  it("routes a string custom-field value to value_text", () => {
+  it("routes a value to the column the field's type declares", () => {
     const { text } = compile({
       filters: {
         op: "AND",
-        conditions: [{ field: `cf:${FIELD}`, op: "eq", value: "S1" }],
+        conditions: [{ field: `cf:${TEXT_FIELD}`, op: "eq", value: "S1" }],
       },
     });
     expect(text).toContain("fv.value_text =");
+  });
+
+  it("refuses to compile a cf: reference without a catalog", () => {
+    expect(() =>
+      compileViewQuery({
+        workspaceId: WORKSPACE,
+        viewerId: VIEWER,
+        scope: { kind: "list", id: LIST },
+        definition: {
+          ...DEFAULT_VIEW_DEFINITION,
+          filters: { op: "AND", conditions: [{ field: `cf:${FIELD}`, op: "eq", value: 1 }] },
+        },
+      }),
+    ).toThrow(/field catalog/);
+  });
+
+  it("rejects a custom field the catalog does not contain", () => {
+    expect(() =>
+      compile({
+        filters: {
+          op: "AND",
+          conditions: [
+            { field: "cf:99999999-9999-4999-8999-999999999999", op: "eq", value: 1 },
+          ],
+        },
+      }),
+    ).toThrow(/not in the catalog/);
+  });
+
+  it("rejects a number filter against a text field rather than matching nothing", () => {
+    // The D-013 sharp edge, closed: this compiled to `value_num = 3` against a
+    // field whose values live in value_text, and returned an empty view.
+    expect(() =>
+      compile({
+        filters: {
+          op: "AND",
+          conditions: [{ field: `cf:${TEXT_FIELD}`, op: "eq", value: 3 }],
+        },
+      }),
+    ).toThrow(ViewCompileError);
+  });
+
+  it("rejects an operator the field type has no meaning for", () => {
+    expect(() =>
+      compile({
+        filters: {
+          op: "AND",
+          conditions: [{ field: `cf:${LABELS_FIELD}`, op: "gt", value: OPTION }],
+        },
+      }),
+    ).toThrow(/does not apply/);
+  });
+
+  it("filters a multi-value custom field by JSONB containment", () => {
+    const { text, params } = compile({
+      filters: {
+        op: "AND",
+        conditions: [{ field: `cf:${LABELS_FIELD}`, op: "eq", value: OPTION }],
+      },
+    });
+    expect(text).toContain("jsonb_exists(fv.value_json");
+    expect(params).toContain(OPTION);
+  });
+
+  it("reads 'does not have this label' as including tasks with no labels", () => {
+    const { text } = compile({
+      filters: {
+        op: "AND",
+        conditions: [{ field: `cf:${LABELS_FIELD}`, op: "neq", value: OPTION }],
+      },
+    });
+    expect(text).toContain("NOT EXISTS");
+  });
+
+  it("treats a task with no row for a field as having no value", () => {
+    const { text } = compile({
+      filters: {
+        op: "AND",
+        conditions: [{ field: `cf:${FIELD}`, op: "isNull" }],
+      },
+    });
+    // Not `EXISTS (... AND fv.value_num IS NULL)`, which only finds tasks that
+    // have a row holding a null.
+    expect(text).toContain("NOT EXISTS");
+    expect(text).toContain("fv.value_num IS NOT NULL");
   });
 
   it("treats an empty assignee filter as 'has no assignees'", () => {
@@ -202,6 +307,29 @@ describe("compileViewQuery", () => {
     });
     expect(text).toContain("FROM field_values fv");
     expect(text).not.toContain("DISTINCT");
+  });
+
+  it("sorts a custom field on its own typed column, not on text", () => {
+    const { text } = compile({
+      grouping: { field: "none", dir: "asc" },
+      sort: [{ field: `cf:${FIELD}`, dir: "asc" }],
+    });
+    // Sorting numbers as text puts 10 before 9.
+    expect(text).toContain("SELECT fv.value_num");
+    expect(text).not.toContain("COALESCE(fv.value_num::text");
+  });
+
+  it("refuses to sort or group by a field holding a set", () => {
+    expect(() =>
+      compile({
+        grouping: { field: "none", dir: "asc" },
+        sort: [{ field: `cf:${LABELS_FIELD}`, dir: "asc" }],
+      }),
+    ).toThrow(/has no order/);
+
+    expect(() => compile({ grouping: { field: `cf:${LABELS_FIELD}`, dir: "asc" } })).toThrow(
+      /several values at once/,
+    );
   });
 
   it("hides subtasks entirely in mode 3", () => {
