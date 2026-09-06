@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-09-05. Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-09-05 (browser-verified). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 This file exists so a new session, or a future you, can pick the project up
 without re-deriving anything. Update it whenever you stop mid-stream.
@@ -84,8 +84,8 @@ page with a `Next-Action` header, which is the request a button click makes.
 | **Settings UI** | `/settings` — statuses, custom fields, task types. |
 | **Identity** | Dev-only user switcher behind `getCurrentUser()`. Not real auth. |
 
-**Verified:** 149 unit tests, 45 live-Postgres checks, 17 server-action checks,
-four packages typechecking clean.
+**Verified:** 153 unit tests, 45 live-Postgres checks, 17 server-action checks,
+four packages typechecking clean, and the interactions above driven in Chrome.
 
 **The renderer bet, measured.** Adding the board took no compiler change, no new
 SQL, and one new server action (`moveTask`, because dragging is a mutation the
@@ -95,12 +95,17 @@ onto it. Calendar and Table should be the same shape of work; if either one
 needs its own query, that is the signal the compiler is missing something
 rather than the renderer being special.
 
-**Not verified:** nothing in a real browser. The Claude-in-Chrome extension has
-failed to connect across three sessions, so no click has been observed. The
-settings pages are confirmed to render the seeded data correctly over HTTP, and
-every action is confirmed to work when invoked — but *that a click reaches the
-handler* is unproven for the settings screen. That is the one gap left, and it
-is the same class of gap that hid the undo bug.
+**Browser-verified 2026-09-05**, the first time in this project's history:
+board drag lands where aimed, undo restores both the column and the place in
+it, ⌘Z works from the keyboard, status cycling works, the status deletion
+prompt reports how many tasks would move, and a duplicate status name is
+refused with the input snapping back.
+
+It found three bugs that every automated check had passed — a toast that
+counted operations and called them tasks, a drop handler that read the dragged
+id from React state instead of `dataTransfer`, and refused edits that left the
+rejected value in the input (D-052, D-053). None of them were reachable from
+the server side, which is the whole argument for looking at the screen.
 
 ---
 
@@ -119,11 +124,6 @@ is the same class of gap that hid the undo bug.
 ---
 
 ## Where to pick up
-
-**Immediate:** drag a card on `/board` and click through `/settings` in a real
-browser. The server half of both is verified — every action is exercised by
-`check:actions` — but no click or drag has ever been observed. Native HTML5
-drag in particular has behaviour no HTTP check can see.
 
 **Next — saved views and the filter bar.**
 
@@ -150,9 +150,13 @@ drag in particular has behaviour no HTTP check can see.
 - **pnpm and corepack are absent**, which is why this is an npm-workspaces repo
   (D-004). The root `packageManager` field pins npm — Turborepo 2.10 refuses to
   resolve the workspace without it.
-- **The Claude-in-Chrome extension does not connect.** Four sessions, same
-  result. `check:actions` exists because of it — it warms the routes it needs
-  and then sends the request a click sends.
+- **The Claude-in-Chrome extension** refused to connect for four sessions and
+  then worked on 2026-09-05. `check:actions` exists because of that history and
+  is still worth keeping: it runs without a browser and covers the server half.
+- **Dev-server hydration takes several seconds.** Clicking or typing too soon
+  after a navigation does nothing at all — the event never reaches React, and
+  it looks exactly like a broken handler. Wait for the page to settle before
+  concluding anything from an interaction that did not work.
 - **21st.dev MCP** is configured at local scope in `~/.claude.json` (not in the
   repo — the key must never be committed). **Its tools require a Claude Code
   restart to load.** Not yet used; `packages/ui` has the tokens and an empty
@@ -164,7 +168,7 @@ drag in particular has behaviour no HTTP check can see.
 
 | File | Why |
 |---|---|
-| `DECISIONS.md` | 51 entries. Every non-obvious choice, the alternatives rejected, and the trade-off accepted. Written for explaining the project out loud. D-049 is the most interesting one to talk through. |
+| `DECISIONS.md` | 53 entries. Every non-obvious choice, the alternatives rejected, and the trade-off accepted. Written for explaining the project out loud. D-049 is the most interesting one to talk through. |
 | `docs/decisions/` | Five ADRs — the structural choices most expensive to reverse. |
 | `docs/design-plan.html` | Interface plan: palette, type, density, screens, keyboard map, AWS topology. Open in a browser. |
 | `docs/work-os-research.html` | The architecture teardown the whole project is built from. |
