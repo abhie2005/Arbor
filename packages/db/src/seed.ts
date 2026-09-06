@@ -436,7 +436,7 @@ async function main() {
   }
 
   // --- default views --------------------------------------------------------
-  const viewPositions = initialPositions(2);
+  const viewPositions = initialPositions(3);
   await db.insert(s.views).values([
     {
       workspaceId: workspace.id,
@@ -472,6 +472,37 @@ async function main() {
         sort: [{ field: "position", dir: "asc" }],
         filters: { op: "AND", conditions: [], showClosed: false, showSubtasks: 1 },
         columns: [{ field: "name" }, { field: "assignee" }, { field: "priority" }],
+      },
+    },
+    {
+      workspaceId: workspace.id,
+      parentId: sprint.id,
+      parentKind: "list",
+      type: "table",
+      name: "Table",
+      position: viewPositions[2]!,
+      createdBy: avery.id,
+      // The only seeded view whose columns include custom fields, which is the
+      // half of a definition the table is the first renderer to read. Severity
+      // is scoped to the Bug task type, so most rows are legitimately empty in
+      // that column — worth seeing, because an empty cell and a missing column
+      // must not look the same.
+      definition: {
+        grouping: { field: "none", dir: "asc" },
+        sort: [{ field: "position", dir: "asc" }],
+        filters: { op: "AND", conditions: [], showClosed: false, showSubtasks: 1 },
+        columns: [
+          { field: "status" },
+          { field: "name", width: 320 },
+          { field: "assignee" },
+          { field: "priority" },
+          { field: "dueAt" },
+          { field: `cf:${storyPoints.id}` },
+          { field: `cf:${severity.id}` },
+          { field: `cf:${components.id}` },
+          { field: "tag" },
+          { field: "taskType" },
+        ],
       },
     },
   ]);

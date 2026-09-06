@@ -18,6 +18,7 @@
 import {
   FIELD_TYPE_META,
   type FieldCatalog,
+  type FieldConfig,
   type FieldOption,
   type FieldType,
 } from "../fields";
@@ -84,6 +85,13 @@ export interface ResolvedColumn {
   sortable: boolean;
   /** Present for `choice` and `choices`, so a cell can colour an option. */
   options?: FieldOption[];
+  /**
+   * The custom field's own `typeConfig`. A cell cannot format a value without
+   * it — a currency needs its code, a rating its maximum, a progress field its
+   * ends — and re-reading the catalog on the render side would be a second
+   * source for the same answer.
+   */
+  config?: FieldConfig;
 }
 
 export interface ResolvedColumns {
@@ -210,6 +218,7 @@ function resolveOne(
       // The compiler orders a custom column with a correlated subquery on its
       // typed column, which a set of values has no answer for.
       sortable: !meta.multi,
+      config: field.typeConfig,
       ...(options ? { options } : {}),
     };
   }

@@ -34,8 +34,8 @@ export interface ViewTab {
   personal: boolean;
 }
 
-const RENDERER_ROUTE: Record<string, string> = { list: "/", board: "/board" };
-const UNBUILT = ["Calendar", "Table"];
+const RENDERER_ROUTE: Record<string, string> = { list: "/", board: "/board", table: "/table" };
+const UNBUILT = ["Calendar"];
 
 export function ViewTabs({
   views,

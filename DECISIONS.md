@@ -90,6 +90,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-060](#d-060) | Columns are refused on write and dropped on read | Query |
 | [D-061](#d-061) | One SELECT list, wide enough for every built-in a column may name | Query |
 | [D-062](#d-062) | Custom field values are fetched for the page, not projected | Query |
+| [D-063](#d-063) | A cell arrives as a value, never as an id and a lookup table | Frontend |
+| [D-064](#d-064) | One hook runs a task mutation from any control | Frontend |
 
 ---
 
@@ -1690,3 +1692,44 @@ rendered DOM before and after this change: identical.
 
 *In one sentence:* one indexed lookup for the page beats one subquery per
 column, and it belongs to the read path rather than to any renderer.
+
+### D-063
+**A cell arrives as a value, never as an id and a lookup table** · 2026-09-05 · active
+
+`cellsFor` runs on the server and returns a discriminated union — `{k:
+"people", names: ["Avery Mills"]}`, not a user id for the client to resolve.
+The table component never sees the people, tag, container or task maps.
+
+**Two things go wrong when the client joins.** It needs the maps, so rendering
+nine visible rows ships every person, tag and container in the workspace to the
+browser. And a missing name becomes a second place that has to decide what to
+do about it, which is how a table ends up printing a raw uuid at someone.
+
+**The union is the contract.** A `Cell` has a `k` the renderer switches on
+exhaustively, so a column kind added without a cell to draw it is a type error
+rather than a column of blanks — the same failure shape the SELECT-list guard
+in D-061 exists to catch, one layer up.
+
+**Deleted dropdown options render as an unnamed chip.** A value stores the
+option id, never its name (D-041), so removing an option from a field leaves
+values pointing at nothing. Showing the uuid is worse than showing nothing, and
+dropping the chip entirely would hide that a value is still stored.
+
+*In one sentence:* the server resolves cells to values because it already has
+everything needed to, and the browser does not.
+
+### D-064
+**One hook runs a task mutation from any control** · 2026-09-05 · active
+
+`useTaskAction` holds the four behaviours a control needs when it writes: run
+inside a transition and await it (D-040), push the server's inverse unchanged
+(D-049), show the failure, and revert the control to the server's value
+(D-053).
+
+Each of those was learned separately, three of them from a bug. A second
+renderer with its own copy of the list is a second place for one to go missing
+— and the one that goes missing quietly is the last, because a control still
+showing a value the server refused looks exactly like a control that worked.
+
+*In one sentence:* the rules for writing from a control are one function, so a
+new renderer inherits them instead of reimplementing them.

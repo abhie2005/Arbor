@@ -1,11 +1,11 @@
 "use client";
 
 import type { Operation } from "@arbor/core";
-import { useEffect, useState, useTransition } from "react";
+import { useState } from "react";
 
 import { archiveTask, cycleStatus, renameTask, setPriority } from "@/server/actions";
 
-import { useUndo } from "./undo";
+import { useTaskAction } from "./use-task-action";
 
 export interface TaskRowData {
   id: string;
@@ -21,34 +21,13 @@ export interface TaskRowData {
 const PRIORITY_CYCLE = [null, 1, 2, 3, 4] as const;
 
 export function TaskRow({ task }: { task: TaskRowData }) {
-  const { record } = useUndo();
-  const [pending, startTransition] = useTransition();
   const [editing, setEditing] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
   // Optimistic name: the row shows the new value on keystroke and reconciles
-  // when the server responds, rather than waiting for a round trip.
+  // when the server responds, rather than waiting for a round trip. The server
+  // is authoritative, so a refused rename drops back to what it still holds.
   const [name, setName] = useState(task.name);
-
-  function run(action: () => Promise<Operation[]>) {
-    startTransition(async () => {
-      try {
-        record(await action());
-      } catch (error) {
-        // The server is authoritative: drop the optimistic value and let the
-        // revalidated render supply the truth. Surface the failure rather than
-        // swallowing it — a silent catch here is why a broken mutation would
-        // look like a UI that simply ignores clicks.
-        setName(task.name);
-        setFailure(error instanceof Error ? error.message : "That change did not save");
-      }
-    });
-  }
-
-  useEffect(() => {
-    if (!failure) return;
-    const timer = setTimeout(() => setFailure(null), 4000);
-    return () => clearTimeout(timer);
-  }, [failure]);
+  const { run, pending, failure } = useTaskAction();
+  const act = (action: () => Promise<Operation[]>) => run(action, () => setName(task.name));
 
   const due = formatDue(task.dueAt);
 
@@ -59,7 +38,7 @@ export function TaskRow({ task }: { task: TaskRowData }) {
         className="dot-button"
         title="Advance status"
         aria-label={`Advance status of ${task.name}`}
-        onClick={() => run(() => cycleStatus(task.id))}
+        onClick={() => act(() => cycleStatus(task.id))}
       >
         <span className="dot" data-group={task.statusGroup ?? undefined} />
       </button>
@@ -74,7 +53,7 @@ export function TaskRow({ task }: { task: TaskRowData }) {
           onChange={(e) => setName(e.target.value)}
           onBlur={() => {
             setEditing(false);
-            if (name.trim() && name !== task.name) run(() => renameTask(task.id, name));
+            if (name.trim() && name !== task.name) act(() => renameTask(task.id, name));
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") e.currentTarget.blur();
@@ -128,7 +107,7 @@ export function TaskRow({ task }: { task: TaskRowData }) {
         className="archive"
         title="Archive"
         aria-label={`Archive ${task.name}`}
-        onClick={() => run(() => archiveTask(task.id))}
+        onClick={() => act(() => archiveTask(task.id))}
       >
         ×
       </button>

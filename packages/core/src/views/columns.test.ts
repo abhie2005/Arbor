@@ -166,3 +166,15 @@ describe("the SELECT list and the column table", () => {
     }
   });
 });
+
+describe("what a cell needs to format a value", () => {
+  it("carries the field's own config, so formatting has one source", () => {
+    const catalogWithConfig = indexFields([
+      { id: NUMBER_FIELD, type: "currency", typeConfig: { code: "GBP", precision: 2 } },
+    ] as FieldDefinition[]);
+
+    const { columns } = resolveColumns([{ field: `cf:${NUMBER_FIELD}` }], catalogWithConfig);
+    expect(columns[0]?.kind).toBe("currency");
+    expect(columns[0]?.config).toEqual({ code: "GBP", precision: 2 });
+  });
+});

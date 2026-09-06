@@ -1393,3 +1393,197 @@ select.filter-add option {
   font-size: var(--text-meta);
   color: var(--danger);
 }
+
+/* ---------- table ---------- */
+/* Horizontal scrolling belongs to the table, not the page: the sidebar and the
+   header must stay put when a view has twenty columns. */
+.table-scroll {
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+
+.table {
+  border-collapse: collapse;
+  /* `auto` would let a long task name widen its column past the width the
+     definition asked for, so the stored widths are honoured exactly. */
+  table-layout: fixed;
+  min-width: 100%;
+}
+
+.table th {
+  height: var(--group-h);
+  padding: 0 var(--space-3);
+  text-align: left;
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--text-2);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.table th[data-align="right"],
+.table td[data-align="right"] {
+  text-align: right;
+}
+
+.table td {
+  height: var(--row-h);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-row);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table tbody tr:hover {
+  background: var(--hover);
+}
+
+.table tbody tr[data-pending] {
+  opacity: 0.55;
+}
+
+.table tbody tr[data-failed] td {
+  border-bottom-color: var(--danger);
+}
+
+.table-actions {
+  width: 32px;
+  text-align: right;
+}
+
+.table-name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.table-name .sub {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  margin-left: 0;
+}
+
+/* The date cell is right-aligned inside the list's fixed grid; in a table the
+   column decides alignment, so it inherits rather than forcing its own. */
+.table .date {
+  min-width: 0;
+  text-align: inherit;
+}
+
+.table .avatars {
+  min-width: 0;
+  justify-content: flex-start;
+}
+
+.cell-empty {
+  color: var(--text-3);
+}
+
+.cell-text,
+.cell-link {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cell-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.cell-link:hover {
+  text-decoration: underline;
+}
+
+.cell-num {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.cell-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+.cell-status:hover {
+  color: var(--accent);
+}
+
+.cell-bool {
+  color: var(--text-2);
+}
+
+.cell-rating {
+  color: var(--warning);
+  letter-spacing: 1px;
+}
+
+.cell-rating-rest {
+  color: var(--text-3);
+}
+
+.cell-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.cell-progress-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  overflow: hidden;
+}
+
+.cell-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.cell-progress-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.chips {
+  display: inline-flex;
+  gap: var(--space-2);
+  overflow: hidden;
+}
+
+.chip {
+  font-size: var(--text-meta);
+  line-height: 1.6;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.table-empty,
+.table-dropped {
+  padding: var(--space-4);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
