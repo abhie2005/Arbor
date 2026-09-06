@@ -93,6 +93,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-063](#d-063) | A cell arrives as a value, never as an id and a lookup table | Frontend |
 | [D-064](#d-064) | One hook runs a task mutation from any control | Frontend |
 | [D-065](#d-065) | Sort lives in the URL, and a header cycles through three states | Frontend |
+| [D-066](#d-066) | Choosing columns writes to the view; filtering and sorting do not | Frontend |
 
 ---
 
@@ -1764,3 +1765,31 @@ the user changed is worse than no banner.
 
 *In one sentence:* a sorted table is an address you can send someone, and the
 saved order stays one click away.
+
+### D-066
+**Choosing columns writes to the view; filtering and sorting do not** · 2026-09-05 · active
+
+The column chooser calls `saveViewDefinitionAction` directly. Filters and sort
+go in the URL and wait for a Save (D-055, D-065).
+
+**Why the two are different.** A filter is a question someone is asking of a
+view — "just the overdue ones" — and it should be shareable without changing
+what everyone else opens. A column set is not a question; it is what the view
+*is*. Nobody adds a column meaning "temporarily, for me": they add it because
+the view was missing something. Putting a fifteen-column definition in the
+query string to make it feel consistent would produce unreadable links for a
+change nobody wanted to be temporary anyway.
+
+**Hiding keeps the entry.** A hidden column keeps its position and width in the
+definition, so switching one off and back on returns it where it was rather
+than appending it to the end. That is also why the menu lists columns in
+definition order rather than alphabetically — what you reorder is what you see,
+including the parts currently switched off.
+
+**A view-less table refuses instead of pretending.** When no saved view of the
+type exists, the renderer falls back to a constant definition, which has
+nowhere to keep a change. Saying so beats accepting the click and losing it on
+reload.
+
+*In one sentence:* filters and sorts are how someone reads a view, columns are
+what the view is, and only one of those belongs in a URL.

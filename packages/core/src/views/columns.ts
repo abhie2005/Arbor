@@ -287,3 +287,43 @@ export function validateColumns(
     throw new ViewCompileError(`A column references an unknown field: ${String(spec.field)}`);
   }
 }
+
+export interface ColumnOption {
+  ref: FieldRef;
+  label: string;
+  custom: boolean;
+}
+
+/**
+ * Every column a view may show, for a column chooser to offer.
+ *
+ * The same relationship to `resolveColumns` that `filterableFields` has to the
+ * compiler (D-054): one declaration, read both by the thing that offers a
+ * choice and by the thing that validates it, so the menu cannot offer a column
+ * that saving would reject.
+ *
+ * Archived custom fields are left out for the same reason the filter menu
+ * leaves them out — a view already showing one keeps working, but nobody
+ * should be invited to start using a field on its way out.
+ */
+export function availableColumns(
+  catalog?: FieldCatalog,
+  archived: ReadonlySet<string> = new Set(),
+  names: ReadonlyMap<string, string> = new Map(),
+): ColumnOption[] {
+  const builtins = Object.entries(BUILTIN_COLUMNS).map(([ref, meta]) => ({
+    ref: ref as BuiltinField,
+    label: BUILTIN_FILTERABLE[ref as BuiltinField]?.label ?? meta.label,
+    custom: false,
+  }));
+
+  const custom = [...(catalog?.values() ?? [])]
+    .filter((field) => !archived.has(field.id))
+    .map((field) => ({
+      ref: `cf:${field.id}` as const,
+      label: names.get(field.id) ?? FIELD_TYPE_META[field.type].label,
+      custom: true,
+    }));
+
+  return [...builtins, ...custom];
+}

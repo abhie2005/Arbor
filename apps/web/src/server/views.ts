@@ -4,6 +4,7 @@ import {
   DEFAULT_VIEW_DEFINITION,
   type FieldRef,
   type FilterGroup,
+  type ColumnOption,
   type FilterableField,
   type ResolvedColumn,
   type SortField,
@@ -11,6 +12,7 @@ import {
   type ViewType,
   compileGroupCounts,
   compileViewQuery,
+  availableColumns,
   decodeFilters,
   decodeSort,
   filterableFields,
@@ -305,6 +307,13 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
 
 export interface FilterOptions {
   fields: FilterableField[];
+  /**
+   * Every column a chooser may offer. Computed from the catalog this function
+   * already loads, so it costs nothing extra — and it comes from the same
+   * declaration `resolveColumns` reads, so the menu cannot offer a column that
+   * saving would reject.
+   */
+  allColumns: ColumnOption[];
   statuses: { id: string; name: string; group: string; color: string }[];
   statusGroups: { id: string; name: string }[];
   priorities: { id: string; name: string }[];
@@ -358,6 +367,7 @@ export async function loadFilterOptions(workspaceId: string): Promise<FilterOpti
 
   return {
     fields: filterableFields(catalog, archived, names),
+    allColumns: availableColumns(catalog, archived, names),
     statuses: statuses.rows,
     statusGroups: [
       { id: "not_started", name: "Not started" },

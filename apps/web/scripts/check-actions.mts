@@ -320,6 +320,65 @@ report(
     : `status ${reverted.status_id} position ${reverted.position}`,
 );
 
+console.log("\ntable columns → the saved view\n");
+
+// The column chooser writes straight to the saved view rather than layering
+// over it in the URL (D-066), so this seam — a menu handler to the view
+// service — is the only thing standing between a click and a definition. It
+// is exactly the shape of seam this file exists for (D-048).
+await warm("/table");
+const TABLE_ACTIONS = actionIds("app/table/page");
+const TABLE_URL = "http://localhost:" + PORT + "/table";
+
+const tableView = await one(`SELECT id, definition FROM views WHERE type = 'table' LIMIT 1`);
+const originalDefinition = tableView.definition;
+
+const refused = await callOn(TABLE_URL, TABLE_ACTIONS.saveViewDefinitionAction!, [
+  tableView.id,
+  { ...originalDefinition, columns: [{ field: "cf:00000000-0000-4000-8000-00000000dead" }] },
+]);
+const refusedResult = returned(refused.text);
+report(
+  "a column naming a field that does not exist is refused at the action boundary",
+  refusedResult?.ok === false && /column/i.test(refusedResult.error ?? "")
+    ? null
+    : `got ${JSON.stringify(refusedResult)}`,
+);
+
+const untouched = await one(`SELECT definition FROM views WHERE id = $1`, [tableView.id]);
+report(
+  "and the view it would have broken is unchanged",
+  JSON.stringify(untouched.definition) === JSON.stringify(originalDefinition)
+    ? null
+    : "the refused definition was written anyway",
+);
+
+const hidden = originalDefinition.columns.map((column: { field: string }, index: number) =>
+  index === 0 ? { ...column, hidden: true } : column,
+);
+const accepted = await callOn(TABLE_URL, TABLE_ACTIONS.saveViewDefinitionAction!, [
+  tableView.id,
+  { ...originalDefinition, columns: hidden },
+]);
+report(
+  "hiding a column saves",
+  returned(accepted.text)?.ok === true ? null : `got ${accepted.text.slice(0, 120)}`,
+);
+
+const afterHide = await one(`SELECT definition FROM views WHERE id = $1`, [tableView.id]);
+report(
+  "and the hidden column keeps its place in the definition",
+  afterHide.definition.columns.length === originalDefinition.columns.length &&
+    afterHide.definition.columns[0].hidden === true
+    ? null
+    : `stored ${JSON.stringify(afterHide.definition.columns.slice(0, 2))}`,
+);
+
+await db.query(`UPDATE views SET definition = $1 WHERE id = $2`, [
+  originalDefinition,
+  tableView.id,
+]);
+
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);
 await db.end();

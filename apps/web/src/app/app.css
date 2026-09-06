@@ -1622,3 +1622,124 @@ select.filter-add option {
   min-width: 8px;
   font-size: 8px;
 }
+
+/* ---------- column chooser ---------- */
+/* The filter bar keeps its own full width — its "Show closed" toggle is pushed
+   right with `margin-left: auto`, which has no room in a shrink-to-fit flex
+   item — so the chooser sits beside it and the rule below them belongs to the
+   pair rather than to the filter bar alone. */
+.table-bar {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--line);
+}
+
+.table-bar .filter-bar {
+  flex: 1;
+  border-bottom: 0;
+}
+
+.column-menu {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding-right: var(--space-4);
+}
+
+.column-menu-trigger {
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  background: none;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  padding: 2px var(--space-3);
+  cursor: pointer;
+}
+
+.column-menu-trigger:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.column-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + var(--space-2));
+  z-index: 20;
+  min-width: 240px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: var(--space-3);
+  background: var(--popover);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-modal);
+}
+
+.column-popover[data-pending] {
+  opacity: 0.6;
+}
+
+.column-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-meta);
+  line-height: 1.9;
+}
+
+.column-row label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.column-move button {
+  background: none;
+  border: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.column-move button:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.column-move button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.column-heading {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-label);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+.column-custom {
+  font-size: var(--text-label);
+  color: var(--text-3);
+}
+
+.column-error {
+  margin-top: var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--danger);
+}
+
+.column-close {
+  margin-top: var(--space-3);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}

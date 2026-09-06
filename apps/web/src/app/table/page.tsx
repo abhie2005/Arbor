@@ -1,3 +1,4 @@
+import { ColumnMenu } from "@/components/column-menu";
 import { FilterBar } from "@/components/filter-bar";
 import { TaskTable, type TableRowData } from "@/components/task-table";
 import { UndoButton, UndoProvider } from "@/components/undo";
@@ -148,11 +149,18 @@ export default async function TablePage({
             dirty={data.dirty}
           />
 
-          <FilterBar
-            fields={options.fields}
-            values={options}
-            filters={data.definition.filters}
-          />
+          <div className="table-bar">
+            <FilterBar
+              fields={options.fields}
+              values={options}
+              filters={data.definition.filters}
+            />
+            <ColumnMenu
+              viewId={data.viewId}
+              definition={data.savedDefinition}
+              options={options.allColumns}
+            />
+          </div>
 
           {/* A column naming a deleted field is dropped rather than thrown
               (D-060) — but silently dropping it would look like missing data,

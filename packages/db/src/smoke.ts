@@ -34,6 +34,7 @@ import {
   deleteView,
   duplicateView,
   listViews,
+  loadViewById,
   renameView,
   setDefaultView,
   updateViewDefinition,
@@ -735,11 +736,23 @@ async function main() {
   console.log("\nsaved views → validated on write\n");
 
   const seeded = await listViews(ws.id!, list.id!, viewer.id!, pool);
+  // One saved view per renderer that exists. Asserting the set rather than a
+  // count, so adding a renderer names the view it forgot to seed instead of
+  // reporting a number that means nothing on its own.
+  const seededTypes = seeded.map((v) => v.type).sort();
   report(
-    "the seeded list and board views are both here",
-    seeded.length === 2 && seeded.some((v) => v.type === "board")
+    "every renderer has a seeded view",
+    seededTypes.join(",") === "board,list,table"
       ? null
-      : `got ${seeded.map((v) => v.name).join(", ")}`,
+      : `got ${seeded.map((v) => `${v.name} (${v.type})`).join(", ")}`,
+  );
+
+  const seededTable = seeded.find((v) => v.type === "table");
+  report(
+    "the seeded table view shows custom field columns",
+    seededTable?.definition.columns.some((column) => String(column.field).startsWith("cf:"))
+      ? null
+      : "no custom field column in the seeded table view",
   );
 
   report(
@@ -839,6 +852,36 @@ async function main() {
         config,
       ),
     ),
+  );
+
+  // Columns are not part of the compiled query, so compiling a definition says
+  // nothing about them. They are checked on the same write path for the same
+  // reason (D-060): this is the end where a broken column is still someone's
+  // mistake to fix.
+  report(
+    "a column naming a field that does not exist cannot be saved",
+    await expectRejection(() =>
+      updateViewDefinition(
+        saved.id,
+        {
+          ...DEFAULT_VIEW_DEFINITION,
+          columns: [{ field: "cf:00000000-0000-4000-8000-00000000dead" }],
+        },
+        config,
+      ),
+    ),
+  );
+
+  report(
+    "a column naming a field that does exist saves",
+    await (async () => {
+      const columns = [{ field: "name" as const }, { field: `cf:${componentsField.id}` as const }];
+      await updateViewDefinition(saved.id, { ...DEFAULT_VIEW_DEFINITION, columns }, config);
+      const reloaded = await loadViewById(saved.id, pool);
+      return reloaded.definition.columns.length === 2
+        ? null
+        : `expected 2 columns, stored ${JSON.stringify(reloaded.definition.columns)}`;
+    })(),
   );
 
   // Deleting the default promotes another, so the list still opens on something.

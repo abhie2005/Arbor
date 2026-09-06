@@ -4,6 +4,7 @@ import { type FieldDefinition, indexFields } from "../fields";
 import { BUILTIN_SQL, ViewCompileError, compileViewQuery } from "./compile";
 import {
   BUILTIN_COLUMNS,
+  availableColumns,
   MAX_COLUMN_WIDTH,
   MIN_COLUMN_WIDTH,
   resolveColumns,
@@ -176,5 +177,36 @@ describe("what a cell needs to format a value", () => {
     const { columns } = resolveColumns([{ field: `cf:${NUMBER_FIELD}` }], catalogWithConfig);
     expect(columns[0]?.kind).toBe("currency");
     expect(columns[0]?.config).toEqual({ code: "GBP", precision: 2 });
+  });
+});
+
+describe("what a column chooser may offer", () => {
+  it("never offers a column that saving would refuse", () => {
+    // The contract that makes the menu trustworthy, mirroring the filter bar's.
+    for (const option of availableColumns(catalog, new Set(), names)) {
+      expect(() => validateColumns([{ field: option.ref }], catalog)).not.toThrow();
+    }
+  });
+
+  it("offers built-ins and custom fields together, custom flagged", () => {
+    const options = availableColumns(catalog, new Set(), names);
+    expect(options.filter((o) => o.custom).map((o) => o.label)).toEqual([
+      "Story Points",
+      "Severity",
+      "Components",
+    ]);
+    expect(options.find((o) => o.ref === "dueAt")?.label).toBe("Due date");
+  });
+
+  it("hides archived fields from the menu but keeps them resolvable", () => {
+    const options = availableColumns(catalog, new Set([LABELS_FIELD]), names);
+    expect(options.some((o) => o.ref === `cf:${LABELS_FIELD}`)).toBe(false);
+    // A view already showing it keeps working.
+    const { columns } = resolveColumns([{ field: `cf:${LABELS_FIELD}` }], catalog, names);
+    expect(columns).toHaveLength(1);
+  });
+
+  it("does not offer position", () => {
+    expect(availableColumns().some((o) => o.ref === "position")).toBe(false);
   });
 });

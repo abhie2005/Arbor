@@ -4,6 +4,7 @@ import {
   type ViewType,
   compileViewQuery,
   positionBetween,
+  validateColumns,
 } from "@arbor/core";
 import type { Pool, PoolClient } from "pg";
 
@@ -138,6 +139,10 @@ export async function assertViewCompiles(
       definition,
       fields,
     });
+    // Columns are not part of the query, so compiling cannot vouch for them.
+    // Validated here rather than nowhere: this is the write path, which is the
+    // end where a broken column is still someone's mistake to fix (D-060).
+    validateColumns(definition.columns, fields);
   } catch (error) {
     throw new ConfigError(
       `That view cannot be saved: ${error instanceof Error ? error.message : String(error)}`,
