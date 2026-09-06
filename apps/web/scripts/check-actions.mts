@@ -33,6 +33,18 @@ const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://arbor:arbor@localho
  * hard-coded. The compiled server bundle carries the id-to-export mapping in a
  * url-encoded manifest string; this reads it out of the dev build.
  */
+/**
+ * Next compiles routes on demand, so a freshly started dev server has no
+ * bundle to read ids out of until something asks for the page. Ask for it.
+ */
+async function warm(path: string): Promise<void> {
+  const response = await fetch(`http://localhost:${PORT}${path}`);
+  if (!response.ok) {
+    throw new Error(`GET ${path} returned ${response.status} — is the dev server on ${PORT}?`);
+  }
+  await response.text();
+}
+
 function actionIds(route = "app/settings/statuses/page"): Record<string, string> {
   const bundle = `.next/server/${route}.js`;
   let source;
@@ -40,7 +52,7 @@ function actionIds(route = "app/settings/statuses/page"): Record<string, string>
     source = readFileSync(bundle, "utf8");
   } catch {
     throw new Error(
-      `${bundle} not found. Start the dev server and load /settings/statuses once first.`,
+      `${bundle} not found even after loading the page — has the route moved?`,
     );
   }
 
@@ -53,6 +65,9 @@ function actionIds(route = "app/settings/statuses/page"): Record<string, string>
   }
   return ids;
 }
+
+await warm("/settings/statuses");
+await warm("/");
 
 const IDS = actionIds();
 let failures = 0;
