@@ -69,7 +69,7 @@ export const MAX_LIMIT = 500;
  * Built-in field → SQL expression. A closed map is the whole defence against
  * injection through `FieldRef`: anything not present here is rejected.
  */
-const BUILTIN_SQL: Record<BuiltinField, string> = {
+export const BUILTIN_SQL: Record<BuiltinField, string> = {
   name: "t.name",
   status: "t.status_id",
   statusGroup: "s.group",
@@ -447,10 +447,15 @@ export function compileViewQuery(options: CompileOptions): CompiledQuery {
   const { grouping } = definition;
   const { joins, where, params } = buildBase(options);
 
+  // Every built-in a column may name, so that showing one is a rendering
+  // decision rather than a query change. They are all on `tasks` — no extra
+  // join, and the row is a few bytes wider for renderers that ignore them,
+  // which is cheaper than a second query or a second SELECT list to maintain.
   const columns = [
     "t.id, t.key, t.name, t.status_id, t.priority, t.parent_task_id",
     "t.due_at, t.due_has_time, t.start_at, t.points, t.time_estimate_ms",
     "t.home_list_id, t.space_id, t.folder_id, t.position, t.updated_at",
+    "t.task_type_id, t.created_at, t.created_by, t.completed_at",
     "s.group AS status_group, ax.permission AS viewer_permission",
   ];
 

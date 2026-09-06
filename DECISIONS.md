@@ -87,6 +87,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-057](#d-057) | "Exactly one default" is a database constraint, not a service rule | Data |
 | [D-058](#d-058) | The saved view is the base; the URL layers over it | Frontend |
 | [D-059](#d-059) | Never compare structures with `JSON.stringify` | Frontend |
+| [D-060](#d-060) | Columns are refused on write and dropped on read | Query |
+| [D-061](#d-061) | One SELECT list, wide enough for every built-in a column may name | Query |
 
 ---
 
@@ -1598,3 +1600,57 @@ considerably more expensive than remembering to add a line.
 *In one sentence:* two identical filters compared unequal because Postgres
 returns `jsonb` keys in its own order, so equality is now structural rather
 than textual.
+
+### D-060
+**Columns are refused on write and dropped on read** · 2026-09-05 · active
+
+`validateColumns` throws on a column that names nothing; `resolveColumns`
+silently drops one and reports it in `dropped`. Same knowledge, two behaviours,
+chosen by which end is calling.
+
+**Why not one rule.** The instinct is to be consistent, and consistency here
+picks the wrong behaviour at one of the two ends. Throwing at read time means a
+single deleted custom field takes every saved view that mentioned it off the
+air — and because `resolveColumns` runs inside `loadView`, which every renderer
+reads through, that is the list and the board going dark over a column neither
+of them draws. Dropping at write time means saving a view appears to succeed
+and quietly discards part of what was saved.
+
+So: refuse where a person is present and can fix it, degrade where they are
+not. The rejected alternative — validating only on write and trusting the
+database afterwards — ignores that a field can be deleted *after* a view
+referencing it was saved, which no amount of write-side validation prevents.
+
+**Hidden columns are validated too.** A hidden column is a remembered width and
+position, not a discarded one; un-hiding it later must not be able to fail.
+
+*In one sentence:* a broken column is a mistake worth refusing when it is being
+made and not worth breaking a screen over afterwards.
+
+### D-061
+**One SELECT list, wide enough for every built-in a column may name** · 2026-09-05 · active
+
+The compiler projects every single-valued built-in — including
+`task_type_id`, `created_at`, `created_by` and `completed_at`, which no
+renderer read before the table — rather than selecting per view definition.
+
+**The alternative was projecting what the definition asks for**, which sounds
+tidier and is worse. It makes the SELECT list vary by view, so the
+prepared-statement text differs per view; it means a renderer that wants to
+show one more field needs the compiler to agree; and it turns "add a column to
+this view" into a query change, which is exactly the coupling the one-compiler
+bet exists to avoid (D-017).
+
+These are all columns on `tasks` — no extra join, and a few bytes per row for
+renderers that ignore them. Multi-valued fields stay out: assignees, watchers
+and tags live in child tables, and projecting them would multiply rows, which
+is the one thing the no-DISTINCT rule (D-020) depends on not happening.
+
+**A test asserts the two tables agree** — every entry in `BUILTIN_COLUMNS`
+whose kind is single-valued must appear in the compiled SELECT list. The drift
+it guards against is silent: a column offered in a header whose value never
+arrives renders as an empty cell in every row, which reads as "no data" rather
+than "never selected".
+
+*In one sentence:* the row is a little wider so that adding a column to a view
+is never a change to the query.

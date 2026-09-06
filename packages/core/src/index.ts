@@ -6,4 +6,5 @@ export * from "./views/types";
 export * from "./views/filterable";
 export * from "./views/url";
 export * from "./views/compile";
+export * from "./views/columns";
 export * from "./mutations";
