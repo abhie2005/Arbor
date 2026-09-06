@@ -92,6 +92,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-062](#d-062) | Custom field values are fetched for the page, not projected | Query |
 | [D-063](#d-063) | A cell arrives as a value, never as an id and a lookup table | Frontend |
 | [D-064](#d-064) | One hook runs a task mutation from any control | Frontend |
+| [D-065](#d-065) | Sort lives in the URL, and a header cycles through three states | Frontend |
 
 ---
 
@@ -1733,3 +1734,33 @@ showing a value the server refused looks exactly like a control that worked.
 
 *In one sentence:* the rules for writing from a control are one function, so a
 new renderer inherits them instead of reimplementing them.
+
+### D-065
+**Sort lives in the URL, and a header cycles through three states** · 2026-09-05 · active
+
+`?s=[["dueAt","desc"]]`, layered over the saved view's own sort exactly as
+`?f=` layers over its filters (D-055, D-058). A header goes unsorted →
+ascending → descending → unsorted.
+
+**The third state is the one worth arguing for.** Two-state headers are more
+common and they strand the saved view's own order: these lists are sorted by
+`position`, which is the order people dragged things into, and once anyone
+clicks a header there is no way back to it short of reopening the view. Making
+the third click remove the parameter means "put it back" is a click rather
+than a thing you have to know.
+
+**Headers are links, not buttons.** Sorting is a navigation to another address
+for the same view, so it lands in history, opens in a new tab, and works before
+the page has hydrated — which on this machine is several seconds (a button
+would silently do nothing in that window).
+
+**Multi-value columns say why they cannot sort.** `orderExpr` refuses a set,
+so assignee, tag and labels columns render as plain text with a title
+explaining it, rather than as a control that looks live and does nothing.
+
+**"Unsaved filter" became "Unsaved changes"**, and Save now writes the sort
+too. A banner that offers to save a view while quietly dropping half of what
+the user changed is worse than no banner.
+
+*In one sentence:* a sorted table is an address you can send someone, and the
+saved order stays one click away.

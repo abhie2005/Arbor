@@ -18,7 +18,7 @@
  * already answers all three and is the boundary that matters (D-042).
  */
 
-import type { FilterCondition, FilterGroup, FilterOp } from "./types";
+import type { FilterCondition, FilterGroup, FilterOp, SortField } from "./types";
 
 export class FilterUrlError extends Error {}
 
@@ -134,5 +134,62 @@ function decodeConditions(raw: unknown): FilterCondition[] {
     return entry.length === 2
       ? ({ field, op } as FilterCondition)
       : ({ field, op, value } as FilterCondition);
+  });
+}
+
+/**
+ * Sort in the URL, for the same reason filters are (D-055).
+ *
+ * Clicking a column header is exploration, not a decision about the saved
+ * view: "who is going to miss the deadline" is a table sorted by due date and
+ * a link worth pasting into a channel, and it should neither be lost on reload
+ * nor change the view for everyone who opens it.
+ *
+ * `?s=[["dueAt","desc"]]` — the same compact tuple shape the filter encoding
+ * uses, and validated the same way: structure here, meaning in the compiler.
+ * A field name is not checked against the known set, because `orderExpr`
+ * resolves it through a closed map and rejects anything else (D-018).
+ */
+export function encodeSort(sort: readonly SortField[]): string | null {
+  if (sort.length === 0) return null;
+  return JSON.stringify(sort.map((field) => [field.field, field.dir]));
+}
+
+export function decodeSort(raw: string | null | undefined, base: SortField[]): SortField[] {
+  if (!raw) return base;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new FilterUrlError("The sort in this link is not valid JSON");
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new FilterUrlError("The sort in this link is not an array");
+  }
+
+  // MAX_SORTS in the compiler is 5; a longer list is a malformed link rather
+  // than a view, and silently truncating it would sort by something the URL
+  // does not say.
+  if (parsed.length > 5) {
+    throw new FilterUrlError("A view may sort by at most 5 fields");
+  }
+
+  return parsed.map((entry, index) => {
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      throw new FilterUrlError(`Sort ${index + 1} is not a [field, direction] pair`);
+    }
+
+    const [field, dir] = entry as [unknown, unknown];
+
+    if (typeof field !== "string" || field === "") {
+      throw new FilterUrlError(`Sort ${index + 1} names no field`);
+    }
+    if (dir !== "asc" && dir !== "desc") {
+      throw new FilterUrlError(`Sort ${index + 1} has an unknown direction: ${String(dir)}`);
+    }
+
+    return { field, dir } as SortField;
   });
 }

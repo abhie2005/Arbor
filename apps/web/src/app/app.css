@@ -1587,3 +1587,38 @@ select.filter-add option {
   font-size: var(--text-meta);
   color: var(--text-3);
 }
+
+/* The whole header cell is the target, not just its text. An anchor sized to
+   its label leaves most of a 140px column dead, and a click that lands two
+   pixels off the word reads as a header that does not sort. */
+.th-sort,
+.th-plain {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  height: 100%;
+  color: inherit;
+  text-decoration: none;
+}
+
+.table th[data-align="right"] .th-sort,
+.table th[data-align="right"] .th-plain {
+  justify-content: flex-end;
+}
+
+.th-sort:hover {
+  color: var(--text);
+}
+
+.th-sort[data-active] {
+  color: var(--accent);
+}
+
+/* Reserved whether or not this column is the sorted one, so clicking a header
+   does not shift every other header sideways. */
+.th-arrow {
+  display: inline-block;
+  min-width: 8px;
+  font-size: 8px;
+}

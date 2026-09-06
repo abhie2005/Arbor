@@ -1,6 +1,8 @@
 "use client";
 
-import type { Operation, ResolvedColumn } from "@arbor/core";
+import { type Operation, type ResolvedColumn, type SortField, encodeSort } from "@arbor/core";
+import Link from "next/link";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useState } from "react";
 
 import type { Cell } from "@/server/cells";
@@ -35,9 +37,12 @@ export interface TableRowData {
 export function TaskTable({
   columns,
   rows,
+  sort,
 }: {
   columns: ResolvedColumn[];
   rows: TableRowData[];
+  /** The sort in force, saved or from the URL — headers read their state from it. */
+  sort: SortField[];
 }) {
   if (columns.length === 0) {
     return (
@@ -58,8 +63,9 @@ export function TaskTable({
                 style={{ width: column.width }}
                 data-align={column.align}
                 scope="col"
+                aria-sort={ariaSort(column, sort)}
               >
-                {column.label}
+                <ColumnHeader column={column} sort={sort} />
               </th>
             ))}
             {/* Unlabelled: the archive control needs a column, not a heading. */}
@@ -74,6 +80,74 @@ export function TaskTable({
       </table>
     </div>
   );
+}
+
+/**
+ * A header that sorts, in three states: unsorted, ascending, descending, and
+ * back to unsorted.
+ *
+ * The third state matters. Without it a saved view's own order — usually
+ * `position`, the order people dragged things into — becomes unreachable once
+ * anyone clicks a header, and "put it back" is not something a user should
+ * have to know to do by editing the URL.
+ *
+ * It is a link, not a button: sorting is a navigation to a different address
+ * for the same view (D-055), so it opens in a new tab, it is in the history,
+ * and it works before the page has hydrated.
+ */
+function ColumnHeader({ column, sort }: { column: ResolvedColumn; sort: SortField[] }) {
+  const pathname = usePathname();
+  const params = useSearchParams();
+
+  if (!column.sortable) {
+    // A set has no order, and the compiler refuses to invent one. Saying so
+    // when asked beats a header that looks clickable and does nothing.
+    return (
+      <span className="th-plain" title={`${column.label} cannot be sorted — it holds a set of values`}>
+        {column.label}
+      </span>
+    );
+  }
+
+  const active = sort[0]?.field === column.ref ? sort[0] : null;
+  const next: SortField[] | null =
+    active === null
+      ? [{ field: column.ref, dir: "asc" }]
+      : active.dir === "asc"
+        ? [{ field: column.ref, dir: "desc" }]
+        : null;
+
+  const query = new URLSearchParams(params.toString());
+  const encoded = next === null ? null : encodeSort(next);
+  if (encoded === null) query.delete("s");
+  else query.set("s", encoded);
+
+  const href = query.size > 0 ? `${pathname}?${query.toString()}` : pathname;
+
+  return (
+    <Link
+      className="th-sort"
+      href={href}
+      data-active={active !== null || undefined}
+      title={
+        next === null
+          ? `Stop sorting by ${column.label}`
+          : `Sort by ${column.label}, ${next[0]?.dir === "asc" ? "ascending" : "descending"}`
+      }
+    >
+      {column.label}
+      <span className="th-arrow">{active === null ? "" : active.dir === "asc" ? "▲" : "▼"}</span>
+    </Link>
+  );
+}
+
+function ariaSort(
+  column: ResolvedColumn,
+  sort: SortField[],
+): "ascending" | "descending" | "none" | undefined {
+  if (!column.sortable) return undefined;
+  if (sort[0]?.field !== column.ref) return "none";
+  return sort[0].dir === "asc" ? "ascending" : "descending";
 }
 
 function TableRow({ row, columns }: { row: TableRowData; columns: ResolvedColumn[] }) {

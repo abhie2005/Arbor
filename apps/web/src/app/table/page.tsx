@@ -28,14 +28,14 @@ export const dynamic = "force-dynamic";
 export default async function TablePage({
   searchParams,
 }: {
-  searchParams: Promise<{ f?: string; view?: string }>;
+  searchParams: Promise<{ f?: string; s?: string; view?: string }>;
 }) {
   let viewer: Awaited<ReturnType<typeof getCurrentUser>> = null;
   let data: Awaited<ReturnType<typeof loadView>> = null;
   let options: Awaited<ReturnType<typeof loadFilterOptions>> | null = null;
   let error: string | null = null;
 
-  const { f, view } = await searchParams;
+  const { f, s, view } = await searchParams;
 
   try {
     viewer = await getCurrentUser();
@@ -47,6 +47,7 @@ export default async function TablePage({
           type: "table",
           viewId: view,
           filterParam: f,
+          sortParam: s,
           override: {
             grouping: { field: "none", dir: "asc" },
             filters: { showSubtasks: 1 } as never,
@@ -60,14 +61,18 @@ export default async function TablePage({
   }
 
   if (error || !viewer || !data || !options) {
-    const badLink = error !== null && f !== undefined;
+    // Both parameters are decoded before anything is queried, so either one
+    // being present makes a thrown error far likelier to be a bad link than a
+    // dead database — and telling someone to start Docker when their URL is
+    // wrong sends them to fix the wrong thing.
+    const badLink = error !== null && (f !== undefined || s !== undefined);
 
     return (
       <main className="empty">
-        <h2>{badLink ? "That filter link is not valid" : error ? "Could not reach the database" : "No demo workspace yet"}</h2>
+        <h2>{badLink ? "That link is not valid" : error ? "Could not reach the database" : "No demo workspace yet"}</h2>
         {badLink ? (
           <p>
-            <a href="/table">Clear the filter</a> and start again.
+            <a href="/table">Clear it</a> and start again.
           </p>
         ) : (
           <p>
@@ -159,7 +164,7 @@ export default async function TablePage({
             </p>
           ) : null}
 
-          <TaskTable columns={data.columns} rows={rows} />
+          <TaskTable columns={data.columns} rows={rows} sort={data.definition.sort} />
 
           <div className="footer-note">
             <span className="live" />

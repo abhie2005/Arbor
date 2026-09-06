@@ -79,9 +79,10 @@ export function ViewTabs({
     const route = RENDERER_ROUTE[view.type] ?? "/";
     const query = new URLSearchParams(params.toString());
     query.set("view", view.id);
-    // A saved view carries its own filters; keeping the previous tab's `f`
-    // would silently apply one view's filter to another.
+    // A saved view carries its own filters and order; keeping the previous
+    // tab's `f` or `s` would silently apply one view's refinements to another.
     query.delete("f");
+    query.delete("s");
     return `${route}?${query.toString()}`;
   }
 
@@ -134,7 +135,7 @@ export function ViewTabs({
 
         {dirty && currentViewId ? (
           <span className="tab-dirty" data-pending={pending || undefined}>
-            <span>Unsaved filter</span>
+            <span>Unsaved changes</span>
             <button
               type="button"
               onClick={() =>
@@ -142,6 +143,7 @@ export function ViewTabs({
                   saveViewDefinitionAction(currentViewId, {
                     ...savedDefinition,
                     filters: definition.filters,
+                    sort: definition.sort,
                   }),
                 )
               }
@@ -168,7 +170,7 @@ export function ViewTabs({
                     duplicateViewAction(
                       currentViewId,
                       newName,
-                      { ...savedDefinition, filters: definition.filters },
+                      { ...savedDefinition, filters: definition.filters, sort: definition.sort },
                       true,
                     ),
                   );

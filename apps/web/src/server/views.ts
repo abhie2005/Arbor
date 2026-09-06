@@ -6,11 +6,13 @@ import {
   type FilterGroup,
   type FilterableField,
   type ResolvedColumn,
+  type SortField,
   type ViewDefinition,
   type ViewType,
   compileGroupCounts,
   compileViewQuery,
   decodeFilters,
+  decodeSort,
   filterableFields,
   resolveColumns,
 } from "@arbor/core";
@@ -176,6 +178,8 @@ export interface LoadViewOptions {
   viewId?: string;
   /** The raw `?f=` parameter, layered over the saved view's own filters. */
   filterParam?: string;
+  /** The raw `?s=` parameter, layered over the saved view's own sort. */
+  sortParam?: string;
 }
 
 /**
@@ -186,7 +190,7 @@ export interface LoadViewOptions {
  * all, which is most of the point of saving one.
  */
 export async function loadView(options: LoadViewOptions): Promise<ViewContext | null> {
-  const { viewerId, type, override = {}, viewId, filterParam } = options;
+  const { viewerId, type, override = {}, viewId, filterParam, sortParam } = options;
 
   const meta = await listMeta();
   if (!meta) return null;
@@ -199,7 +203,11 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
 
   const baseFilters: FilterGroup = { ...saved.definition.filters, ...(override.filters ?? {}) };
   const filters = decodeFilters(filterParam, baseFilters);
-  const definition: ViewDefinition = { ...saved.definition, ...override, filters };
+  // Same layering as filters: the saved view is the base and the URL refines
+  // it (D-058), so a shared sorted link neither changes the view for everyone
+  // nor loses the saved view's own order when it is absent.
+  const sort = decodeSort(sortParam, override.sort ?? saved.definition.sort);
+  const definition: ViewDefinition = { ...saved.definition, ...override, filters, sort };
 
   const [catalog, fieldNames] = await Promise.all([
     loadFieldCatalog(meta.workspace_id, connection),
@@ -270,7 +278,10 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
     folderName: meta.folder_name,
     spaceName: meta.space_name,
     viewName: saved.name,
-    dirty: saved.id !== null && !sameFilters(filters, saved.definition.filters),
+    dirty:
+      saved.id !== null &&
+      (!sameFilters(filters, saved.definition.filters) ||
+        !sameSort(sort, saved.definition.sort)),
     views: tabs.map((tab) => ({
       id: tab.id,
       name: tab.name,
@@ -386,6 +397,18 @@ export async function loadFilterOptions(workspaceId: string): Promise<FilterOpti
  *
  * Each condition is therefore reduced to a key built in a fixed order.
  */
+/**
+ * Whether the sort differs from the saved one.
+ *
+ * No renderer overrides `sort` today. If one ever does, it belongs on the same
+ * list as `showSubtasks` — something the renderer decided, not the user, and
+ * therefore not an unsaved change.
+ */
+function sameSort(a: readonly SortField[], b: readonly SortField[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((field, index) => field.field === b[index]?.field && field.dir === b[index]?.dir);
+}
+
 function sameFilters(a: FilterGroup, b: FilterGroup): boolean {
   const key = (f: FilterGroup) =>
     [

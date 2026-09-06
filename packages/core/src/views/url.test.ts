@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { FilterUrlError, decodeFilters, encodeFilters } from "./url";
-import { DEFAULT_VIEW_DEFINITION, type FilterGroup } from "./types";
+import { FilterUrlError, decodeFilters, decodeSort, encodeFilters, encodeSort } from "./url";
+import { DEFAULT_VIEW_DEFINITION, type FilterGroup, type SortField } from "./types";
 
 const base: FilterGroup = DEFAULT_VIEW_DEFINITION.filters;
 
@@ -74,5 +74,38 @@ describe("filters in the URL", () => {
     });
     expect(decoded.showSubtasks).toBe(3);
     expect(decoded.includeArchived).toBe(true);
+  });
+});
+
+describe("sort in the url", () => {
+  it("round-trips", () => {
+    const sort: SortField[] = [
+      { field: "dueAt", dir: "desc" },
+      { field: "cf:44444444-4444-4444-8444-444444444444", dir: "asc" },
+    ];
+    expect(decodeSort(encodeSort(sort), [])).toEqual(sort);
+  });
+
+  it("omits itself entirely when there is nothing to say", () => {
+    expect(encodeSort([])).toBeNull();
+  });
+
+  it("falls back to the view's own sort when the parameter is absent", () => {
+    const base: SortField[] = [{ field: "position", dir: "asc" }];
+    expect(decodeSort(undefined, base)).toEqual(base);
+    expect(decodeSort("", base)).toEqual(base);
+  });
+
+  it("refuses a malformed link rather than sorting by something it invented", () => {
+    expect(() => decodeSort("{", [])).toThrow(FilterUrlError);
+    expect(() => decodeSort('{"field":"dueAt"}', [])).toThrow(/not an array/);
+    expect(() => decodeSort('[["dueAt"]]', [])).toThrow(/pair/);
+    expect(() => decodeSort('[["dueAt","sideways"]]', [])).toThrow(/direction/);
+    expect(() => decodeSort('[["",  "asc"]]', [])).toThrow(/names no field/);
+  });
+
+  it("refuses more sorts than the compiler will accept", () => {
+    const many = JSON.stringify(Array.from({ length: 6 }, () => ["dueAt", "asc"]));
+    expect(() => decodeSort(many, [])).toThrow(/at most 5/);
   });
 });
