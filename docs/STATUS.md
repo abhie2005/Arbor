@@ -77,6 +77,7 @@ page with a `Next-Action` header, which is the request a button click makes.
 | **Mutations** | Invertible operations, one transaction per batch, activity row per change. **Undo works.** |
 | **List view** | Renders through the compiler. Status cycling, priority cycling, inline rename, archive, inline create, undo. |
 | **Board view** | Same compiler, `grouping.field = status`. Drag between and within columns, one row written per drag, one undo entry per drag. |
+| **Saved views** | The tab strip is the list of saved views. Create, rename, duplicate, set default, delete — validated by compiling the definition before it is written. Personal views are invisible to others. |
 | **Filter bar** | On both renderers. Menus are built from the same declaration the compiler validates against, so an invalid filter cannot be expressed. Filter state lives in the URL and is shareable; a malformed link errors instead of showing everything. |
 | **Field types** | All 20 declared in one place: storage column, legal operators, config parser, value parser. |
 | **Status sets** | CRUD, inheritance resolution, four templates, reordering, and task migration on delete. |
@@ -85,7 +86,7 @@ page with a `Next-Action` header, which is the request a button click makes.
 | **Settings UI** | `/settings` — statuses, custom fields, task types. |
 | **Identity** | Dev-only user switcher behind `getCurrentUser()`. Not real auth. |
 
-**Verified:** 174 unit tests, 45 live-Postgres checks, 17 server-action checks,
+**Verified:** 174 unit tests, 56 live-Postgres checks, 17 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 **The renderer bet, measured.** Adding the board took no compiler change, no new
@@ -126,17 +127,14 @@ the server side, which is the whole argument for looking at the screen.
 
 ## Where to pick up
 
-**Next — saved views.** The filter bar landed on 2026-09-05, so the piece
-immediately in front is persisting what it builds.
+**Next — Table and Calendar.** Both are renderers over the same compiled view.
+The board needed no compiler change and no new SQL; if either of these does,
+that is the compiler missing something rather than the renderer being special.
+Table is the easier one and exercises the `columns` half of a view definition,
+which nothing reads yet.
 
-1. **Saved view CRUD.** The `views` table already drives both renderers and
-   `loadView` reads the definition from it — the gap is writing one. Create,
-   rename, duplicate, set default, plus a "Save this filter" button that turns
-   the current URL into a named view. `encodeFilters`/`decodeFilters` already
-   do the serialization, so this is service + UI, not new machinery.
-2. **Table and Calendar.** Renderers over the same compiled view. The board
-   needed no compiler change and no new SQL; if either of these does, that is
-   the compiler missing something rather than the renderer being special.
+Saved views landed on 2026-09-05: the tab strip is the list of views, filters
+layer over the saved definition, and Save / Save as new / Reset all work.
 
 **Then:** real auth and permissions (Phase 5 — the README roadmap now puts
 access control ahead of collaboration, because every collaborative feature fans
@@ -179,7 +177,7 @@ That is a value-control feature, not a plumbing one.
 
 | File | Why |
 |---|---|
-| `DECISIONS.md` | 55 entries. Every non-obvious choice, the alternatives rejected, and the trade-off accepted. Written for explaining the project out loud. D-049 is the most interesting one to talk through. |
+| `DECISIONS.md` | 59 entries. Every non-obvious choice, the alternatives rejected, and the trade-off accepted. Written for explaining the project out loud. D-049 is the most interesting one to talk through. |
 | `docs/decisions/` | Five ADRs — the structural choices most expensive to reverse. |
 | `docs/design-plan.html` | Interface plan: palette, type, density, screens, keyboard map, AWS topology. Open in a browser. |
 | `docs/work-os-research.html` | The architecture teardown the whole project is built from. |
@@ -196,6 +194,8 @@ That is a value-control feature, not a plumbing one.
 - **Hiding an inherited field.** Fields accumulate down the tree and cannot be
   suppressed lower (D-046). If a real case appears, it should be an explicit
   per-container suppression rather than a change to the inheritance rule.
+- **`columns` in a view definition is written but never read.** Both renderers
+  show a fixed set. The Table view is where that starts mattering.
 - **Multi-select filter values.** `in`/`nin` are offered but the value control
   picks one value. Everything beneath it already handles arrays.
 - **Two position columns.** `tasks.position` and `task_lists.position` both
