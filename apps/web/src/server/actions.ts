@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { type Operation, positionBetween } from "@arbor/core";
+import { type Operation, invertBatch, positionBetween } from "@arbor/core";
 import { applyOperations, pool } from "@arbor/db";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
@@ -160,6 +160,81 @@ export async function createTask(
 
   revalidatePath("/");
   return [{ kind: "archiveTask", taskId }];
+}
+
+/**
+ * Moves a task to a position in a status column — one drag on the board.
+ *
+ * **Two fields, one batch.** A drag changes status *and* order, and undoing it
+ * has to reverse both together: putting the card back in the right column but
+ * the wrong place is not an undo. `applyOperations` runs the batch in a single
+ * transaction, and the inverse comes back as a single stack entry, so one ⌘Z
+ * undoes one drag.
+ *
+ * The caller names the neighbours it dropped between rather than an index. An
+ * index is a statement about a list the client rendered a moment ago; the
+ * neighbours are rows, and `positionBetween` turns them into a key that lands
+ * between them no matter what else moved in the meantime (D-012). One row is
+ * written, not a renumbered column.
+ */
+export async function moveTask(
+  taskId: string,
+  statusId: string,
+  beforeTaskId: string | null,
+  afterTaskId: string | null,
+): Promise<Operation[]> {
+  const actor = await requireUser();
+
+  const current = await pool().query<{ status_id: string | null; position: string }>(
+    `SELECT status_id, position FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
+    [taskId],
+  );
+
+  const task = current.rows[0];
+  if (!task) throw new Error("That task no longer exists");
+
+  // Read the neighbours' positions now rather than trusting values the client
+  // has been holding since its last render.
+  const neighbours = await pool().query<{ id: string; position: string }>(
+    `SELECT id, position FROM tasks WHERE id = ANY($1)`,
+    [[beforeTaskId, afterTaskId].filter(Boolean)],
+  );
+
+  const positionOf = (id: string | null) =>
+    id ? (neighbours.rows.find((row) => row.id === id)?.position ?? null) : null;
+
+  const applied: Operation[] = [];
+
+  if (statusId !== task.status_id) {
+    applied.push({
+      kind: "setField",
+      taskId,
+      field: "statusId",
+      from: task.status_id,
+      to: statusId,
+    });
+  }
+
+  const position = positionBetween(positionOf(beforeTaskId), positionOf(afterTaskId));
+  if (position !== task.position) {
+    applied.push({
+      kind: "setField",
+      taskId,
+      field: "position",
+      from: task.position,
+      to: position,
+    });
+  }
+
+  if (applied.length === 0) return [];
+
+  await applyOperations(applied, { actorId: actor.id });
+  revalidatePath("/");
+  revalidatePath("/board");
+
+  // Inverted once, here, by the side that knows the previous values (D-036) —
+  // and the client stores what it is handed without inverting again (D-049).
+  return invertBatch(applied);
 }
 
 /** Applies an inverse batch produced by one of the actions above. */

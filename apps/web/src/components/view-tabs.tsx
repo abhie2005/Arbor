@@ -16,9 +16,7 @@ import { usePathname } from "next/navigation";
  */
 const RENDERERS = [
   { label: "List", href: "/" },
-  // Wired the moment /board exists — one line, which is the test of whether
-  // "adding a renderer" really is a rendering change.
-  { label: "Board", href: null },
+  { label: "Board", href: "/board" },
   { label: "Calendar", href: null },
   { label: "Table", href: null },
 ];

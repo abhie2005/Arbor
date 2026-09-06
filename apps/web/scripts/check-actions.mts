@@ -252,6 +252,68 @@ report(
     : "the row did not move back — the double inversion is back",
 );
 
+// --- board drag ------------------------------------------------------------
+//
+// A drag changes two fields, and undoing it has to reverse both together —
+// putting the card back in the right column but the wrong place is not an undo.
+console.log("\nboard drag → two fields, one undo entry\n");
+
+await warm("/board");
+
+const column = (
+  await db.query<{ id: string; position: string; status_id: string }>(
+    `SELECT t.id, t.position, t.status_id
+     FROM tasks t JOIN statuses s ON s.id = t.status_id
+     WHERE s.name = 'In Progress' AND t.deleted_at IS NULL
+     ORDER BY t.position LIMIT 3`,
+  )
+).rows;
+
+const todo = await one(`SELECT id FROM statuses WHERE name = 'Todo' LIMIT 1`);
+const dragged = column[0]!;
+const neighbours = (
+  await db.query<{ id: string; position: string }>(
+    `SELECT t.id, t.position FROM tasks t JOIN statuses s ON s.id = t.status_id
+     WHERE s.id = $1 AND t.deleted_at IS NULL ORDER BY t.position`,
+    [todo.id],
+  )
+).rows;
+
+const dropped = await callOn(
+  "http://localhost:" + PORT + "/",
+  PAGE_ACTIONS.moveTask!,
+  [dragged.id, todo.id, neighbours[0]?.id ?? null, null],
+);
+
+const landed = await one(`SELECT status_id, position FROM tasks WHERE id = $1`, [dragged.id]);
+report(
+  "a drag moves the card to the target column",
+  landed.status_id === todo.id ? null : `status is ${landed.status_id}`,
+);
+report(
+  "and lands after the card it was dropped below",
+  neighbours[0] ? (landed.position > neighbours[0].position ? null : `position ${landed.position} is not after ${neighbours[0].position}`) : null,
+);
+
+const dragInverse = dropped.text.match(/\[\{"kind":"setField".*?\}\]/);
+const undoStack = new UndoStack(20);
+undoStack.push(JSON.parse(dragInverse![0]));
+const back = undoStack.pop();
+
+report(
+  "one drag is one undo entry, carrying both changed fields",
+  back?.length === 2 ? null : `the inverse has ${back?.length ?? 0} operations`,
+);
+
+await callOn("http://localhost:" + PORT + "/", PAGE_ACTIONS.undo!, [back]);
+const reverted = await one(`SELECT status_id, position FROM tasks WHERE id = $1`, [dragged.id]);
+report(
+  "undoing a drag restores both the column and the place in it",
+  reverted.status_id === dragged.status_id && reverted.position === dragged.position
+    ? null
+    : `status ${reverted.status_id} position ${reverted.position}`,
+);
+
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);
 await db.end();

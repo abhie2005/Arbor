@@ -1008,3 +1008,139 @@
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* ---------- board ---------- */
+.board {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  overflow-x: auto;
+  align-items: flex-start;
+  flex: 1;
+  min-height: 0;
+}
+
+.board[data-pending] {
+  opacity: 0.75;
+}
+
+.board-column {
+  flex: 0 0 258px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+}
+
+.board-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--group-h);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.board-name {
+  font-size: var(--text-meta);
+  font-weight: 600;
+}
+
+.board-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+.board-cards {
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  overflow-y: auto;
+  min-height: 60px;
+}
+
+.board-empty {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  margin: 0;
+  padding: var(--space-3) var(--space-2);
+}
+
+/* The insertion point, so a drop lands where the eye expects. */
+.board-slot {
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+  margin: 2px 0;
+}
+
+.board-error {
+  padding: 0 var(--space-4) var(--space-3);
+  font-size: var(--text-meta);
+  color: var(--danger);
+  margin: 0;
+}
+
+.card {
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  padding: var(--space-2) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  cursor: grab;
+}
+
+.card:hover {
+  border-color: var(--accent);
+}
+
+.card[data-dragging] {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+.card-top {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.card-top .flag {
+  margin-left: auto;
+}
+
+.card-name {
+  font-size: var(--text-row);
+  color: var(--text);
+  margin: 0;
+  line-height: 1.35;
+}
+
+.card-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.card-foot .avatars {
+  margin-left: auto;
+}
+
+.card-subs {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+}
+
+.tab[data-unbuilt] {
+  color: var(--text-3);
+  cursor: default;
+}

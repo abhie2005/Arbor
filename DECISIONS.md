@@ -77,6 +77,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-047](#d-047) | Configuration actions return failures, they do not throw | Frontend |
 | [D-048](#d-048) | A check that drives server actions over HTTP | Testing |
 | [D-049](#d-049) | The undo stack stores inverses and does not invert again | Frontend |
+| [D-050](#d-050) | A drop names its neighbours, not an index | Frontend |
+| [D-051](#d-051) | Native HTML5 drag, no drag-and-drop library | Frontend |
 
 ---
 
@@ -1286,3 +1288,58 @@ passes its own tests precisely because each is doing what it was designed to do.
 again, so undo re-applied the change it was meant to reverse — two correct
 layers composing into a wrong answer, which is why isolated tests all passed and
 only a request that crossed both found it.
+
+### D-050
+**A drop names its neighbours, not an index** · 2026-09-05 · active
+
+`moveTask(taskId, statusId, beforeTaskId, afterTaskId)`. The client says which
+two cards it dropped between; the server reads their positions and computes a
+fractional key between them.
+
+**Why not an index.** An index is a claim about a list the client rendered a
+moment ago. By the time the request lands, someone else may have inserted a
+card, archived one, or moved the neighbour — and "position 3" now means a
+different place than the user pointed at. Card ids are rows: they mean the same
+thing on both sides of the wire, and if a neighbour has since moved, the drop
+still lands next to *the card the user aimed at*, which is what they meant.
+
+It also keeps the write small. Resolving an index server-side means reading the
+column and renumbering it; resolving neighbours means reading two rows and
+writing one (D-012).
+
+**Trade-off.** If both neighbours are deleted between render and drop, the
+computed key is `positionBetween(null, null)` — the card lands at the top of the
+column rather than failing. That is a defensible answer to an unanswerable
+question, but it is a guess, and worth revisiting if it ever surprises anyone.
+
+*In one sentence:* indices describe a screen that may already be stale, so a
+drop names the rows it landed between and the server turns those into a key.
+
+### D-051
+**Native HTML5 drag, no drag-and-drop library** · 2026-09-05 · active
+
+Board drag is `draggable`, `onDragOver`, and `onDrop`, plus a two-line midpoint
+test to decide whether the pointer is above or below a card.
+
+**Why.** dnd-kit and react-beautiful-dnd are both good, and both are a
+permanent dependency, a bundle cost on every board, and a component library
+whose DOM and focus behaviour would need re-tokenizing against the design
+system — the same argument as D-030, applied to behaviour rather than looks.
+What they buy is keyboard dragging, touch support, and collision detection for
+complex layouts. A single-axis list of cards in columns needs none of that yet.
+
+**Trade-off, stated plainly.** Native drag has no keyboard equivalent, and D-039
+committed this project to every interaction having one. That is a real gap, and
+the honest resolution is not a library: it is that moving a task between
+statuses already has a keyboard path — the status control on the row — and
+reordering within a column does not yet. When it needs one, it should be a
+command, not a simulated drag.
+
+Touch is also unsupported, which native drag simply does not do. A board on a
+tablet will need something else, and that is the point at which a library
+earns its place.
+
+*In one sentence:* the browser already does single-axis dragging, so the
+library's real value is keyboard and touch — neither of which a library would
+give this board correctly anyway, and both of which are honest gaps rather than
+solved problems.
