@@ -166,6 +166,17 @@ async function main() {
   const bugType = taskTypeRows.find((t) => t.name === "Bug");
   if (!bugType) throw new Error("seed: bug task type missing");
 
+  // Option ids are generated up front and kept, because `field_values` stores
+  // the **id**, never the name (D-041). Seeding the name instead produced data
+  // that no filter could match and that renaming an option would silently
+  // detach — which is the whole failure the id indirection exists to prevent.
+  const severityOptions = [
+    { id: randomUUID(), name: "S1", color: "#EC5B5B", orderindex: 0 },
+    { id: randomUUID(), name: "S2", color: "#E9A23B", orderindex: 1 },
+    { id: randomUUID(), name: "S3", color: "#6B7686", orderindex: 2 },
+  ];
+  const severityId = Object.fromEntries(severityOptions.map((o) => [o.name, o.id]));
+
   const [severity] = await db
     .insert(s.fields)
     .values({
@@ -174,13 +185,7 @@ async function main() {
       name: "Severity",
       type: "drop_down",
       position: 0,
-      typeConfig: {
-        options: [
-          { id: randomUUID(), name: "S1", color: "#EC5B5B", orderindex: 0 },
-          { id: randomUUID(), name: "S2", color: "#E9A23B", orderindex: 1 },
-          { id: randomUUID(), name: "S3", color: "#6B7686", orderindex: 2 },
-        ],
-      },
+      typeConfig: { options: severityOptions },
     })
     .returning();
   if (!severity) throw new Error("seed: severity field insert failed");
@@ -370,7 +375,7 @@ async function main() {
       await db.insert(s.fieldValues).values({
         taskId: task.id,
         fieldId: severity.id,
-        valueText: t.severity,
+        valueText: severityId[t.severity],
       });
     }
 

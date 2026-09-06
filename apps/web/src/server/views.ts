@@ -2,10 +2,12 @@ import "server-only";
 
 import {
   DEFAULT_VIEW_DEFINITION,
+  type FilterableField,
   type ViewDefinition,
   type ViewType,
   compileGroupCounts,
   compileViewQuery,
+  filterableFields,
 } from "@arbor/core";
 import { executeCompiled, loadFieldCatalog, pool } from "@arbor/db";
 
@@ -187,5 +189,80 @@ export async function loadView(
     statuses: statuses.rows,
     assignees,
     subtaskCounts: new Map(subRows.rows.map((r) => [r.parent_task_id, Number(r.n)])),
+  };
+}
+
+export interface FilterOptions {
+  fields: FilterableField[];
+  statuses: { id: string; name: string; group: string; color: string }[];
+  statusGroups: { id: string; name: string }[];
+  priorities: { id: string; name: string }[];
+  users: { id: string; name: string }[];
+  tags: { id: string; name: string }[];
+  taskTypes: { id: string; name: string }[];
+}
+
+/**
+ * Everything the filter bar needs to build menus that cannot produce a
+ * rejected filter.
+ *
+ * The field list comes from @arbor/core, so the menu and the compiler's
+ * validation are the same knowledge (D-054). The rest is the value side: a
+ * status filter needs statuses, an assignee filter needs people. Loaded in one
+ * pass because a filter bar with five round trips feels broken even when it is
+ * correct.
+ */
+export async function loadFilterOptions(workspaceId: string): Promise<FilterOptions> {
+  const connection = pool();
+
+  const [catalog, fieldRows, statuses, users, tags, taskTypes] = await Promise.all([
+    loadFieldCatalog(workspaceId, connection),
+    connection.query<{ id: string; name: string; archived_at: Date | null }>(
+      `SELECT id, name, archived_at FROM fields WHERE workspace_id = $1 ORDER BY position`,
+      [workspaceId],
+    ),
+    connection.query<{ id: string; name: string; group: string; color: string }>(
+      `SELECT st.id, st.name, st."group", st.color FROM statuses st
+       JOIN status_sets ss ON ss.id = st.status_set_id
+       WHERE ss.workspace_id = $1 ORDER BY st.position`,
+      [workspaceId],
+    ),
+    connection.query<{ id: string; name: string }>(
+      `SELECT id, name FROM users WHERE deactivated_at IS NULL ORDER BY created_at`,
+    ),
+    connection.query<{ id: string; name: string }>(
+      `SELECT id, name FROM tags WHERE workspace_id = $1 ORDER BY name`,
+      [workspaceId],
+    ),
+    connection.query<{ id: string; name: string }>(
+      `SELECT id, name FROM task_types WHERE workspace_id = $1 ORDER BY name`,
+      [workspaceId],
+    ),
+  ]);
+
+  const archived = new Set(
+    fieldRows.rows.filter((row) => row.archived_at !== null).map((row) => row.id),
+  );
+  const names = new Map(fieldRows.rows.map((row) => [row.id, row.name]));
+
+  return {
+    fields: filterableFields(catalog, archived, names),
+    statuses: statuses.rows,
+    statusGroups: [
+      { id: "not_started", name: "Not started" },
+      { id: "active", name: "Active" },
+      { id: "done", name: "Done" },
+      { id: "closed", name: "Closed" },
+    ],
+    // A fixed scale, unlike status (D-014) — so it is a constant, not a query.
+    priorities: [
+      { id: "1", name: "Urgent" },
+      { id: "2", name: "High" },
+      { id: "3", name: "Normal" },
+      { id: "4", name: "Low" },
+    ],
+    users: users.rows,
+    tags: tags.rows,
+    taskTypes: taskTypes.rows,
   };
 }

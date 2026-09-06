@@ -1,9 +1,13 @@
+import { DEFAULT_VIEW_DEFINITION, decodeFilters } from "@arbor/core";
+
 import { Board, type BoardColumn } from "@/components/board";
+import { FilterBar } from "@/components/filter-bar";
 import { UndoButton, UndoProvider } from "@/components/undo";
 import { UserSwitcher } from "@/components/user-switcher";
 import { ViewTabs } from "@/components/view-tabs";
 import { getCurrentUser, listSwitchableUsers } from "@/server/auth";
-import { loadView } from "@/server/views";
+import { loadFilterOptions, loadView } from "@/server/views";
+import { requireWorkspace } from "@/server/workspace";
 
 export const dynamic = "force-dynamic";
 
@@ -19,31 +23,54 @@ export const dynamic = "force-dynamic";
  * cards rather than nesting them, because a column is a flat sequence and
  * there is nowhere for a nested row to go.
  */
-export default async function BoardPage() {
+export default async function BoardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ f?: string }>;
+}) {
   let viewer: Awaited<ReturnType<typeof getCurrentUser>> = null;
   let data: Awaited<ReturnType<typeof loadView>> = null;
+  let options: Awaited<ReturnType<typeof loadFilterOptions>> | null = null;
   let error: string | null = null;
+
+  const { f } = await searchParams;
 
   try {
     viewer = await getCurrentUser();
     if (viewer) {
-      data = await loadView(viewer.id, "board", {
-        grouping: { field: "status", dir: "asc" },
-        filters: { op: "AND", conditions: [], showClosed: false, showSubtasks: 1 },
+      const filters = decodeFilters(f, {
+        ...DEFAULT_VIEW_DEFINITION.filters,
+        showSubtasks: 1,
       });
+      const workspace = await requireWorkspace();
+      [data, options] = await Promise.all([
+        loadView(viewer.id, "board", {
+          grouping: { field: "status", dir: "asc" },
+          filters,
+        }),
+        loadFilterOptions(workspace.id),
+      ]);
     }
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }
 
-  if (error || !viewer || !data) {
+  if (error || !viewer || !data || !options) {
+    const badLink = error !== null && f !== undefined;
+
     return (
       <main className="empty">
-        <h2>{error ? "Could not reach the database" : "No demo workspace yet"}</h2>
-        <p>
-          <code>npm run docker:up</code> <code>npm run db:migrate</code>{" "}
-          <code>npm run db:seed</code>
-        </p>
+        <h2>{badLink ? "That filter link is not valid" : error ? "Could not reach the database" : "No demo workspace yet"}</h2>
+        {badLink ? (
+          <p>
+            <a href="/board">Clear the filter</a> and start again.
+          </p>
+        ) : (
+          <p>
+            <code>npm run docker:up</code> <code>npm run db:migrate</code>{" "}
+            <code>npm run db:seed</code>
+          </p>
+        )}
         {error ? <p style={{ color: "var(--text-3)" }}>{error}</p> : null}
       </main>
     );
@@ -123,12 +150,18 @@ export default async function BoardPage() {
 
           <ViewTabs />
 
+          <FilterBar
+            fields={options.fields}
+            values={options}
+            filters={data.definition.filters}
+          />
+
           <Board columns={columns} />
 
           <div className="footer-note">
             <span className="live" />
             <span>
-              {data.rows.length} tasks · acting as {viewer.name} · same compiler as the list,
+              {data.rows.length} {data.rows.length === 1 ? "task" : "tasks"} · acting as {viewer.name} · same compiler as the list,
               grouped by status
             </span>
           </div>

@@ -1144,3 +1144,136 @@
   color: var(--text-3);
   cursor: default;
 }
+
+/* ---------- filter bar ---------- */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+  min-height: var(--tab-h);
+}
+
+.filter-bar[data-pending] {
+  opacity: 0.6;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  padding: 1px 1px 1px var(--space-1);
+  height: 24px;
+}
+
+.filter-chip.missing {
+  border-color: var(--danger);
+  color: var(--danger);
+  gap: var(--space-2);
+  padding: 1px var(--space-2);
+  font-size: var(--text-meta);
+}
+
+.filter-chip.missing code {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+}
+
+.filter-chip select,
+.filter-chip input {
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-meta);
+  outline: none;
+  padding: 0 var(--space-1);
+  max-width: 150px;
+  height: 20px;
+}
+
+.filter-chip select {
+  cursor: pointer;
+  color: var(--text-2);
+}
+
+.filter-chip select:last-of-type,
+.filter-chip input {
+  color: var(--accent);
+}
+
+.filter-chip select option {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.filter-chip button {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 var(--space-1);
+  height: 20px;
+}
+
+.filter-chip button:hover {
+  color: var(--danger);
+}
+
+.filter-add,
+.filter-clear,
+.filter-combinator {
+  background: none;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-control);
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--text-meta);
+  height: 24px;
+  padding: 0 var(--space-2);
+  cursor: pointer;
+}
+
+.filter-add:hover,
+.filter-clear:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.filter-combinator {
+  border-style: solid;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+select.filter-add {
+  color: var(--text-3);
+  cursor: pointer;
+  outline: none;
+}
+
+select.filter-add option {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.filter-toggle {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  cursor: pointer;
+}

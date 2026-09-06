@@ -81,6 +81,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-051](#d-051) | Native HTML5 drag, no drag-and-drop library | Frontend |
 | [D-052](#d-052) | The drag payload rides on `dataTransfer`, not React state | Frontend |
 | [D-053](#d-053) | A refused edit reverts its control | Frontend |
+| [D-054](#d-054) | The filter menu is built from the compiler's own rules | Query |
+| [D-055](#d-055) | Filters live in the URL | Frontend |
 
 ---
 
@@ -1402,3 +1404,71 @@ reads the screen, not the error.
 
 *In one sentence:* an optimistic input that survives a rejection is a lie the
 error message sits next to, so a refused edit now puts the control back.
+
+### D-054
+**The filter menu is built from the compiler's own rules** · 2026-09-05 · active
+
+`filterableFields()` and `operatorsFor()` in @arbor/core publish the same
+knowledge the compiler validates against. The filter bar builds every menu from
+them: which fields can be filtered, which operators each one allows, and which
+control the value needs.
+
+**Why publishing beats validating.** The compiler already rejects a nonsense
+filter (D-042) — but rejection is the last line, not the interface. A UI that
+offers `>` on a dropdown has already failed the user before the server ever
+answers: they made a choice, waited, and were told it was never possible. The
+menu should not be able to express an invalid filter in the first place.
+
+The alternative is two lists of what is legal — one for the menu, one for the
+compiler — which is a guarantee they will disagree, and the disagreement will
+be discovered by a user.
+
+**A test enforces the contract**: every operator the metadata offers for a
+built-in field is the exact set `operatorsFor` returns. If someone adds an
+operator to one and not the other, that fails rather than shipping.
+
+**Choice fields carry their own values.** A dropdown's legal values are defined
+by the field, so the options travel with it. Without that the UI offers a text
+box whose only valid input is an option's uuid — which nobody knows and nobody
+should have to type. Finding this needed the screen: the operator list was
+right and the value control was useless, and only one of those is visible in a
+unit test.
+
+*In one sentence:* the menu and the validator read the same declaration, so the
+UI cannot offer a filter the server will reject.
+
+### D-055
+**Filters live in the URL** · 2026-09-05 · active
+
+The filter state is a `?f=` parameter holding a compact JSON array of
+`[field, operator, value]` triples. Nothing about the current filter is held in
+component state.
+
+**Why.** A filtered view is the thing people send each other — "everything
+overdue and unassigned". Component state makes exactly the most useful views
+unshareable, and loses them on reload and on back.
+
+**The encoding is tuples, not the full condition shape**, because the URL is
+read by a human in a Slack message and
+`?f={"c":[["dueAt","lt","2026-09-01"]]}` survives that better than forty
+characters of repeated key names.
+
+**Decoding is untrusted-input handling.** Anyone can edit a URL. The decoder
+validates *structure only* — an array of triples with a known operator — and
+leaves every semantic question to the compiler, which already answers all of
+them. Duplicating the field list would give it two places to drift.
+
+**A malformed link is an error page, not an empty filter.** Dropping a bad
+condition silently would render an unfiltered view that looks filtered: the
+same failure shape as D-042, where a wrong answer is indistinguishable from a
+legitimate one. The page names the problem — "Filter 1 uses an unknown
+operator: sideways" — and offers a link that clears it.
+
+**Trade-off.** URLs get long and ugly with several filters, and a saved view
+will eventually be the better home for a complex one. The URL stays the
+transport either way: a saved view is a name for a definition, and opening it
+still puts that definition in the address bar.
+
+*In one sentence:* a filtered view is something people share, so the filter
+lives in the address bar, and a link that cannot be parsed says so instead of
+quietly showing everything.
