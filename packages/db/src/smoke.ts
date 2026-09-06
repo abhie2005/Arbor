@@ -30,6 +30,15 @@ import {
 import { applyOperations } from "./mutations";
 import { createTaskType, deleteTaskType, listTaskTypes } from "./task-types";
 import {
+  createView,
+  deleteView,
+  duplicateView,
+  listViews,
+  renameView,
+  setDefaultView,
+  updateViewDefinition,
+} from "./views";
+import {
   addStatus,
   createStatusSet,
   deleteStatus,
@@ -721,6 +730,135 @@ async function main() {
   );
 
   await pool.query(`DELETE FROM fields WHERE id = $1`, [estimate.id]);
+
+  // --- saved views ---------------------------------------------------------
+  console.log("\nsaved views → validated on write\n");
+
+  const seeded = await listViews(ws.id!, list.id!, viewer.id!, pool);
+  report(
+    "the seeded list and board views are both here",
+    seeded.length === 2 && seeded.some((v) => v.type === "board")
+      ? null
+      : `got ${seeded.map((v) => v.name).join(", ")}`,
+  );
+
+  report(
+    "a view whose definition will not compile is refused",
+    await expectRejection(() =>
+      createView(
+        {
+          workspaceId: ws.id!,
+          parentId: list.id!,
+          type: "list",
+          name: `Broken ${Date.now()}`,
+          definition: {
+            ...DEFAULT_VIEW_DEFINITION,
+            // `>` against a dropdown — the compiler rejects it, so saving must too.
+            filters: {
+              op: "AND",
+              conditions: [{ field: `cf:${componentsField.id}`, op: "gt", value: apiOption }],
+            },
+          },
+        },
+        config,
+      ),
+    ),
+  );
+
+  const saved = await createView(
+    {
+      workspaceId: ws.id!,
+      parentId: list.id!,
+      type: "list",
+      name: `Urgent ${Date.now()}`,
+      definition: {
+        ...DEFAULT_VIEW_DEFINITION,
+        filters: { op: "AND", conditions: [{ field: "priority", op: "eq", value: 1 }] },
+      },
+    },
+    config,
+  );
+  report("a valid view saves", saved.id ? null : "no view came back");
+
+  const compiled = compileViewQuery({
+    ...base,
+    scope: { kind: "list", id: list.id! },
+    definition: saved.definition,
+  });
+  const savedRows = (await pool.query(compiled.text, compiled.params)).rows as { key: string }[];
+  report(
+    "the saved definition compiles to the query it described",
+    savedRows.length === 1 && savedRows[0]?.key === "ENG-402"
+      ? null
+      : `expected only the urgent task, got ${savedRows.map((r) => r.key).join(", ")}`,
+  );
+
+  await renameView(saved.id, "Urgent work", config);
+  const afterRename = await listViews(ws.id!, list.id!, viewer.id!, pool);
+  report(
+    "renaming a view sticks",
+    afterRename.some((v) => v.name === "Urgent work") ? null : "the rename did not land",
+  );
+
+  const personal = await duplicateView(saved.id, "My urgent work", config, {
+    ownerId: viewer.id!,
+  });
+  const strangerSees = await listViews(ws.id!, list.id!, stranger.id!, pool);
+  report(
+    "a personal view is invisible to everyone else",
+    strangerSees.every((v) => v.id !== personal.id)
+      ? null
+      : "someone else's personal view showed up",
+  );
+
+  report(
+    "a personal view cannot become the shared default",
+    await expectRejection(() => setDefaultView(personal.id, config)),
+  );
+
+  await setDefaultView(saved.id, config);
+  const defaults = (await listViews(ws.id!, list.id!, viewer.id!, pool)).filter(
+    (v) => v.isDefault,
+  );
+  report(
+    "exactly one view is the default",
+    defaults.length === 1 && defaults[0]?.id === saved.id
+      ? null
+      : `${defaults.length} defaults: ${defaults.map((v) => v.name).join(", ")}`,
+  );
+
+  report(
+    "a definition that stops compiling cannot be saved over a good one",
+    await expectRejection(() =>
+      updateViewDefinition(
+        saved.id,
+        {
+          ...DEFAULT_VIEW_DEFINITION,
+          sort: [{ field: `cf:${componentsField.id}`, dir: "asc" }],
+        },
+        config,
+      ),
+    ),
+  );
+
+  // Deleting the default promotes another, so the list still opens on something.
+  await deleteView(saved.id, config);
+  const afterDelete = await listViews(ws.id!, list.id!, viewer.id!, pool);
+  report(
+    "deleting the default promotes another",
+    afterDelete.filter((v) => v.isDefault).length === 1
+      ? null
+      : "the container was left with no default",
+  );
+
+  await deleteView(personal.id, config);
+  const remaining = await listViews(ws.id!, list.id!, viewer.id!, pool);
+  for (const view of remaining.slice(1)) await deleteView(view.id, config);
+
+  report(
+    "the last view on a container cannot be deleted",
+    await expectRejection(() => deleteView(remaining[0]!.id, config)),
+  );
 
   report(
     "an operation without an actor is refused",

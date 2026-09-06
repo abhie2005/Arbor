@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   bigint,
@@ -31,7 +31,15 @@ export const taskTypes = pgTable(
     icon: text("icon"),
     isDefault: boolean("is_default").notNull().default(false),
   },
-  (t) => [uniqueIndex("task_types_name_key").on(t.workspaceId, t.name)],
+  (t) => [
+    uniqueIndex("task_types_name_key").on(t.workspaceId, t.name),
+    // Same reasoning as views_one_default_per_parent: "which type does a new
+    // task get" has to have one answer, so two defaults is made impossible
+    // rather than merely avoided.
+    uniqueIndex("task_types_one_default")
+      .on(t.workspaceId)
+      .where(sql`${t.isDefault}`),
+  ],
 );
 
 /**

@@ -1,11 +1,13 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
+  boolean,
   index,
   jsonb,
   pgTable,
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -41,7 +43,8 @@ export const views = pgTable(
     /** Null means shared with everyone who can see the parent; set means personal. */
     ownerId: uuid("owner_id").references(() => users.id, { onDelete: "cascade" }),
     position: text("position").notNull(),
-    isDefault: text("is_default"),
+    /** The view a container opens on. At most one per container — see below. */
+    isDefault: boolean("is_default").notNull().default(false),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -50,6 +53,19 @@ export const views = pgTable(
     index("views_parent_idx").on(t.parentId, t.position),
     index("views_workspace_idx").on(t.workspaceId, t.type),
     index("views_owner_idx").on(t.ownerId),
+    /**
+     * At most one default per container, enforced here rather than in a
+     * service.
+     *
+     * "Which view opens when I click this list" must have exactly one answer.
+     * Application code can keep that true — clear the old default, set the new
+     * one, in a transaction — but only for as long as every writer remembers
+     * to. A partial unique index makes the second default unrepresentable,
+     * including from a migration, a fixture, or a psql session at 2am.
+     */
+    uniqueIndex("views_one_default_per_parent")
+      .on(t.parentId)
+      .where(sql`${t.isDefault}`),
   ],
 );
 

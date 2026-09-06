@@ -26,6 +26,19 @@ export {
   type UpdateFieldPatch,
 } from "./fields";
 export {
+  assertViewCompiles,
+  createView,
+  deleteView,
+  duplicateView,
+  listViews,
+  loadViewById,
+  renameView,
+  setDefaultView,
+  updateViewDefinition,
+  type CreateViewInput,
+  type SavedView,
+} from "./views";
+export {
   createTaskType,
   deleteTaskType,
   listTaskTypes,

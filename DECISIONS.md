@@ -83,6 +83,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-053](#d-053) | A refused edit reverts its control | Frontend |
 | [D-054](#d-054) | The filter menu is built from the compiler's own rules | Query |
 | [D-055](#d-055) | Filters live in the URL | Frontend |
+| [D-056](#d-056) | A view is validated by compiling it before it is saved | Data |
+| [D-057](#d-057) | "Exactly one default" is a database constraint, not a service rule | Data |
 
 ---
 
@@ -1472,3 +1474,66 @@ still puts that definition in the address bar.
 *In one sentence:* a filtered view is something people share, so the filter
 lives in the address bar, and a link that cannot be parsed says so instead of
 quietly showing everything.
+
+### D-056
+**A view is validated by compiling it before it is saved** · 2026-09-05 · active
+
+`createView` and `updateViewDefinition` run the definition through
+`compileViewQuery` and refuse to write if it throws.
+
+**Why write-time and not read-time.** A definition that will not compile is a
+view that cannot open. Validating on read means the person who discovers that is
+whoever clicks it next — often a teammate, often weeks later, with none of the
+context needed to fix it. Validating on write puts the failure in front of the
+person who caused it, while they still have it.
+
+The check is close to free: the compiler is pure, touches no database, and
+never runs the query it builds. The only real cost is loading the field catalog,
+which the save path needs anyway.
+
+**What it catches.** Anything the compiler rejects: an operator a field type
+does not support, a `cf:` reference to a field that no longer exists, a sort on
+a multi-value field, more filters than the ceiling allows. All of these are
+reachable from a UI that is a version behind, or from a hand-edited URL that
+someone then saves.
+
+**Trade-off.** A view saved today can still stop compiling tomorrow — delete
+the custom field it filters on and it breaks retroactively. Write-time
+validation cannot prevent that, which is why the field catalog deliberately
+keeps archived fields (D-045) and why the filter bar renders an unknown field
+as a removable chip rather than crashing. Validation on write narrows the
+window; it does not close it.
+
+*In one sentence:* saving a view is saving a query, so it is compiled first —
+the failure belongs to whoever wrote it, not to whoever opens it next.
+
+### D-057
+**"Exactly one default" is a database constraint, not a service rule** · 2026-09-05 · active
+
+`views` has a partial unique index on `(parent_id) WHERE is_default`, and
+`task_types` has the same on `(workspace_id) WHERE is_default`.
+
+**Why not just the service.** The services already clear the old default inside
+the transaction that sets the new one, which is correct — for exactly as long as
+every writer remembers to do it. Seed scripts, migrations, a fixture, and a psql
+session at 2am are all writers. "Which view opens when I click this list" and
+"which type does a new task get" must have exactly one answer, and a partial
+unique index makes the second answer unrepresentable rather than merely
+unlikely.
+
+The service still clears the old default first — not to hold the invariant, but
+so the write succeeds instead of hitting the constraint.
+
+**A schema bug found on the way.** `views.is_default` was declared `text`. It
+had never been written to, so nothing was broken yet, but the first person to
+set a default would have been storing the string `"true"`. Migration 0002 makes
+it boolean.
+
+**That migration is hand-edited**, and the header says why: drizzle-kit emitted
+a bare `ALTER COLUMN ... SET DATA TYPE boolean`, which Postgres rejects because
+there is no assignment cast from text to boolean, and the generated `SET NOT
+NULL` would then have failed against existing NULL rows. Generated migrations
+are a starting point, and reading them before applying is the job.
+
+*In one sentence:* invariants that every future writer must respect belong in
+the schema, because the schema is the only writer that cannot forget.

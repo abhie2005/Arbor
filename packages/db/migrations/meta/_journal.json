@@ -15,6 +15,13 @@
       "when": 1788369956361,
       "tag": "0001_config_activity_kinds",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1788657364000,
+      "tag": "0002_view_defaults",
+      "breakpoints": true
     }
   ]
 }
