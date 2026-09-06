@@ -87,12 +87,17 @@ function FieldPanel({
 
   const typeLabel = fieldTypes.find((t) => t.value === field.type)?.label ?? field.type;
 
-  function run(action: () => Promise<{ ok: true } | { ok: false; error: string }>) {
+  /** `revert` restores a control to the server's value when an edit is refused. */
+  function run(
+    action: () => Promise<{ ok: true } | { ok: false; error: string }>,
+    revert?: () => void,
+  ) {
     setError(null);
     startTransition(async () => {
       const result = await action();
       if (!result.ok) {
         setError(result.error);
+        revert?.();
         return;
       }
       setConfirmDiscard(false);
@@ -124,8 +129,11 @@ function FieldPanel({
               value={name}
               onChange={(event) => setName(event.target.value)}
               onBlur={() => {
-                if (name.trim() && name !== field.name) run(() => updateFieldAction(field.id, { name }));
-                else setName(field.name);
+                if (name.trim() && name !== field.name) {
+                  run(() => updateFieldAction(field.id, { name }), () => setName(field.name));
+                } else {
+                  setName(field.name);
+                }
               }}
             />
             <button
@@ -143,7 +151,12 @@ function FieldPanel({
             <button
               type="button"
               className="settings-primary"
-              onClick={() => run(() => updateFieldAction(field.id, { typeConfig: config }))}
+              onClick={() =>
+                run(
+                  () => updateFieldAction(field.id, { typeConfig: config }),
+                  () => setConfig(field.typeConfig),
+                )
+              }
             >
               Save configuration
             </button>

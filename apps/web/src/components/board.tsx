@@ -25,6 +25,14 @@ import { useUndo } from "./undo";
  *    its new column on drop, not a round trip later, and React reconciles
  *    against the server's answer when it lands — so a rejected move snaps back
  *    without this component keeping a shadow copy of the board.
+ * 3. **What is being dragged is read from `dataTransfer`, not from state.**
+ *    React state is set during `dragstart` and read during `drop`, and those
+ *    are separate commits — a drop that arrives before the state lands would
+ *    read `null` and silently do nothing. `dataTransfer` is the payload channel
+ *    the drag API provides for exactly this, and it is available on the drop
+ *    event no matter what React has committed. State is kept only for the
+ *    things that are genuinely visual: dimming the card and placing the
+ *    insertion line.
  */
 
 export interface BoardCard {
@@ -82,8 +90,7 @@ export function Board({ columns }: { columns: BoardColumn[] }) {
   const [target, setTarget] = useState<DropTarget | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
-  function drop(statusId: string, index: number) {
-    const taskId = dragging;
+  function drop(statusId: string, index: number, taskId: string | null) {
     setDragging(null);
     setTarget(null);
     if (!taskId) return;
@@ -132,7 +139,7 @@ export function Board({ columns }: { columns: BoardColumn[] }) {
               setTarget(null);
             }}
             onHover={(index) => setTarget({ statusId: column.statusId, index })}
-            onDrop={(index) => drop(column.statusId, index)}
+            onDrop={(index, taskId) => drop(column.statusId, index, taskId)}
           />
         ))}
       </div>
@@ -161,7 +168,7 @@ function Column({
   onDragStart: (taskId: string) => void;
   onDragEnd: () => void;
   onHover: (index: number) => void;
-  onDrop: (index: number) => void;
+  onDrop: (index: number, taskId: string | null) => void;
 }) {
   const token = column.group.replace("_", "-");
 
@@ -175,7 +182,7 @@ function Column({
       }}
       onDrop={(event) => {
         event.preventDefault();
-        onDrop(target ?? column.cards.length);
+        onDrop(target ?? column.cards.length, draggedId(event));
       }}
     >
       <header className="board-head">
@@ -195,7 +202,7 @@ function Column({
               onDragStart={() => onDragStart(card.id)}
               onDragEnd={onDragEnd}
               onHover={(half) => onHover(half === "top" ? index : index + 1)}
-              onDrop={(half) => onDrop(half === "top" ? index : index + 1)}
+              onDrop={(half, taskId) => onDrop(half === "top" ? index : index + 1, taskId)}
             />
           </div>
         ))}
@@ -221,7 +228,7 @@ function Card({
   onDragStart: () => void;
   onDragEnd: () => void;
   onHover: (half: "top" | "bottom") => void;
-  onDrop: (half: "top" | "bottom") => void;
+  onDrop: (half: "top" | "bottom", taskId: string | null) => void;
 }) {
   /** Above the midpoint inserts before this card, below inserts after it. */
   function half(event: React.DragEvent<HTMLElement>): "top" | "bottom" {
@@ -251,7 +258,7 @@ function Card({
       onDrop={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        onDrop(half(event));
+        onDrop(half(event), draggedId(event));
       }}
     >
       <div className="card-top">
@@ -287,6 +294,11 @@ function Card({
       </div>
     </article>
   );
+}
+
+/** The task id the drag is carrying. Set on dragstart, read on drop. */
+function draggedId(event: React.DragEvent<HTMLElement>): string | null {
+  return event.dataTransfer.getData("text/plain") || null;
 }
 
 function formatDue(value: string | null) {

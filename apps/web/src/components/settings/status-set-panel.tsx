@@ -50,12 +50,24 @@ export function StatusSetPanel({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
-  function run(action: () => Promise<{ ok: true } | { ok: false; error: string }>) {
+  /**
+   * `revert` puts a control back the way the server has it.
+   *
+   * Without it a refused edit leaves the input showing the value that was
+   * rejected: renaming a status onto a name that is taken displayed two rows
+   * with the same name *and* an error saying it had not been allowed. The
+   * screen has to show what the server has, not what the user tried.
+   */
+  function run(
+    action: () => Promise<{ ok: true } | { ok: false; error: string }>,
+    revert?: () => void,
+  ) {
     setError(null);
     startTransition(async () => {
       const result = await action();
       if (!result.ok) {
         setError(result.error);
+        revert?.();
         return;
       }
       setDeleting(null);
@@ -123,7 +135,10 @@ export function StatusSetPanel({
   );
 }
 
-type Run = (action: () => Promise<{ ok: true } | { ok: false; error: string }>) => void;
+type Run = (
+  action: () => Promise<{ ok: true } | { ok: false; error: string }>,
+  revert?: () => void,
+) => void;
 
 function StatusRow({
   status,
@@ -162,8 +177,11 @@ function StatusRow({
         value={name}
         onChange={(event) => setName(event.target.value)}
         onBlur={() => {
-          if (name.trim() && name !== status.name) run(() => updateStatusAction(status.id, { name }));
-          else setName(status.name);
+          if (name.trim() && name !== status.name) {
+            run(() => updateStatusAction(status.id, { name }), () => setName(status.name));
+          } else {
+            setName(status.name);
+          }
         }}
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur();

@@ -176,14 +176,44 @@ export function describe(op: Operation): string {
   }
 }
 
+/**
+ * What a batch did, for the undo toast and the activity feed.
+ *
+ * Counts **tasks, not operations**. Those are not the same number and the
+ * difference is visible: one drag on the board is two operations — status and
+ * order — against a single task, and this used to announce it as "Changed
+ * order on 2 tasks". A bulk edit of two fields across three tasks would have
+ * claimed six.
+ *
+ * Several changes to one task get their fields named instead of counted,
+ * because "Changed status and order" is what actually happened and is shorter
+ * than the wrong version was.
+ */
 export function describeBatch(ops: readonly Operation[]): string {
   if (ops.length === 0) return "Nothing to undo";
   if (ops.length === 1) return describe(ops[0]!);
 
   const first = ops[0]!;
+  const taskCount = new Set(ops.map((op) => op.taskId)).size;
+
+  if (taskCount === 1) {
+    const fields = ops.filter(isSetField).map((op) => humanize(op.field));
+    return fields.length === ops.length ? `Changed ${joinWords(fields)}` : `${ops.length} changes`;
+  }
+
   const uniform = ops.every((op) => op.kind === first.kind);
   // "Changed status on 12 tasks" reads better than "12 changes".
-  return uniform ? `${describe(first)} on ${ops.length} tasks` : `${ops.length} changes`;
+  return uniform ? `${describe(first)} on ${taskCount} tasks` : `${ops.length} changes`;
+}
+
+function isSetField(op: Operation): op is SetFieldOp {
+  return op.kind === "setField";
+}
+
+/** "status", "status and order", "status, order and name". */
+function joinWords(words: readonly string[]): string {
+  if (words.length <= 1) return words[0] ?? "";
+  return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 }
 
 /**

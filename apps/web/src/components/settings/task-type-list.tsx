@@ -26,12 +26,17 @@ export function TaskTypeList({ taskTypes }: { taskTypes: TaskTypeRow[] }) {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
 
-  function run(action: () => Promise<{ ok: true } | { ok: false; error: string }>) {
+  /** `revert` restores a control to the server's value when an edit is refused. */
+  function run(
+    action: () => Promise<{ ok: true } | { ok: false; error: string }>,
+    revert?: () => void,
+  ) {
     setError(null);
     startTransition(async () => {
       const result = await action();
       if (!result.ok) {
         setError(result.error);
+        revert?.();
         return;
       }
       setDeleting(null);
@@ -143,7 +148,10 @@ function TypeName({
   run,
 }: {
   taskType: TaskTypeRow;
-  run: (action: () => Promise<{ ok: true } | { ok: false; error: string }>) => void;
+  run: (
+    action: () => Promise<{ ok: true } | { ok: false; error: string }>,
+    revert?: () => void,
+  ) => void;
 }) {
   const [name, setName] = useState(taskType.name);
 
@@ -154,7 +162,7 @@ function TypeName({
       onChange={(event) => setName(event.target.value)}
       onBlur={() => {
         if (name.trim() && name !== taskType.name) {
-          run(() => updateTaskTypeAction(taskType.id, { name }));
+          run(() => updateTaskTypeAction(taskType.id, { name }), () => setName(taskType.name));
         } else {
           setName(taskType.name);
         }

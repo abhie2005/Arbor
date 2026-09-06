@@ -79,6 +79,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-049](#d-049) | The undo stack stores inverses and does not invert again | Frontend |
 | [D-050](#d-050) | A drop names its neighbours, not an index | Frontend |
 | [D-051](#d-051) | Native HTML5 drag, no drag-and-drop library | Frontend |
+| [D-052](#d-052) | The drag payload rides on `dataTransfer`, not React state | Frontend |
+| [D-053](#d-053) | A refused edit reverts its control | Frontend |
 
 ---
 
@@ -1343,3 +1345,60 @@ earns its place.
 library's real value is keyboard and touch — neither of which a library would
 give this board correctly anyway, and both of which are honest gaps rather than
 solved problems.
+
+### D-052
+**The drag payload rides on `dataTransfer`, not React state** · 2026-09-05 · active
+
+`onDrop` reads the dragged task id from `event.dataTransfer.getData("text/plain")`.
+React state still tracks the drag, but only for the visual parts: dimming the
+card and placing the insertion line.
+
+**How this was found.** Dispatching `dragstart`, `dragover`, and `drop` in a
+single tick moved nothing. Spacing them 300ms apart worked. The difference was
+not the events — it was that `setDragging` had not committed by the time the
+drop handler read it, so `dragging` was still `null` and the handler returned
+early without a sound.
+
+A real user's drag always spans frames, so this would probably never have bitten
+in production. "Probably never" is doing a lot of work in that sentence: the
+same shape of bug — write state in one event, read it in another, assume a
+commit in between — is exactly what breaks under a slow render or a busy main
+thread, and it fails silently by design.
+
+**The fix is what the API was always for.** `dataTransfer` is the drag API's
+payload channel. It is set on `dragstart` and readable on `drop` regardless of
+what React has committed, because the browser carries it, not the component.
+The code already called `setData` — for Firefox, which refuses to start a drag
+without it — and then ignored the value on the way out.
+
+**The rule.** If two separate events must agree on a value, the value belongs
+somewhere both can see without a render in between. React state is for what the
+screen shows, not for what the browser is carrying.
+
+*In one sentence:* the drop handler read the dragged id from React state, which
+is only there if a render happened between two events — so it now reads it from
+`dataTransfer`, which the browser carries and no render can miss.
+
+### D-053
+**A refused edit reverts its control** · 2026-09-05 · active
+
+The `run()` helper in each settings component takes an optional `revert`
+callback, invoked when the server returns `{ ok: false }`.
+
+**What it looked like without one.** Renaming "In Progress" to "Todo" — a name
+already taken — showed the error correctly *and* left the input reading "Todo".
+Two rows both said "Todo" while a message underneath explained that the rename
+had not been allowed. The screen was displaying a state that existed nowhere.
+
+**Why it happened.** D-047 made configuration actions return failures instead of
+throwing, which is right: a rejected edit is a normal outcome that belongs next
+to the control. But returning a value means nothing unwinds automatically, and
+optimistic local state stays optimistic about something that did not happen.
+`TaskRow` already did the resetting by hand; the settings components did not.
+
+**The general rule.** Anywhere a control holds a local copy of server state,
+the failure path has to restore it. Showing an error is not enough — the user
+reads the screen, not the error.
+
+*In one sentence:* an optimistic input that survives a rejection is a lie the
+error message sits next to, so a refused edit now puts the control back.

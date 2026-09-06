@@ -226,3 +226,39 @@ describe("UndoStack", () => {
     expect(stack.pop()).toBeUndefined();
   });
 });
+
+describe("describeBatch counts tasks, not operations", () => {
+  const move: Operation[] = [
+    { kind: "setField", taskId: TASK, field: "statusId", from: "a", to: "b" },
+    { kind: "setField", taskId: TASK, field: "position", from: "a0", to: "a1" },
+  ];
+
+  it("names the fields when one task changed in several ways", () => {
+    // One drag on the board. This used to read "Changed order on 2 tasks",
+    // which was the wrong count and the wrong noun.
+    expect(describeBatch(move)).toBe("Changed status and order");
+  });
+
+  it("counts distinct tasks in a bulk edit, not operations", () => {
+    const bulk: Operation[] = [
+      { kind: "setField", taskId: "t1", field: "statusId", from: "a", to: "b" },
+      { kind: "setField", taskId: "t1", field: "priority", from: 1, to: 2 },
+      { kind: "setField", taskId: "t2", field: "statusId", from: "a", to: "b" },
+      { kind: "setField", taskId: "t2", field: "priority", from: 1, to: 2 },
+    ];
+    expect(describeBatch(bulk)).toBe("Changed status on 2 tasks");
+  });
+
+  it("still describes a single operation on its own", () => {
+    expect(describeBatch([move[0]!])).toBe("Changed status");
+  });
+
+  it("falls back to a count when one task changed in mixed ways", () => {
+    expect(
+      describeBatch([
+        { kind: "setField", taskId: TASK, field: "name", from: "a", to: "b" },
+        { kind: "addRelation", taskId: TASK, relation: "assignee", targetId: USER },
+      ]),
+    ).toBe("2 changes");
+  });
+});
