@@ -1,6 +1,13 @@
 "use client";
 
-import { type Operation, type ResolvedColumn, type SortField, encodeSort } from "@arbor/core";
+import {
+  type Operation,
+  type ResolvedColumn,
+  type SortField,
+  dateFrame,
+  encodeSort,
+  isOverdue,
+} from "@arbor/core";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -268,7 +275,7 @@ function CellValue({
       );
 
     case "date": {
-      const due = formatDate(cell.iso);
+      const due = formatDate(cell.iso, cell.hasTime);
       return (
         <span className="date" data-overdue={due.overdue}>
           {due.label}
@@ -366,12 +373,16 @@ function CellValue({
   }
 }
 
-function formatDate(iso: string) {
+function formatDate(iso: string, hasTime: boolean) {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return { label: "—", overdue: false };
   return {
-    label: date.toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-    overdue: date.getTime() < Date.now(),
+    label: date.toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      ...dateFrame(hasTime),
+    }),
+    overdue: isOverdue(iso, hasTime),
   };
 }
 

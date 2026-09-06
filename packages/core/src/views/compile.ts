@@ -453,7 +453,7 @@ export function compileViewQuery(options: CompileOptions): CompiledQuery {
   // which is cheaper than a second query or a second SELECT list to maintain.
   const columns = [
     "t.id, t.key, t.name, t.status_id, t.priority, t.parent_task_id",
-    "t.due_at, t.due_has_time, t.start_at, t.points, t.time_estimate_ms",
+    "t.due_at, t.due_has_time, t.start_at, t.start_has_time, t.points, t.time_estimate_ms",
     "t.home_list_id, t.space_id, t.folder_id, t.position, t.updated_at",
     "t.task_type_id, t.created_at, t.created_by, t.completed_at",
     "s.group AS status_group, ax.permission AS viewer_permission",

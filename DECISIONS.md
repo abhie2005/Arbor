@@ -94,6 +94,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-064](#d-064) | One hook runs a task mutation from any control | Frontend |
 | [D-065](#d-065) | Sort lives in the URL, and a header cycles through three states | Frontend |
 | [D-066](#d-066) | Choosing columns writes to the view; filtering and sorting do not | Frontend |
+| [D-067](#d-067) | A calendar day is stored at UTC midnight and read in UTC | Data |
 
 ---
 
@@ -1793,3 +1794,35 @@ reload.
 
 *In one sentence:* filters and sorts are how someone reads a view, columns are
 what the view is, and only one of those belongs in a URL.
+
+### D-067
+**A calendar day is stored at UTC midnight and read in UTC** · 2026-09-05 · active
+
+`due_has_time = false` means the value is a day, not a moment. Such a value is
+now written at midnight UTC and formatted with `timeZone: "UTC"`; a value with
+a time is written and read wherever the reader is.
+
+**The flag existed and nothing read it.** The column has carried a comment
+since the first migration saying a date-only due date silently shifts a day
+across timezones. All three renderers formatted every date with
+`toLocaleDateString` and no zone, and the seed wrote "now + n days" — so a task
+stored on the 4th displayed as the 3rd on this machine, which is seven hours
+behind UTC.
+
+**Why it stayed invisible.** A row saying "3 Sept" is only wrong if you know
+what was stored. Nothing on the screen contradicted it, and no test compared a
+rendered date to a database value. The calendar is what makes it visible,
+because a task in the wrong square sits next to the right ones.
+
+**Overdue moved with it.** Comparing a date-only value to `Date.now()` marks
+anything due today as late from one minute past midnight. A day is overdue when
+the day is over.
+
+**What this does not fix.** Users have no timezone, so an instant is rendered
+in the server's zone during SSR and the browser's afterwards. That is a real
+gap and it belongs with real identity (Phase 5); this decision is only about
+which frame a *day* is read in, which has one right answer and does not depend
+on knowing who is asking.
+
+*In one sentence:* the column always said a date-only value is a calendar day,
+and now everything that reads it agrees.

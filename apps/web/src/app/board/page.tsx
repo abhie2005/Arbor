@@ -101,6 +101,7 @@ export default async function BoardPage({
         name: row.name,
         priority: row.priority,
         dueAt: row.due_at,
+        dueHasTime: row.due_has_time,
         statusGroup: row.status_group,
         assignees: data.assignees.get(row.id) ?? [],
         subtaskCount: data.subtaskCounts.get(row.id) ?? 0,

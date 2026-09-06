@@ -177,6 +177,7 @@ export default async function Page({
                     priority: row.priority,
                     statusGroup: row.status_group,
                     dueAt: row.due_at,
+                    dueHasTime: row.due_has_time,
                     assignees: data.assignees.get(row.id) ?? [],
                     subtaskCount: data.subtaskCounts.get(row.id) ?? 0,
                   };

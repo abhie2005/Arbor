@@ -52,6 +52,10 @@ export interface CompiledTaskRow {
   priority: number | null;
   parent_task_id: string | null;
   due_at: string | null;
+  /** False means the date is a calendar day, not an instant. Nothing may
+   *  format one of these without asking (see @arbor/core dates). */
+  due_has_time: boolean;
+  start_has_time: boolean;
   position: string;
   status_id: string | null;
   status_group: string | null;

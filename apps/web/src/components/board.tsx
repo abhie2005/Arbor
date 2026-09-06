@@ -1,5 +1,6 @@
 "use client";
 
+import { dateFrame, isOverdue } from "@arbor/core";
 import { useOptimistic, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
@@ -41,6 +42,8 @@ export interface BoardCard {
   name: string;
   priority: number | null;
   dueAt: string | null;
+  /** False means a calendar day; it decides the zone the date is read in. */
+  dueHasTime: boolean;
   statusGroup: string | null;
   assignees: string[];
   subtaskCount: number;
@@ -236,7 +239,7 @@ function Card({
     return event.clientY < box.top + box.height / 2 ? "top" : "bottom";
   }
 
-  const due = formatDue(card.dueAt);
+  const due = formatDue(card.dueAt, card.dueHasTime);
 
   return (
     <article
@@ -301,12 +304,16 @@ function draggedId(event: React.DragEvent<HTMLElement>): string | null {
   return event.dataTransfer.getData("text/plain") || null;
 }
 
-function formatDue(value: string | null) {
+function formatDue(value: string | null, hasTime: boolean) {
   if (!value) return { label: "—", overdue: false, empty: true };
   const date = new Date(value);
   return {
-    label: date.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" }),
-    overdue: date.getTime() < Date.now(),
+    label: date.toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      ...dateFrame(hasTime),
+    }),
+    overdue: isOverdue(value, hasTime),
     empty: false,
   };
 }

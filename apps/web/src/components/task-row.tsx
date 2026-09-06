@@ -1,6 +1,6 @@
 "use client";
 
-import type { Operation } from "@arbor/core";
+import { type Operation, dateFrame, isOverdue } from "@arbor/core";
 import { useState } from "react";
 
 import { archiveTask, cycleStatus, renameTask, setPriority } from "@/server/actions";
@@ -14,6 +14,8 @@ export interface TaskRowData {
   priority: number | null;
   statusGroup: string | null;
   dueAt: string | null;
+  /** False means a calendar day; it decides the zone the date is read in. */
+  dueHasTime: boolean;
   assignees: string[];
   subtaskCount: number;
 }
@@ -29,7 +31,7 @@ export function TaskRow({ task }: { task: TaskRowData }) {
   const { run, pending, failure } = useTaskAction();
   const act = (action: () => Promise<Operation[]>) => run(action, () => setName(task.name));
 
-  const due = formatDue(task.dueAt);
+  const due = formatDue(task.dueAt, task.dueHasTime);
 
   return (
     <div className="row" data-pending={pending || undefined} data-failed={failure ? true : undefined}>
@@ -121,12 +123,16 @@ export function TaskRow({ task }: { task: TaskRowData }) {
   );
 }
 
-function formatDue(value: string | null) {
+function formatDue(value: string | null, hasTime: boolean) {
   if (!value) return { label: "—", overdue: false, empty: true };
   const date = new Date(value);
   return {
-    label: date.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" }),
-    overdue: date.getTime() < Date.now(),
+    label: date.toLocaleDateString("en-GB", {
+      weekday: "short",
+      day: "numeric",
+      ...dateFrame(hasTime),
+    }),
+    overdue: isOverdue(value, hasTime),
     empty: false,
   };
 }

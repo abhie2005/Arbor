@@ -28,7 +28,7 @@ export type Cell =
   | { k: "text"; text: string }
   | { k: "link"; text: string; href: string }
   | { k: "num"; text: string }
-  | { k: "date"; iso: string }
+  | { k: "date"; iso: string; hasTime: boolean }
   | { k: "status"; name: string; group: string | null }
   | { k: "priority"; value: number | null }
   | { k: "people"; names: string[] }
@@ -112,16 +112,17 @@ function builtinCell(row: CompiledTaskRow, column: ResolvedColumn, context: Cell
       return parent ? { k: "text", text: parent.key ? `${parent.key} ${parent.name}` : parent.name } : EMPTY;
     }
 
+    // A due or start date may be a calendar day; the audit stamps never are.
     case "dueAt":
-      return date(row.due_at);
+      return date(row.due_at, row.due_has_time);
     case "startAt":
-      return date(row.start_at as string | null);
+      return date(row.start_at as string | null, row.start_has_time);
     case "createdAt":
-      return date(row.created_at);
+      return date(row.created_at, true);
     case "updatedAt":
-      return date(row.updated_at as string | null);
+      return date(row.updated_at as string | null, true);
     case "completedAt":
-      return date(row.completed_at);
+      return date(row.completed_at, true);
 
     case "points":
       return number(row.points as number | null);
@@ -146,7 +147,9 @@ function customCell(row: CompiledTaskRow, column: ResolvedColumn, context: CellC
       return { k: "bool", value: value === true };
 
     case "date":
-      return date(String(value));
+      // A date field declares whether it carries a time, the same distinction
+      // `due_has_time` makes on the task itself.
+      return date(String(value), config.includeTime === true);
 
     case "number":
       return number(Number(value), config.precision as number | undefined);
@@ -231,8 +234,8 @@ function text(value: string | null | undefined): Cell {
   return value ? { k: "text", text: value } : EMPTY;
 }
 
-function date(value: string | null | undefined): Cell {
-  return value ? { k: "date", iso: value } : EMPTY;
+function date(value: string | null | undefined, hasTime: boolean): Cell {
+  return value ? { k: "date", iso: value, hasTime } : EMPTY;
 }
 
 function number(value: number | null | undefined, precision?: number): Cell {

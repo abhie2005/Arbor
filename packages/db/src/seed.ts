@@ -15,6 +15,7 @@ import {
   firstPosition,
   initialPositions,
   positionBetween,
+  startOfUtcDay,
 } from "@arbor/core";
 import { eq } from "drizzle-orm";
 
@@ -339,7 +340,14 @@ async function main() {
         taskTypeId: t.type ?? null,
         priority: t.priority,
         points: t.points,
-        dueAt: t.dueInDays === null ? null : new Date(now + t.dueInDays * 86_400_000),
+        // `dueHasTime: false` means this is a calendar day, so it is stored at
+        // midnight UTC. Seeding "now + n days" instead put every due date at
+        // whatever time the seed ran, which reads as the previous day to any
+        // viewer west of UTC — the exact shift the flag exists to prevent.
+        dueAt:
+          t.dueInDays === null
+            ? null
+            : startOfUtcDay(new Date(now + t.dueInDays * 86_400_000)),
         dueHasTime: false,
         position: positions[i]!,
         createdBy: avery.id,
