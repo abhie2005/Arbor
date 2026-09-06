@@ -70,6 +70,24 @@ export async function loadFieldCatalog(
   return new Map(result.rows.map((row) => [row.id, toDefinition(row)]));
 }
 
+/**
+ * Field ids to their names, for anything that labels a field to a person.
+ *
+ * Separate from the catalog because the catalog is deliberately the minimum a
+ * caller needs to *store or filter* a value — type and config, no name. A
+ * column header needs the name and nothing else.
+ */
+export async function loadFieldNames(
+  workspaceId: string,
+  connection: Pool | PoolClient = pool(),
+): Promise<Map<string, string>> {
+  const result = await connection.query<{ id: string; name: string }>(
+    `SELECT id, name FROM fields WHERE workspace_id = $1`,
+    [workspaceId],
+  );
+  return new Map(result.rows.map((row) => [row.id, row.name]));
+}
+
 /** One field, for a write that names it. Throws rather than returning null. */
 export async function loadField(
   fieldId: string,

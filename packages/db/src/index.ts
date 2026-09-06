@@ -17,6 +17,7 @@ export {
   fieldsAvailableOn,
   loadField,
   loadFieldCatalog,
+  loadFieldNames,
   loadFieldPlacements,
   previewFieldTypeChange,
   setFieldScopes,

@@ -2,16 +2,27 @@ import "server-only";
 
 import {
   DEFAULT_VIEW_DEFINITION,
+  type FieldRef,
   type FilterGroup,
   type FilterableField,
+  type ResolvedColumn,
   type ViewDefinition,
   type ViewType,
   compileGroupCounts,
   compileViewQuery,
   decodeFilters,
   filterableFields,
+  resolveColumns,
 } from "@arbor/core";
-import { executeCompiled, listViews, loadFieldCatalog, pool } from "@arbor/db";
+import {
+  executeCompiled,
+  listViews,
+  loadFieldCatalog,
+  loadFieldNames,
+  pool,
+} from "@arbor/db";
+
+import { type ColumnValues, loadColumnValues } from "./column-values";
 
 /**
  * Loading a view.
@@ -41,6 +52,10 @@ export interface CompiledTaskRow {
   status_id: string | null;
   status_group: string | null;
   group_key: string | null;
+  task_type_id: string | null;
+  created_at: string | null;
+  created_by: string | null;
+  completed_at: string | null;
 }
 
 export interface StatusRow {
@@ -79,6 +94,15 @@ export interface ViewContext {
   statuses: StatusRow[];
   assignees: Map<string, string[]>;
   subtaskCounts: Map<string, number>;
+  /**
+   * The definition's `columns`, resolved against the field catalog. Every
+   * renderer gets these; only the table draws from them so far.
+   */
+  columns: ResolvedColumn[];
+  /** Columns naming a field that no longer exists, dropped rather than thrown (D-060). */
+  droppedColumns: FieldRef[];
+  /** Everything a column needs that is not on the compiled row. */
+  values: ColumnValues;
 }
 
 interface MetaRow {
@@ -177,6 +201,11 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
   const filters = decodeFilters(filterParam, baseFilters);
   const definition: ViewDefinition = { ...saved.definition, ...override, filters };
 
+  const [catalog, fieldNames] = await Promise.all([
+    loadFieldCatalog(meta.workspace_id, connection),
+    loadFieldNames(meta.workspace_id, connection),
+  ]);
+
   const compileOptions = {
     workspaceId: meta.workspace_id,
     viewerId,
@@ -184,8 +213,12 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
     definition,
     // Always supplied: a saved definition may filter or sort on a custom field,
     // and the compiler refuses to guess what type it is (D-042).
-    fields: await loadFieldCatalog(meta.workspace_id, connection),
+    fields: catalog,
   };
+
+  // Resolved here rather than in the renderer so that a definition and the
+  // values fetched for it can never disagree about which columns are showing.
+  const { columns, dropped } = resolveColumns(definition.columns, catalog, fieldNames);
 
   const rows = await executeCompiled<CompiledTaskRow>(
     compileViewQuery(compileOptions),
@@ -215,6 +248,12 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
   for (const row of assigneeRows.rows) {
     assignees.set(row.task_id, [...(assignees.get(row.task_id) ?? []), row.name]);
   }
+
+  const values = await loadColumnValues(columns, rows, {
+    workspaceId: meta.workspace_id,
+    catalog,
+    connection,
+  });
 
   const subRows = await connection.query<{ parent_task_id: string; n: string }>(
     `SELECT parent_task_id, COUNT(*) AS n FROM tasks
@@ -247,6 +286,9 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
     statuses: statuses.rows,
     assignees,
     subtaskCounts: new Map(subRows.rows.map((r) => [r.parent_task_id, Number(r.n)])),
+    columns,
+    droppedColumns: dropped,
+    values,
   };
 }
 

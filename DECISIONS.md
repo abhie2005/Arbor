@@ -89,6 +89,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-059](#d-059) | Never compare structures with `JSON.stringify` | Frontend |
 | [D-060](#d-060) | Columns are refused on write and dropped on read | Query |
 | [D-061](#d-061) | One SELECT list, wide enough for every built-in a column may name | Query |
+| [D-062](#d-062) | Custom field values are fetched for the page, not projected | Query |
 
 ---
 
@@ -1654,3 +1655,38 @@ than "never selected".
 
 *In one sentence:* the row is a little wider so that adding a column to a view
 is never a change to the query.
+
+### D-062
+**Custom field values are fetched for the page, not projected by the compiler** · 2026-09-05 · active
+
+`loadView` runs the compiled query, then one lookup for the values its visible
+columns need: `WHERE task_id = ANY(...) AND field_id = ANY(...)`.
+
+**The alternative was projecting each visible column** as a correlated
+subquery, the way `orderExpr` already does for sorting. It is the more obvious
+answer — the compiler owns the query, and columns are part of the definition —
+and three things are wrong with it. A fifteen-column table compiles fifteen
+subqueries. The query *text* then changes whenever someone shows or hides a
+column, so no two views share a prepared statement. And a renderer wanting one
+more field becomes a compiler change, which is the coupling D-017 exists to
+prevent.
+
+**This is not a renderer growing its own query.** The rule the project holds is
+that a renderer must not query — if it needs to, the compiler is missing
+something (D-032). The lookup lives in `loadView`, which is the shared read
+path and already does exactly this for assignees and subtask counts. What a
+renderer may not have is a *different idea of which rows exist*; a second
+lookup keyed by ids the compiler already returned cannot produce one.
+
+**Why it is permission-safe.** Every task id it takes came out of the
+permission-scoped query. This lookup can only narrow what the viewer was
+already served, never widen it. That property depends on nothing in it taking
+an id from anywhere but those rows, which is the constraint to preserve if it
+grows.
+
+**Only the lookups a column asks for run.** The list and the board resolve to
+columns needing none, so they pay nothing — verified by diffing both pages'
+rendered DOM before and after this change: identical.
+
+*In one sentence:* one indexed lookup for the page beats one subquery per
+column, and it belongs to the read path rather than to any renderer.
