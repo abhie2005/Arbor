@@ -3,9 +3,11 @@
 A dense, keyboard-driven work platform. Hierarchies, saved views, custom fields,
 and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 
-> **Status: early.** The container tree, task model, view compiler, permission
-> index, and mutation layer all work and are tested against a real Postgres.
-> The List view is interactive. Everything else is unbuilt.
+> **Status: early, but real.** The container tree, task model, view compiler,
+> permission index, mutation layer, and the configuration engines all work and
+> are tested against a real Postgres. Two renderers — List and Board — read
+> through the same compiler, with a filter bar and working undo. Auth is a
+> development stub, and most of the product is unbuilt.
 > **[docs/STATUS.md](docs/STATUS.md) is the current state and where to pick up.**
 
 ---
@@ -29,10 +31,18 @@ Requires Node 22+ and Docker. Nothing else, and no cloud account.
 Verify the stack end to end:
 
 ```bash
-npm test               # 80 unit tests, no database needed
-npm run db:smoke       # 16 checks against real Postgres: compiled queries,
+npm test               # 174 unit tests, no database needed
+npm run db:smoke       # 45 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
+npm run check:actions  # 17 checks that POST what a button click posts, then
+                       # assert against Postgres — needs `npm run dev` running
 ```
+
+The three run at different depths on purpose. Unit tests cover logic with no
+fixtures; `db:smoke` proves the SQL the compiler emits is valid and that
+permission scoping actually filters rows; `check:actions` covers the seam
+between a UI handler and a service, which is where the bugs that survived
+longest have lived.
 
 ---
 
@@ -44,9 +54,9 @@ without writing code.
 
 | Engine | What it does |
 | --- | --- |
-| **Views** | A view is a saved query plus a renderer. Every view type serializes to the same definition, so a board is just `grouping.field = "status"`. One compiler, many renderers. |
+| **Views** | A view is a saved query plus a renderer. Every view type serializes to the same definition, so a board is just `grouping.field = "status"`. Adding the Board renderer took no compiler change and no new SQL. |
 | **Statuses** | User-named statuses that each belong to a fixed group (`not_started`, `active`, `done`, `closed`). Everything else — filters, reporting, burndown — keys off the group, never the name. |
-| **Fields** | Custom fields defined on any container, optionally scoped to a task type, stored in a typed EAV table so filtering and sorting stay on an index. |
+| **Fields** | Custom fields defined on any container, optionally scoped to a task type, stored in a typed EAV table so filtering and sorting stay on an index. Twenty types, each declaring its own storage column, legal operators, and config schema — the filter bar builds its menus from the same declaration the query compiler validates against. |
 | **Permissions** | Grants are the source of truth; a materialized access index is what queries actually join against, so permission checks cost one join instead of one per level of nesting. |
 
 The [architecture teardown](docs/) covers the reasoning in full.
@@ -57,31 +67,40 @@ The [architecture teardown](docs/) covers the reasoning in full.
 
 ```
 apps/
-  web/          Next.js — UI and API routes
-  realtime/     WebSocket gateway, presence, Yjs document sync
-  worker/       automations, digests, access-index rebuilds, scheduled jobs
+  web/          Next.js — UI and server actions
+  realtime/     ·  WebSocket gateway, presence, Yjs sync
+  worker/       ·  automations, digests, access-index rebuilds
 packages/
-  core/         view compiler, hierarchy resolution, ordering — framework-free
-  db/           Drizzle schema, migrations, seed
-  ui/           design tokens and interface primitives
-  sdk/          typed API client (the web app uses it too)
+  core/         view compiler, field types, status rules, ordering — no I/O
+  db/           Drizzle schema, migrations, seed, configuration services
+  ui/           design tokens
+  sdk/          ·  typed API client
 infra/
   docker/       compose.yml — the self-host path
-  terraform/    the AWS reference deployment
+  terraform/    ·  the AWS reference deployment
 docs/decisions/ ADRs
 ```
 
-`packages/core` holds the three things hardest to get right — the view compiler,
-the permission resolver, and ordering. It has no database handle and no request
-object, which keeps it honest and makes it the easiest part of the codebase for a
-stranger to contribute to.
+**`·` marks a directory that is empty.** They are named because the shape is
+decided, not because the code exists — `realtime` and `worker` earn their keep
+once there are deltas to broadcast and automations to run, and `sdk` once there
+is an API worth a typed client. The AWS topology below is designed and
+documented; no Terraform is written.
+
+`packages/core` holds the things hardest to get right — the view compiler, the
+field type system, status resolution, and ordering. It has no database handle
+and no request object, which is why its 174 tests need no fixtures and why it is
+the easiest part of the codebase for a stranger to contribute to.
 
 ---
 
 ## Deployment
 
-Runs on AWS, and runs anywhere Docker does. Nothing sits on a third-party
-application platform, hosted database vendor, or auth SaaS.
+Designed to run on AWS, and to run anywhere Docker does. Nothing sits on a
+third-party application platform, hosted database vendor, or auth SaaS.
+
+*Today only the Docker path exists* — the table below is the reference design,
+not a deployment you can `terraform apply` yet.
 
 | | AWS (reference) | Google Cloud | Self-host |
 | --- | --- | --- | --- |
@@ -111,14 +130,22 @@ connections, and API Gateway's WebSocket API bills per message.
       compilation, filters, grouping, custom-field sorting, group counts.
 - [x] **3 — Mutations.** Invertible operations, one transaction per batch, an
       activity row per change, real undo, and an interactive List view.
-- [ ] **4 — Configuration engines.** Status sets with inheritance, custom field
-      CRUD, task types with field scoping, templates.
-- [ ] **5 — Collaboration.** Comments, notifications, realtime deltas, presence.
-- [ ] **6 — Access control.** Real auth, private containers, grants,
-      access-index rebuild job, guests.
-- [ ] **7 — Depth.** Time tracking, goals, dashboards, remaining view renderers.
-- [ ] **8 — Docs.** CRDT editor, nested pages, backlinks.
-- [ ] **9 — Automations, forms, public API.**
+- [x] **4 — Configuration engines.** Status sets with inheritance and task
+      migration on delete, twenty custom field types with per-type validation,
+      task types with field scoping, workflow templates, and a settings screen.
+- [ ] **5 — Access control.** Real auth, private containers, grants,
+      access-index rebuild job, guests. *Everything today runs behind a
+      development user switcher.*
+- [ ] **6 — Views.** Saved-view CRUD, the remaining renderers — Table,
+      Calendar, Gantt — over the compiler that already serves List and Board.
+- [ ] **7 — Collaboration.** Comments, notifications, realtime deltas, presence.
+- [ ] **8 — Depth.** Time tracking, goals, dashboards.
+- [ ] **9 — Docs.** CRDT editor, nested pages, backlinks.
+- [ ] **10 — Automations, forms, public API.**
+
+Access control moved ahead of collaboration deliberately: every collaborative
+feature fans out to *whoever can see a thing*, and building that fan-out on a
+development stub means rewriting it once permissions are real.
 
 ---
 
@@ -127,6 +154,13 @@ connections, and API Gateway's WebSocket API bills per message.
 Good first issues are the ones shaped like this: a new view renderer, a new
 custom field type, a keyboard shortcut. Each is self-contained, visible, and
 satisfying.
+
+There is a worked example of each. The Board renderer
+(`apps/web/src/app/board/`) is a complete second renderer over the shared
+compiler — it needed no compiler change and no new SQL, so a Table or Calendar
+view is the same shape of work. A field type is one entry in
+`FIELD_TYPE_META` plus a parser and a value control, and the compiler, the
+mutation executor, and the filter menu all pick it up from there.
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) first. If you want to know why
 something is the way it is, [DECISIONS.md](DECISIONS.md) logs every non-obvious

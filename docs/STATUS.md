@@ -136,7 +136,8 @@ the server side, which is the whole argument for looking at the screen.
 3. **Table and Calendar** — both are renderers over the same compiled view. The
    board took no compiler change; these should not either.
 
-**Then:** real auth and permissions (Phase 5).
+**Then:** real auth and permissions (Phase 5 — see the roadmap in the README,
+which now puts access control ahead of collaboration).
 
 ---
 

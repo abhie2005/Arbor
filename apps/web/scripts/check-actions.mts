@@ -17,14 +17,20 @@
  * It does not exercise the browser: nothing here proves a click is wired to
  * the handler. That still needs a real browser.
  *
- *   npx next dev -p 3100        # in apps/web
+ *   npm run dev                 # port 3000, from the repo root
+ *   npm run check:actions
+ *
+ * Pass a port if the dev server is somewhere else:
+ *
  *   npm run check:actions -- 3100
  */
 import { UndoStack } from "@arbor/core";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
 
-const PORT = process.argv[2] ?? "3100";
+// Defaults to the port `npm run dev` uses, so the two commands compose without
+// anyone having to know a second number.
+const PORT = process.argv[2] ?? process.env.PORT ?? "3000";
 const PAGE = `http://localhost:${PORT}/settings/statuses`;
 const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://arbor:arbor@localhost:5432/arbor";
 
