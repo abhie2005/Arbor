@@ -34,8 +34,16 @@ export interface ViewTab {
   personal: boolean;
 }
 
-const RENDERER_ROUTE: Record<string, string> = { list: "/", board: "/board", table: "/table" };
-const UNBUILT = ["Calendar"];
+const RENDERER_ROUTE: Record<string, string> = {
+  list: "/",
+  board: "/board",
+  table: "/table",
+  calendar: "/calendar",
+};
+
+/** Renderer types with no screen yet. Shown greyed rather than hidden, so the
+ *  gap is visible instead of implied. */
+const UNBUILT: string[] = ["Gantt"];
 
 export function ViewTabs({
   views,
@@ -83,6 +91,8 @@ export function ViewTabs({
     // tab's `f` or `s` would silently apply one view's refinements to another.
     query.delete("f");
     query.delete("s");
+    // The month is this calendar's position, not the next view's.
+    query.delete("m");
     return `${route}?${query.toString()}`;
   }
 

@@ -2,17 +2,18 @@ import "server-only";
 
 import {
   DEFAULT_VIEW_DEFINITION,
-  type FieldRef,
-  type FilterGroup,
   type ColumnOption,
+  type FieldRef,
+  type FilterCondition,
+  type FilterGroup,
   type FilterableField,
   type ResolvedColumn,
   type SortField,
   type ViewDefinition,
   type ViewType,
+  availableColumns,
   compileGroupCounts,
   compileViewQuery,
-  availableColumns,
   decodeFilters,
   decodeSort,
   filterableFields,
@@ -92,6 +93,11 @@ export interface ViewContext {
    * change the user made.
    */
   dirty: boolean;
+  /**
+   * How many tasks the viewer can see in this container, whatever the view is
+   * showing. The sidebar's number: a property of the list, not of the page.
+   */
+  listTaskCount: number;
   /** Every view on this container the viewer can see, for the tab strip. */
   views: { id: string; name: string; type: string; isDefault: boolean; personal: boolean }[];
   savedDefinition: ViewDefinition;
@@ -186,6 +192,14 @@ export interface LoadViewOptions {
   filterParam?: string;
   /** The raw `?s=` parameter, layered over the saved view's own sort. */
   sortParam?: string;
+  /**
+   * Conditions the renderer needs to hold, appended after the URL has had its
+   * say so a link cannot remove them. The calendar's date range is one: a month
+   * grid that quietly showed tasks from another month would not be a month.
+   */
+  required?: FilterCondition[];
+  /** Overrides the compiler's default page size. */
+  limit?: number;
 }
 
 /**
@@ -196,7 +210,16 @@ export interface LoadViewOptions {
  * all, which is most of the point of saving one.
  */
 export async function loadView(options: LoadViewOptions): Promise<ViewContext | null> {
-  const { viewerId, type, override = {}, viewId, filterParam, sortParam } = options;
+  const {
+    viewerId,
+    type,
+    override = {},
+    viewId,
+    filterParam,
+    sortParam,
+    required = [],
+    limit,
+  } = options;
 
   const meta = await listMeta();
   if (!meta) return null;
@@ -215,6 +238,17 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
   const sort = decodeSort(sortParam, override.sort ?? saved.definition.sort);
   const definition: ViewDefinition = { ...saved.definition, ...override, filters, sort };
 
+  // Appended to what the query runs on, not to the definition: these are the
+  // renderer's own scope, and showing them in the filter bar would invite
+  // someone to remove the thing holding the view together.
+  const scoped: ViewDefinition =
+    required.length === 0
+      ? definition
+      : {
+          ...definition,
+          filters: { ...filters, conditions: [...filters.conditions, ...required] },
+        };
+
   const [catalog, fieldNames] = await Promise.all([
     loadFieldCatalog(meta.workspace_id, connection),
     loadFieldNames(meta.workspace_id, connection),
@@ -224,10 +258,11 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
     workspaceId: meta.workspace_id,
     viewerId,
     scope: { kind: "list", id: meta.list_id } as const,
-    definition,
+    definition: scoped,
     // Always supplied: a saved definition may filter or sort on a custom field,
     // and the compiler refuses to guess what type it is (D-042).
     fields: catalog,
+    ...(limit === undefined ? {} : { limit }),
   };
 
   // Resolved here rather than in the renderer so that a definition and the
@@ -240,7 +275,7 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
   );
 
   const counts = new Map<string, number>();
-  if (definition.grouping.field !== "none") {
+  if (scoped.grouping.field !== "none") {
     const grouped = await connection.query<{ group_key: string | null; count: number }>(
       compileGroupCounts(compileOptions).text,
       compileGroupCounts(compileOptions).params,
@@ -263,6 +298,23 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
     assignees.set(row.task_id, [...(assignees.get(row.task_id) ?? []), row.name]);
   }
 
+  // Counted through the compiler rather than with a hand-written query, so the
+  // one place that knows what a viewer may see stays the only place that knows
+  // (D-019). Grouping by `list` with the scope already set to this list gives
+  // exactly one group: this list's tasks.
+  const countQuery = compileGroupCounts({
+    ...compileOptions,
+    definition: {
+      ...scoped,
+      grouping: { field: "list", dir: "asc" },
+      // Everything in the list — closed included, subtasks as rows — because
+      // the number sits next to the list's name, not next to the view's.
+      filters: { op: "AND", conditions: [], showClosed: true, showSubtasks: 1 },
+    },
+  });
+  const listCounts = await connection.query<{ count: number }>(countQuery.text, countQuery.params);
+  const listTaskCount = listCounts.rows.reduce((total, row) => total + Number(row.count), 0);
+
   const values = await loadColumnValues(columns, rows, {
     workspaceId: meta.workspace_id,
     catalog,
@@ -284,6 +336,7 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
     folderName: meta.folder_name,
     spaceName: meta.space_name,
     viewName: saved.name,
+    listTaskCount,
     dirty:
       saved.id !== null &&
       (!sameFilters(filters, saved.definition.filters) ||

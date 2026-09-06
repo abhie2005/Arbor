@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { type Operation, invertBatch, positionBetween } from "@arbor/core";
+import { type Operation, invertBatch, positionBetween, startOfUtcDay } from "@arbor/core";
 import { applyOperations, pool } from "@arbor/db";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
@@ -237,12 +237,71 @@ export async function moveTask(
   return invertBatch(applied);
 }
 
+/**
+ * Moves a task to a day — one drag on the calendar.
+ *
+ * Whichever date the calendar is showing is the one that moves, so a calendar
+ * on start dates reschedules start dates. The set of fields is closed here
+ * rather than taken from the caller: `setField` will write any column in its
+ * map, and a date argument arriving from a drag has no business being able to
+ * name `position`.
+ *
+ * **The day is stored at midnight UTC** and the task is marked as carrying no
+ * time (D-067). Dropping a task on the 4th means the 4th, and a task that had
+ * a time loses it — which is the honest reading of dragging something onto a
+ * square that represents a whole day.
+ */
+export async function setTaskDate(
+  taskId: string,
+  field: "dueAt" | "startAt",
+  day: string | null,
+): Promise<Operation[]> {
+  const actor = await requireUser();
+
+  if (field !== "dueAt" && field !== "startAt") {
+    throw new Error(`A calendar may only move a due or start date, not ${String(field)}`);
+  }
+  if (day !== null && !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    throw new Error(`Not a day: ${day}`);
+  }
+
+  const column = field === "dueAt" ? "due_at" : "start_at";
+  const flag = field === "dueAt" ? "due_has_time" : "start_has_time";
+
+  const current = await pool().query<{ value: Date | null; has_time: boolean }>(
+    `SELECT ${column} AS value, ${flag} AS has_time FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
+    [taskId],
+  );
+
+  const task = current.rows[0];
+  if (!task) throw new Error("That task no longer exists");
+
+  const from = task.value === null ? null : task.value.toISOString();
+  const to = day === null ? null : startOfUtcDay(day).toISOString();
+  if (from === to && !task.has_time) return [];
+
+  const op: Operation = { kind: "setField", taskId, field, from, to };
+  await applyOperations([op], { actorId: actor.id });
+
+  // The flag is not an invertible operation — it is a property of the value,
+  // and undo restores the value. Written directly, alongside, so a restored
+  // timed date does not come back as a day.
+  await pool().query(`UPDATE tasks SET ${flag} = $1 WHERE id = $2`, [false, taskId]);
+
+  revalidatePath("/");
+  revalidatePath("/calendar");
+
+  return [{ ...op, from: to, to: from }];
+}
+
 /** Applies an inverse batch produced by one of the actions above. */
 export async function undo(ops: Operation[]): Promise<void> {
   if (ops.length === 0) return;
   const actor = await requireUser();
   await applyOperations(ops, { actorId: actor.id });
   revalidatePath("/");
+  revalidatePath("/board");
+  revalidatePath("/calendar");
 }
 
 /** Development only — see D-034. */

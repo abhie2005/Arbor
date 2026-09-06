@@ -444,7 +444,7 @@ async function main() {
   }
 
   // --- default views --------------------------------------------------------
-  const viewPositions = initialPositions(3);
+  const viewPositions = initialPositions(4);
   await db.insert(s.views).values([
     {
       workspaceId: workspace.id,
@@ -511,6 +511,25 @@ async function main() {
           { field: "tag" },
           { field: "taskType" },
         ],
+      },
+    },
+    {
+      workspaceId: workspace.id,
+      parentId: sprint.id,
+      parentKind: "list",
+      type: "calendar",
+      name: "Calendar",
+      position: viewPositions[3]!,
+      createdBy: avery.id,
+      // `settings.dateField` is what a calendar means by a square. Seeded
+      // explicitly rather than relying on the default, so the setting is
+      // exercised by something.
+      definition: {
+        grouping: { field: "none", dir: "asc" },
+        sort: [{ field: "dueAt", dir: "asc" }],
+        filters: { op: "AND", conditions: [], showClosed: false, showSubtasks: 1 },
+        columns: [{ field: "name" }, { field: "status" }, { field: "dueAt" }],
+        settings: { dateField: "dueAt" },
       },
     },
   ]);

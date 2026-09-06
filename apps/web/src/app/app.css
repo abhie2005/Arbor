@@ -1743,3 +1743,159 @@ select.filter-add option {
   border: 0;
   cursor: pointer;
 }
+
+/* ---------- calendar ---------- */
+.calendar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.calendar[data-pending] {
+  opacity: 0.7;
+}
+
+.calendar-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--line);
+}
+
+.calendar-step {
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: var(--text-body);
+  line-height: 1;
+  padding: 0 var(--space-2);
+}
+
+.calendar-step:hover {
+  color: var(--accent);
+}
+
+.calendar-month {
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--text);
+  min-width: 130px;
+}
+
+.calendar-today {
+  margin-left: auto;
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  text-decoration: none;
+}
+
+.calendar-today:hover {
+  color: var(--accent);
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  /* Seven weekday labels then six fixed rows — the grid keeps its height as
+     you page, so nothing below it moves (see monthGrid). */
+  grid-template-rows: auto repeat(6, minmax(84px, 1fr));
+  flex: 1;
+  min-height: 0;
+}
+
+.calendar-weekday {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-label);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.calendar-day {
+  min-width: 0;
+  padding: var(--space-2);
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.calendar-day:nth-child(7n + 7) {
+  border-right: 0;
+}
+
+/* Days from the neighbouring month are dimmed rather than blank: a task on the
+   31st of last month is still a task, and an empty square would read as one
+   with nothing scheduled. */
+.calendar-day[data-outside] {
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+}
+
+.calendar-day[data-outside] .calendar-date {
+  color: var(--text-3);
+}
+
+.calendar-day[data-over] {
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.calendar-date {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  margin-bottom: var(--space-2);
+}
+
+.calendar-today-mark {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.calendar-day[data-today] .calendar-date {
+  color: var(--accent);
+}
+
+.calendar-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-2);
+  margin-bottom: 2px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--line);
+  font-size: var(--text-meta);
+  cursor: grab;
+}
+
+.calendar-chip:hover {
+  border-color: var(--line-strong);
+}
+
+.calendar-chip[data-dragging] {
+  opacity: 0.4;
+}
+
+.calendar-chip[data-overdue] {
+  border-color: color-mix(in srgb, var(--priority-urgent) 45%, transparent);
+}
+
+.calendar-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.calendar-error {
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-meta);
+  color: var(--danger);
+}

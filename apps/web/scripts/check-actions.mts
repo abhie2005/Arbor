@@ -320,6 +320,60 @@ report(
     : `status ${reverted.status_id} position ${reverted.position}`,
 );
 
+console.log("\ncalendar drag → a day, and back\n");
+
+// The calendar's equivalent of the board's drag check: a drop names a day, and
+// what lands in Postgres has to be that day at midnight UTC (D-067) — not the
+// instant the drop happened, and not the day before in some other zone.
+await warm("/calendar");
+const CALENDAR_ACTIONS = actionIds("app/calendar/page");
+const CALENDAR_URL = "http://localhost:" + PORT + "/calendar";
+
+const scheduled = await one(
+  `SELECT id, key, due_at, due_has_time FROM tasks WHERE due_at IS NOT NULL ORDER BY due_at LIMIT 1`,
+);
+const targetDay = "2026-09-24";
+
+const rescheduled = await callOn(CALENDAR_URL, CALENDAR_ACTIONS.setTaskDate!, [
+  scheduled.id,
+  "dueAt",
+  targetDay,
+]);
+
+const afterDrop = await one(`SELECT due_at, due_has_time FROM tasks WHERE id = $1`, [scheduled.id]);
+report(
+  "a drop puts the task on that day at midnight UTC",
+  afterDrop.due_at.toISOString() === `${targetDay}T00:00:00.000Z`
+    ? null
+    : `stored ${afterDrop.due_at.toISOString()}`,
+);
+
+report(
+  "and marks it as carrying no time, because a square is a whole day",
+  afterDrop.due_has_time === false ? null : "the task still claims to have a time",
+);
+
+const dateInverse = rescheduled.text.match(/\[\{"kind":"setField".*?\}\]/);
+const dateStack = new UndoStack(20);
+dateStack.push(JSON.parse(dateInverse![0]));
+await callOn("http://localhost:" + PORT + "/", PAGE_ACTIONS.undo!, [dateStack.pop()]);
+
+const afterUndo = await one(`SELECT due_at FROM tasks WHERE id = $1`, [scheduled.id]);
+report(
+  "undoing a drag puts the date back",
+  afterUndo.due_at.toISOString() === scheduled.due_at.toISOString()
+    ? null
+    : `expected ${scheduled.due_at.toISOString()}, got ${afterUndo.due_at.toISOString()}`,
+);
+
+report(
+  "a calendar may not move a field that is not a date",
+  (await callOn(CALENDAR_URL, CALENDAR_ACTIONS.setTaskDate!, [scheduled.id, "position", targetDay]))
+    .text.includes("may only move a due or start date")
+    ? null
+    : "a non-date field was accepted",
+);
+
 console.log("\ntable columns → the saved view\n");
 
 // The column chooser writes straight to the saved view rather than layering

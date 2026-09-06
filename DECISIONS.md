@@ -95,6 +95,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-065](#d-065) | Sort lives in the URL, and a header cycles through three states | Frontend |
 | [D-066](#d-066) | Choosing columns writes to the view; filtering and sorting do not | Frontend |
 | [D-067](#d-067) | A calendar day is stored at UTC midnight and read in UTC | Data |
+| [D-068](#d-068) | A renderer may narrow the query; the URL may not widen it back | Query |
+| [D-069](#d-069) | The sidebar counts the list, not the page | Query |
 
 ---
 
@@ -1826,3 +1828,51 @@ on knowing who is asking.
 
 *In one sentence:* the column always said a date-only value is a calendar day,
 and now everything that reads it agrees.
+
+### D-068
+**A renderer may narrow the query; the URL may not widen it back** · 2026-09-05 · active
+
+`loadView` takes `required` conditions, appended after `?f=` has been layered
+on. The calendar uses one: the date falls inside the six weeks on screen.
+
+**Why not an override.** Renderer overrides merge into the definition, so
+passing `conditions` would replace whatever the saved view filters on — a
+calendar would silently drop a view's own filters. Appending keeps both, and
+appending *last* means a hand-edited link cannot remove the month while still
+claiming to show it.
+
+**They are deliberately invisible to the filter bar.** The bar builds from the
+definition, and a "due date is between the 31st and the 12th" chip sitting there
+with a remove button invites someone to break the screen. A renderer's scope is
+not a filter the user set.
+
+**The calendar needed no compiler change.** This is the measurement STATUS was
+waiting for, and the interesting part is what carried it: `between` already
+existed, the access-index join already scoped it, and a month is at most a few
+hundred rows, so placing each in a square is arithmetic rather than a `GROUP BY
+day`. The page size is raised to the compiler's maximum instead — a month is a
+bounded window, not a page someone scrolls, and a task missing because it fell
+past a limit would look exactly like one that is not scheduled.
+
+*In one sentence:* a renderer's scope is part of the query and not part of the
+view, so it is appended where nothing downstream can take it off.
+
+### D-069
+**The sidebar counts the list, not the page** · 2026-09-05 · active
+
+`listTaskCount` is compiled per render — grouping by `list` with the scope
+already set to this container — rather than taken from `rows.length`.
+
+**What it was.** Every page put `data.rows.length` next to the list's name. The
+list hides subtasks and showed 7; the table shows them and showed 9; the
+calendar filters to a month and showed **0 in October**, which reads as an empty
+list rather than an empty month.
+
+**Counted through the compiler, not with a query of its own.** The number has to
+respect the access index, soft deletes and archiving, and there is one place
+that knows all three (D-019). A hand-written `COUNT(*)` beside it would be a
+second answer to "what may this viewer see" — which is the failure mode the
+materialized index exists to prevent.
+
+*In one sentence:* a number beside a list's name is about the list, so it is
+counted once and not left to whichever renderer happens to be open.

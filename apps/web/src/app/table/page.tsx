@@ -120,7 +120,9 @@ export default async function TablePage({
             <a className="nav depth-1" href="#" aria-current="page">
               <span className="ic">▤</span>
               {data.listName}
-              <span className="count">{data.rows.length}</span>
+              {/* The list's tasks, not the page's rows — a calendar showing one
+                  month must not report the list as empty. */}
+              <span className="count">{data.listTaskCount}</span>
             </a>
             <a className="nav depth-1" href="#"><span className="ic">▤</span>Backlog</a>
           </nav>

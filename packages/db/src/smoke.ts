@@ -742,9 +742,17 @@ async function main() {
   const seededTypes = seeded.map((v) => v.type).sort();
   report(
     "every renderer has a seeded view",
-    seededTypes.join(",") === "board,list,table"
+    seededTypes.join(",") === "board,calendar,list,table"
       ? null
       : `got ${seeded.map((v) => `${v.name} (${v.type})`).join(", ")}`,
+  );
+
+  const seededCalendar = seeded.find((v) => v.type === "calendar");
+  report(
+    "the seeded calendar says which date its squares mean",
+    seededCalendar?.definition.settings?.dateField === "dueAt"
+      ? null
+      : `settings were ${JSON.stringify(seededCalendar?.definition.settings)}`,
   );
 
   const seededTable = seeded.find((v) => v.type === "table");

@@ -1,4 +1,14 @@
-import { Board, type BoardColumn } from "@/components/board";
+import {
+  dayKeyFor,
+  isMonth,
+  isOverdue,
+  monthGrid,
+  monthOf,
+  monthRange,
+  utcDayKey,
+} from "@arbor/core";
+
+import { Calendar, type CalendarTask } from "@/components/calendar";
 import { FilterBar } from "@/components/filter-bar";
 import { UndoButton, UndoProvider } from "@/components/undo";
 import { UserSwitcher } from "@/components/user-switcher";
@@ -9,45 +19,68 @@ import { requireWorkspace } from "@/server/workspace";
 
 export const dynamic = "force-dynamic";
 
+/** Which date a calendar's squares mean. Anything else falls back to the due date. */
+function dateFieldOf(settings: Record<string, unknown> | undefined): "dueAt" | "startAt" {
+  return settings?.dateField === "startAt" ? "startAt" : "dueAt";
+}
+
 /**
- * The board renderer.
+ * The calendar renderer.
  *
- * There is no board query. A board is the same compiled view as the list with
- * `grouping.field = "status"` — which the saved definition already says — so
- * this file's entire job is turning rows the compiler already grouped into
- * columns.
+ * The first view whose shape is not a list of rows, and the measurement STATUS
+ * was waiting for: it needed no compiler change and no new SQL. A month is the
+ * same compiled query with one condition appended — the date falls inside the
+ * six weeks on screen — expressed with the `between` operator the compiler
+ * already had.
  *
- * The one override is `showSubtasks: 1`: a board shows subtasks as their own
- * cards rather than nesting them, because a column is a flat sequence and
- * there is nowhere for a nested row to go.
+ * Three overrides. `grouping: none`, because the grid *is* the grouping and a
+ * group key nothing draws only reorders rows. `showSubtasks: 1`, because a
+ * square is a flat list with nowhere to nest. And a page size raised to the
+ * compiler's maximum, since a month is a bounded window rather than a page
+ * someone scrolls — a task missing from a square because it fell past a limit
+ * would be indistinguishable from one that is not scheduled.
  */
-export default async function BoardPage({
+export default async function CalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ f?: string; view?: string }>;
+  searchParams: Promise<{ f?: string; m?: string; view?: string }>;
 }) {
   let viewer: Awaited<ReturnType<typeof getCurrentUser>> = null;
   let data: Awaited<ReturnType<typeof loadView>> = null;
   let options: Awaited<ReturnType<typeof loadFilterOptions>> | null = null;
   let error: string | null = null;
 
-  const { f, view } = await searchParams;
+  const { f, m, view } = await searchParams;
+
+  const today = utcDayKey(new Date());
+  // An unparseable month is the current one rather than an error: unlike a
+  // filter, there is no ambiguity about what was meant and nothing is hidden
+  // by showing this month instead.
+  const month = isMonth(m) ? m : monthOf(today);
+  const weeks = monthGrid(month);
+  const range = monthRange(month);
 
   try {
     viewer = await getCurrentUser();
     if (viewer) {
       const workspace = await requireWorkspace();
+      const saved = await loadView({ viewerId: viewer.id, type: "calendar", viewId: view });
+      const field = dateFieldOf(saved?.definition.settings);
+
       [data, options] = await Promise.all([
         loadView({
           viewerId: viewer.id,
-          type: "board",
+          type: "calendar",
           viewId: view,
           filterParam: f,
           override: {
-            grouping: { field: "status", dir: "asc" },
-            // A column is a flat sequence, so subtasks get their own cards.
+            grouping: { field: "none", dir: "asc" },
             filters: { showSubtasks: 1 } as never,
           },
+          // Appended after the URL has had its say, so a link cannot widen the
+          // month it claims to be showing.
+          required: [{ field, op: "between", value: [range.from, range.to] }],
+          limit: 500,
         }),
         loadFilterOptions(workspace.id),
       ]);
@@ -61,10 +94,10 @@ export default async function BoardPage({
 
     return (
       <main className="empty">
-        <h2>{badLink ? "That filter link is not valid" : error ? "Could not reach the database" : "No demo workspace yet"}</h2>
+        <h2>{badLink ? "That link is not valid" : error ? "Could not reach the database" : "No demo workspace yet"}</h2>
         {badLink ? (
           <p>
-            <a href="/board">Clear the filter</a> and start again.
+            <a href="/calendar">Clear it</a> and start again.
           </p>
         ) : (
           <p>
@@ -78,35 +111,28 @@ export default async function BoardPage({
   }
 
   const users = await listSwitchableUsers();
+  const field = dateFieldOf(data.definition.settings);
+  const column = field === "dueAt" ? "due_at" : "start_at";
+  const flag = field === "dueAt" ? "due_has_time" : "start_has_time";
 
-  const byStatus = new Map<string, typeof data.rows>();
-  for (const row of data.rows) {
-    const key = row.group_key ?? "none";
-    byStatus.set(key, [...(byStatus.get(key) ?? []), row]);
-  }
+  // Placed on the server, so the square a task sits in is decided once and does
+  // not move between the server's render and the browser's (D-067).
+  const tasks: CalendarTask[] = data.rows.flatMap((row) => {
+    const value = row[column] as string | null;
+    if (!value) return [];
 
-  const columns: BoardColumn[] = data.statuses
-    .filter((status) => status.group !== "closed")
-    .map((status) => ({
-      statusId: status.id,
-      name: status.name,
-      group: status.group,
-      color: status.color,
-      // From compileGroupCounts, not from the cards on screen: a column that is
-      // paginated or collapsed still has to show its real size.
-      count: data.counts.get(status.id) ?? 0,
-      cards: (byStatus.get(status.id) ?? []).map((row) => ({
+    return [
+      {
         id: row.id,
         key: row.key,
         name: row.name,
-        priority: row.priority,
-        dueAt: row.due_at,
-        dueHasTime: row.due_has_time,
+        day: dayKeyFor(value, row[flag] === true),
         statusGroup: row.status_group,
-        assignees: data.assignees.get(row.id) ?? [],
-        subtaskCount: data.subtaskCounts.get(row.id) ?? 0,
-      })),
-    }));
+        priority: row.priority,
+        overdue: field === "dueAt" && isOverdue(value, row[flag] === true),
+      },
+    ];
+  });
 
   return (
     <UndoProvider>
@@ -166,13 +192,14 @@ export default async function BoardPage({
             filters={data.definition.filters}
           />
 
-          <Board columns={columns} />
+          <Calendar month={month} weeks={weeks} tasks={tasks} dateField={field} today={today} />
 
           <div className="footer-note">
             <span className="live" />
             <span>
-              {data.rows.length} {data.rows.length === 1 ? "task" : "tasks"} · acting as {viewer.name} · same compiler as the list,
-              grouped by status
+              {tasks.length} {tasks.length === 1 ? "task" : "tasks"} with a{" "}
+              {field === "dueAt" ? "due" : "start"} date this month · acting as {viewer.name} ·
+              same compiler as the list, filtered to the weeks on screen
             </span>
           </div>
         </main>
