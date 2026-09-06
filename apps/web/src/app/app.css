@@ -1277,3 +1277,119 @@ select.filter-add option {
   color: var(--text-3);
   cursor: pointer;
 }
+
+/* ---------- saved view tabs ---------- */
+.tab-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tab-mark {
+  color: var(--accent);
+  margin-left: 3px;
+}
+
+.tab-menu {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 9px;
+  padding: 0 var(--space-1);
+  height: 100%;
+}
+
+.tab-menu:hover {
+  color: var(--accent);
+}
+
+.tab-popover {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 176px;
+  padding: var(--space-2);
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-modal);
+}
+
+.tab-popover button {
+  background: none;
+  border: none;
+  border-radius: var(--radius-control);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-meta);
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.tab-popover button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.tab-popover button.danger:hover {
+  color: var(--danger);
+}
+
+.tab-dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: var(--space-3);
+  font-size: var(--text-meta);
+  color: var(--warning);
+}
+
+.tab-dirty[data-pending] {
+  opacity: 0.6;
+}
+
+.tab-dirty button,
+.tab-reset {
+  background: none;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--text-meta);
+  height: 22px;
+  padding: 0 var(--space-2);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tab-dirty button:first-of-type {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.tab-name-input {
+  background: var(--raised);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-meta);
+  height: 22px;
+  padding: 0 var(--space-2);
+  outline: none;
+}
+
+.tab-error {
+  padding: 0 var(--space-4) var(--space-2);
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--danger);
+}

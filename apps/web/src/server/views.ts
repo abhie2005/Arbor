@@ -2,14 +2,16 @@ import "server-only";
 
 import {
   DEFAULT_VIEW_DEFINITION,
+  type FilterGroup,
   type FilterableField,
   type ViewDefinition,
   type ViewType,
   compileGroupCounts,
   compileViewQuery,
+  decodeFilters,
   filterableFields,
 } from "@arbor/core";
-import { executeCompiled, loadFieldCatalog, pool } from "@arbor/db";
+import { executeCompiled, listViews, loadFieldCatalog, pool } from "@arbor/db";
 
 /**
  * Loading a view.
@@ -49,6 +51,8 @@ export interface StatusRow {
 }
 
 export interface ViewContext {
+  /** The saved view being rendered, so the tab strip can mark it current. */
+  viewId: string | null;
   workspaceId: string;
   workspaceName: string;
   listId: string;
@@ -56,6 +60,18 @@ export interface ViewContext {
   folderName: string;
   spaceName: string;
   viewName: string;
+  /**
+   * True when the URL asks for a filter the saved view does not have.
+   *
+   * Computed here rather than in the component because only this side knows
+   * which parts of a definition a *renderer* overrides — a board always groups
+   * by status and the list always hides subtasks, and neither is an unsaved
+   * change the user made.
+   */
+  dirty: boolean;
+  /** Every view on this container the viewer can see, for the tab strip. */
+  views: { id: string; name: string; type: string; isDefault: boolean; personal: boolean }[];
+  savedDefinition: ViewDefinition;
   definition: ViewDefinition;
   rows: CompiledTaskRow[];
   /** Counts per group key, from the compiler — a collapsed column still shows one. */
@@ -94,7 +110,8 @@ async function listMeta(): Promise<MetaRow | undefined> {
 }
 
 /**
- * The saved definition for a renderer, or the default.
+ * The saved view to render: the one asked for by id, else this container's
+ * default, else the first of the right type.
  *
  * A definition arriving from the database is still untrusted input — it was
  * written by a client at some point — so it goes to the compiler, which
@@ -102,38 +119,65 @@ async function listMeta(): Promise<MetaRow | undefined> {
  * (D-018). Nothing here needs to sanitize it; nothing here is allowed to
  * interpolate it either.
  */
-async function savedDefinition(listId: string, type: ViewType): Promise<{
-  name: string;
-  definition: ViewDefinition;
-}> {
-  const result = await pool().query<{ name: string; definition: ViewDefinition }>(
-    `SELECT name, definition FROM views
+async function savedView(
+  listId: string,
+  type: ViewType,
+  viewerId: string,
+  viewId?: string,
+): Promise<{ id: string | null; name: string; definition: ViewDefinition }> {
+  const result = await pool().query<{ id: string; name: string; definition: ViewDefinition }>(
+    `SELECT id, name, definition FROM views
      WHERE parent_id = $1 AND type = $2
-     ORDER BY position LIMIT 1`,
-    [listId, type],
+       AND (owner_id IS NULL OR owner_id = $3)
+       AND ($4::uuid IS NULL OR id = $4)
+     ORDER BY is_default DESC, position
+     LIMIT 1`,
+    [listId, type, viewerId, viewId ?? null],
   );
 
   const row = result.rows[0];
   return {
+    id: row?.id ?? null,
     name: row?.name ?? type,
     definition: row?.definition ?? DEFAULT_VIEW_DEFINITION,
   };
 }
 
-export async function loadView(
-  viewerId: string,
-  type: ViewType,
+export interface LoadViewOptions {
+  viewerId: string;
+  type: ViewType;
   /** Renderer-specific overrides — a board always groups, whatever was saved. */
-  override: Partial<ViewDefinition> = {},
-): Promise<ViewContext | null> {
+  override?: Partial<ViewDefinition>;
+  /** Which saved view to open. Defaults to the container's default. */
+  viewId?: string;
+  /** The raw `?f=` parameter, layered over the saved view's own filters. */
+  filterParam?: string;
+}
+
+/**
+ * The saved view's filters are the base; the URL layers over them.
+ *
+ * Getting this backwards — decoding against the built-in defaults and passing
+ * the result down as an override — means a saved view's filters never apply at
+ * all, which is most of the point of saving one.
+ */
+export async function loadView(options: LoadViewOptions): Promise<ViewContext | null> {
+  const { viewerId, type, override = {}, viewId, filterParam } = options;
+
   const meta = await listMeta();
   if (!meta) return null;
 
   const connection = pool();
-  const saved = await savedDefinition(meta.list_id, type);
-  const definition: ViewDefinition = { ...saved.definition, ...override };
+  const [saved, tabs] = await Promise.all([
+    savedView(meta.list_id, type, viewerId, viewId),
+    listViews(meta.workspace_id, meta.list_id, viewerId, connection),
+  ]);
 
-  const options = {
+  const baseFilters: FilterGroup = { ...saved.definition.filters, ...(override.filters ?? {}) };
+  const filters = decodeFilters(filterParam, baseFilters);
+  const definition: ViewDefinition = { ...saved.definition, ...override, filters };
+
+  const compileOptions = {
     workspaceId: meta.workspace_id,
     viewerId,
     scope: { kind: "list", id: meta.list_id } as const,
@@ -143,13 +187,16 @@ export async function loadView(
     fields: await loadFieldCatalog(meta.workspace_id, connection),
   };
 
-  const rows = await executeCompiled<CompiledTaskRow>(compileViewQuery(options), connection);
+  const rows = await executeCompiled<CompiledTaskRow>(
+    compileViewQuery(compileOptions),
+    connection,
+  );
 
   const counts = new Map<string, number>();
   if (definition.grouping.field !== "none") {
     const grouped = await connection.query<{ group_key: string | null; count: number }>(
-      compileGroupCounts(options).text,
-      compileGroupCounts(options).params,
+      compileGroupCounts(compileOptions).text,
+      compileGroupCounts(compileOptions).params,
     );
     for (const row of grouped.rows) counts.set(row.group_key ?? "none", Number(row.count));
   }
@@ -176,6 +223,7 @@ export async function loadView(
   );
 
   return {
+    viewId: saved.id,
     workspaceId: meta.workspace_id,
     workspaceName: meta.workspace_name,
     listId: meta.list_id,
@@ -183,6 +231,16 @@ export async function loadView(
     folderName: meta.folder_name,
     spaceName: meta.space_name,
     viewName: saved.name,
+    dirty: saved.id !== null && !sameFilters(filters, saved.definition.filters),
+    views: tabs.map((tab) => ({
+      id: tab.id,
+      name: tab.name,
+      type: tab.type,
+      isDefault: tab.isDefault,
+      personal: tab.ownerId !== null,
+    })),
+    /** The definition as saved, for comparing against what the URL asks for. */
+    savedDefinition: saved.definition,
     definition,
     rows,
     counts,
@@ -265,4 +323,36 @@ export async function loadFilterOptions(workspaceId: string): Promise<FilterOpti
     tags: tags.rows,
     taskTypes: taskTypes.rows,
   };
+}
+
+
+/**
+ * Whether the user has changed the filter, ignoring everything they cannot
+ * change from the filter bar.
+ *
+ * Two things make this fiddlier than an equality check, and both were bugs:
+ *
+ * 1. `showSubtasks` is a renderer override — the list forces 3, the board 1 —
+ *    so comparing whole filter objects reports every view as unsaved the
+ *    moment it opens.
+ * 2. **`JSON.stringify` is not a structural comparison.** It preserves
+ *    insertion order, and a definition that has been through Postgres `jsonb`
+ *    comes back with its keys reordered. A filter saved as
+ *    `{field, op, value}` returns as `{op, field, value}`, so stringifying
+ *    both sides reported "unsaved" forever, on a view that had just been
+ *    saved successfully.
+ *
+ * Each condition is therefore reduced to a key built in a fixed order.
+ */
+function sameFilters(a: FilterGroup, b: FilterGroup): boolean {
+  const key = (f: FilterGroup) =>
+    [
+      f.op ?? "AND",
+      f.showClosed === true ? "closed" : "open",
+      ...f.conditions.map(
+        (c) => `${String(c.field)}\u0000${c.op}\u0000${JSON.stringify(c.value ?? null)}`,
+      ),
+    ].join("\u0001");
+
+  return key(a) === key(b);
 }

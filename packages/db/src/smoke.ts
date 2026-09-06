@@ -852,13 +852,19 @@ async function main() {
   );
 
   await deleteView(personal.id, config);
-  const remaining = await listViews(ws.id!, list.id!, viewer.id!, pool);
-  for (const view of remaining.slice(1)) await deleteView(view.id, config);
 
+  // The "last view" rule is exercised on the Backlog list, which has no seeded
+  // views. Proving it against Sprint 24 would mean deleting the views the demo
+  // workspace ships with — a smoke run must leave the seed as it found it.
+  const onlyView = await createView(
+    { workspaceId: ws.id!, parentId: backlog.id!, type: "list", name: `Only ${Date.now()}` },
+    config,
+  );
   report(
     "the last view on a container cannot be deleted",
-    await expectRejection(() => deleteView(remaining[0]!.id, config)),
+    await expectRejection(() => deleteView(onlyView.id, config)),
   );
+  await pool.query(`DELETE FROM views WHERE id = $1`, [onlyView.id]);
 
   report(
     "an operation without an actor is refused",

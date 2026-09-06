@@ -1,5 +1,3 @@
-import { DEFAULT_VIEW_DEFINITION, decodeFilters } from "@arbor/core";
-
 import { FilterBar } from "@/components/filter-bar";
 import { NewTaskRow } from "@/components/new-task";
 import { TaskRow, type TaskRowData } from "@/components/task-row";
@@ -27,28 +25,34 @@ export const dynamic = "force-dynamic";
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ f?: string }>;
+  searchParams: Promise<{ f?: string; view?: string }>;
 }) {
   let viewer: Awaited<ReturnType<typeof getCurrentUser>> = null;
   let data: Awaited<ReturnType<typeof loadView>> = null;
   let options: Awaited<ReturnType<typeof loadFilterOptions>> | null = null;
   let error: string | null = null;
 
-  const { f } = await searchParams;
+  const { f, view } = await searchParams;
 
   try {
     viewer = await getCurrentUser();
     if (viewer) {
-      // A filter that will not compile is reported, never silently dropped:
-      // rendering an unfiltered list that looks filtered is the same failure
+      // The saved view's filters are the base; `?f=` layers over them inside
+      // loadView. A filter that will not parse is reported, never silently
+      // dropped — an unfiltered list that looks filtered is the same failure
       // shape as D-042.
-      const filters = decodeFilters(f, {
-        ...DEFAULT_VIEW_DEFINITION.filters,
-        showSubtasks: 3,
-      });
       const workspace = await requireWorkspace();
       [data, options] = await Promise.all([
-        loadView(viewer.id, "list", { filters }),
+        loadView({
+          viewerId: viewer.id,
+          type: "list",
+          viewId: view,
+          filterParam: f,
+          // Subtasks are hidden here rather than nested: nesting is a rendering
+          // feature this screen does not have, and promoting them to top-level
+          // rows would misrepresent the list.
+          override: { filters: { showSubtasks: 3 } as never },
+        }),
         loadFilterOptions(workspace.id),
       ]);
     }
@@ -136,7 +140,13 @@ export default async function Page({
             </div>
           </header>
 
-          <ViewTabs />
+          <ViewTabs
+            views={data.views}
+            currentViewId={data.viewId}
+            definition={data.definition}
+            savedDefinition={data.savedDefinition}
+            dirty={data.dirty}
+          />
 
           <FilterBar
             fields={options.fields}

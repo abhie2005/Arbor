@@ -85,6 +85,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-055](#d-055) | Filters live in the URL | Frontend |
 | [D-056](#d-056) | A view is validated by compiling it before it is saved | Data |
 | [D-057](#d-057) | "Exactly one default" is a database constraint, not a service rule | Data |
+| [D-058](#d-058) | The saved view is the base; the URL layers over it | Frontend |
+| [D-059](#d-059) | Never compare structures with `JSON.stringify` | Frontend |
 
 ---
 
@@ -1537,3 +1539,62 @@ are a starting point, and reading them before applying is the job.
 
 *In one sentence:* invariants that every future writer must respect belong in
 the schema, because the schema is the only writer that cannot forget.
+
+### D-058
+**The saved view is the base; the URL layers over it** · 2026-09-05 · active
+
+`loadView` loads the saved view first, then applies `?f=` on top of *its*
+filters. The tab strip shows "Unsaved filter" when the two differ, with Save,
+Save as new, and Reset.
+
+**The bug this replaced.** The page decoded `?f=` against the built-in default
+filters and passed the result to `loadView` as an override — so a saved view's
+own filters were overwritten on every render and never applied at all. A view
+saved with "priority is urgent" opened showing everything. Saving worked; only
+opening was broken, which is the harder half to notice.
+
+**Why layering is the right model.** A saved view is a starting point, not a
+cage: filtering it further is the most common thing anyone does with one, and
+that exploration should be shareable (D-055) without being a commitment. Making
+the URL win *over the saved filters* — rather than instead of them — is what
+makes "Reset" meaningful and "Save" a deliberate act.
+
+**`dirty` is computed on the server**, because only that side knows which parts
+of a definition the renderer overrides. The list forces `showSubtasks: 3` and
+the board forces `1`; neither is a change the user made, and comparing whole
+definitions on the client reported every view as unsaved the moment it opened.
+
+*In one sentence:* a saved view supplies the filters and the URL refines them,
+so exploring a shared view is free and changing it for everyone is a button.
+
+### D-059
+**Never compare structures with `JSON.stringify`** · 2026-09-05 · active
+
+Filter comparison reduces each condition to a key assembled in a fixed order,
+rather than stringifying the objects.
+
+**How this bit.** `sameFilters` compared `JSON.stringify(a)` to
+`JSON.stringify(b)`. Saving a view worked, the row was correct in Postgres, and
+the "Unsaved filter" banner never went away — on a view that had just been
+saved.
+
+`JSON.stringify` serializes keys in insertion order. A condition built by the
+decoder is `{field, op, value}`. The same condition after a round trip through
+a `jsonb` column comes back `{op, field, value}` — Postgres does not store
+`jsonb` object keys in input order and is documented not to. Two equal objects,
+two different strings, forever.
+
+**The general rule.** `JSON.stringify` answers "are these the same *text*",
+which is only the same question as "are these the same *value*" when nothing
+has crossed a boundary that may reorder keys. A database, a cache, and a
+structured-clone all may. Compare structurally, or build a canonical key with
+an order you control.
+
+**Trade-off.** The key builder has to be updated when `FilterGroup` grows a
+field. That is a real maintenance cost and it is the correct one: an
+order-sensitive shortcut fails silently and intermittently, which is
+considerably more expensive than remembering to add a line.
+
+*In one sentence:* two identical filters compared unequal because Postgres
+returns `jsonb` keys in its own order, so equality is now structural rather
+than textual.

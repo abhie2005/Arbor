@@ -1,5 +1,3 @@
-import { DEFAULT_VIEW_DEFINITION, decodeFilters } from "@arbor/core";
-
 import { Board, type BoardColumn } from "@/components/board";
 import { FilterBar } from "@/components/filter-bar";
 import { UndoButton, UndoProvider } from "@/components/undo";
@@ -26,27 +24,30 @@ export const dynamic = "force-dynamic";
 export default async function BoardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ f?: string }>;
+  searchParams: Promise<{ f?: string; view?: string }>;
 }) {
   let viewer: Awaited<ReturnType<typeof getCurrentUser>> = null;
   let data: Awaited<ReturnType<typeof loadView>> = null;
   let options: Awaited<ReturnType<typeof loadFilterOptions>> | null = null;
   let error: string | null = null;
 
-  const { f } = await searchParams;
+  const { f, view } = await searchParams;
 
   try {
     viewer = await getCurrentUser();
     if (viewer) {
-      const filters = decodeFilters(f, {
-        ...DEFAULT_VIEW_DEFINITION.filters,
-        showSubtasks: 1,
-      });
       const workspace = await requireWorkspace();
       [data, options] = await Promise.all([
-        loadView(viewer.id, "board", {
-          grouping: { field: "status", dir: "asc" },
-          filters,
+        loadView({
+          viewerId: viewer.id,
+          type: "board",
+          viewId: view,
+          filterParam: f,
+          override: {
+            grouping: { field: "status", dir: "asc" },
+            // A column is a flat sequence, so subtasks get their own cards.
+            filters: { showSubtasks: 1 } as never,
+          },
         }),
         loadFilterOptions(workspace.id),
       ]);
@@ -148,7 +149,13 @@ export default async function BoardPage({
             </div>
           </header>
 
-          <ViewTabs />
+          <ViewTabs
+            views={data.views}
+            currentViewId={data.viewId}
+            definition={data.definition}
+            savedDefinition={data.savedDefinition}
+            dirty={data.dirty}
+          />
 
           <FilterBar
             fields={options.fields}
