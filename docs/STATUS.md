@@ -77,6 +77,7 @@ page with a `Next-Action` header, which is the request a button click makes.
 | **Mutations** | Invertible operations, one transaction per batch, activity row per change. **Undo works.** |
 | **List view** | Renders through the compiler. Status cycling, priority cycling, inline rename, archive, inline create, undo. |
 | **Board view** | Same compiler, `grouping.field = status`. Drag between and within columns, one row written per drag, one undo entry per drag. |
+| **Filter bar** | On both renderers. Menus are built from the same declaration the compiler validates against, so an invalid filter cannot be expressed. Filter state lives in the URL and is shareable; a malformed link errors instead of showing everything. |
 | **Field types** | All 20 declared in one place: storage column, legal operators, config parser, value parser. |
 | **Status sets** | CRUD, inheritance resolution, four templates, reordering, and task migration on delete. |
 | **Custom fields** | CRUD, per-type config, placement down the tree, task-type scoping, archive, and type change with a real value migration. |
@@ -84,7 +85,7 @@ page with a `Next-Action` header, which is the request a button click makes.
 | **Settings UI** | `/settings` — statuses, custom fields, task types. |
 | **Identity** | Dev-only user switcher behind `getCurrentUser()`. Not real auth. |
 
-**Verified:** 153 unit tests, 45 live-Postgres checks, 17 server-action checks,
+**Verified:** 174 unit tests, 45 live-Postgres checks, 17 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 **The renderer bet, measured.** Adding the board took no compiler change, no new
@@ -125,19 +126,28 @@ the server side, which is the whole argument for looking at the screen.
 
 ## Where to pick up
 
-**Next — saved views and the filter bar.**
+**Next — saved views.** The filter bar landed on 2026-09-05, so the piece
+immediately in front is persisting what it builds.
 
-1. **Saved view CRUD** — the `views` table already drives both renderers, and
-   `loadView` reads the definition from it. What is missing is writing one:
-   create, rename, duplicate, set default.
-2. **The filter bar** — build a `FilterGroup` from real fields, with operators
-   narrowed by type. `FIELD_TYPE_META` knows which operators each type allows
-   and `parseFilterValue` rejects the rest, so the UI's job is to not offer them.
-3. **Table and Calendar** — both are renderers over the same compiled view. The
-   board took no compiler change; these should not either.
+1. **Saved view CRUD.** The `views` table already drives both renderers and
+   `loadView` reads the definition from it — the gap is writing one. Create,
+   rename, duplicate, set default, plus a "Save this filter" button that turns
+   the current URL into a named view. `encodeFilters`/`decodeFilters` already
+   do the serialization, so this is service + UI, not new machinery.
+2. **Table and Calendar.** Renderers over the same compiled view. The board
+   needed no compiler change and no new SQL; if either of these does, that is
+   the compiler missing something rather than the renderer being special.
 
-**Then:** real auth and permissions (Phase 5 — see the roadmap in the README,
-which now puts access control ahead of collaboration).
+**Then:** real auth and permissions (Phase 5 — the README roadmap now puts
+access control ahead of collaboration, because every collaborative feature fans
+out to whoever can see a thing and building that on a dev stub means writing it
+twice).
+
+**One loose end worth knowing about.** The filter bar offers `in` and `nin`
+("is any of" / "is none of") in its operator menu, but the value control is
+still single-select — picking several values is not possible from the UI yet,
+though the compiler, the URL codec, and `parseFilterValue` all handle arrays.
+That is a value-control feature, not a plumbing one.
 
 ---
 
@@ -169,7 +179,7 @@ which now puts access control ahead of collaboration).
 
 | File | Why |
 |---|---|
-| `DECISIONS.md` | 53 entries. Every non-obvious choice, the alternatives rejected, and the trade-off accepted. Written for explaining the project out loud. D-049 is the most interesting one to talk through. |
+| `DECISIONS.md` | 55 entries. Every non-obvious choice, the alternatives rejected, and the trade-off accepted. Written for explaining the project out loud. D-049 is the most interesting one to talk through. |
 | `docs/decisions/` | Five ADRs — the structural choices most expensive to reverse. |
 | `docs/design-plan.html` | Interface plan: palette, type, density, screens, keyboard map, AWS topology. Open in a browser. |
 | `docs/work-os-research.html` | The architecture teardown the whole project is built from. |
@@ -186,6 +196,8 @@ which now puts access control ahead of collaboration).
 - **Hiding an inherited field.** Fields accumulate down the tree and cannot be
   suppressed lower (D-046). If a real case appears, it should be an explicit
   per-container suppression rather than a change to the inheritance rule.
+- **Multi-select filter values.** `in`/`nin` are offered but the value control
+  picks one value. Everything beneath it already handles arrays.
 - **Two position columns.** `tasks.position` and `task_lists.position` both
   exist; only the first is read for ordering, and the board writes it. They
   diverge the moment a task can sit at a different place in two lists, which is
