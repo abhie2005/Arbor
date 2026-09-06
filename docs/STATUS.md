@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-09-02. Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-09-05. Repo: https://github.com/abhie2005/Arbor (`main`).
 
 This file exists so a new session, or a future you, can pick the project up
 without re-deriving anything. Update it whenever you stop mid-stream.
@@ -76,6 +76,7 @@ page with a `Next-Action` header, which is the request a button click makes.
 | **Ordering** | Fractional indices — one row written per drag. |
 | **Mutations** | Invertible operations, one transaction per batch, activity row per change. **Undo works.** |
 | **List view** | Renders through the compiler. Status cycling, priority cycling, inline rename, archive, inline create, undo. |
+| **Board view** | Same compiler, `grouping.field = status`. Drag between and within columns, one row written per drag, one undo entry per drag. |
 | **Field types** | All 20 declared in one place: storage column, legal operators, config parser, value parser. |
 | **Status sets** | CRUD, inheritance resolution, four templates, reordering, and task migration on delete. |
 | **Custom fields** | CRUD, per-type config, placement down the tree, task-type scoping, archive, and type change with a real value migration. |
@@ -83,8 +84,16 @@ page with a `Next-Action` header, which is the request a button click makes.
 | **Settings UI** | `/settings` — statuses, custom fields, task types. |
 | **Identity** | Dev-only user switcher behind `getCurrentUser()`. Not real auth. |
 
-**Verified:** 149 unit tests, 45 live-Postgres checks, 13 server-action checks,
+**Verified:** 149 unit tests, 45 live-Postgres checks, 17 server-action checks,
 four packages typechecking clean.
+
+**The renderer bet, measured.** Adding the board took no compiler change, no new
+SQL, and one new server action (`moveTask`, because dragging is a mutation the
+list never needed). Every renderer now reads through `loadView`, and the list
+page's rendered output is byte-for-byte identical before and after being moved
+onto it. Calendar and Table should be the same shape of work; if either one
+needs its own query, that is the signal the compiler is missing something
+rather than the renderer being special.
 
 **Not verified:** nothing in a real browser. The Claude-in-Chrome extension has
 failed to connect across three sessions, so no click has been observed. The
@@ -111,23 +120,21 @@ is the same class of gap that hid the undo bug.
 
 ## Where to pick up
 
-**Immediate:** click through `/settings` in a real browser. Everything beneath
-the screen is verified; the handlers are not. If the extension still refuses to
-connect, that is worth solving once rather than working around a fourth time —
-it is the reason a two-day bug took two wrong fixes.
+**Immediate:** drag a card on `/board` and click through `/settings` in a real
+browser. The server half of both is verified — every action is exercised by
+`check:actions` — but no click or drag has ever been observed. Native HTML5
+drag in particular has behaviour no HTTP check can see.
 
-**Next — saved views and the filter bar.** The configuration engines are done,
-which was the blocker: a filter bar has to offer the right operators per field
-type, and that now comes from `FIELD_TYPE_META` rather than being guessed.
+**Next — saved views and the filter bar.**
 
-1. **Saved view CRUD** — the `views` table and the definition type already
-   exist; this is service + UI.
+1. **Saved view CRUD** — the `views` table already drives both renderers, and
+   `loadView` reads the definition from it. What is missing is writing one:
+   create, rename, duplicate, set default.
 2. **The filter bar** — build a `FilterGroup` from real fields, with operators
-   narrowed by type. `parseFilterValue` already rejects the invalid ones, so the
-   UI's job is to not offer them.
-3. **Board as a renderer** — grouping by status is already what the compiler
-   does. This should be days, not weeks; if it is not, the compiler abstraction
-   is not paying off and that is worth knowing.
+   narrowed by type. `FIELD_TYPE_META` knows which operators each type allows
+   and `parseFilterValue` rejects the rest, so the UI's job is to not offer them.
+3. **Table and Calendar** — both are renderers over the same compiled view. The
+   board took no compiler change; these should not either.
 
 **Then:** real auth and permissions (Phase 5).
 
@@ -143,8 +150,9 @@ type, and that now comes from `FIELD_TYPE_META` rather than being guessed.
 - **pnpm and corepack are absent**, which is why this is an npm-workspaces repo
   (D-004). The root `packageManager` field pins npm — Turborepo 2.10 refuses to
   resolve the workspace without it.
-- **The Claude-in-Chrome extension does not connect.** Three sessions, same
-  result. `check:actions` exists because of it.
+- **The Claude-in-Chrome extension does not connect.** Four sessions, same
+  result. `check:actions` exists because of it — it warms the routes it needs
+  and then sends the request a click sends.
 - **21st.dev MCP** is configured at local scope in `~/.claude.json` (not in the
   repo — the key must never be committed). **Its tools require a Claude Code
   restart to load.** Not yet used; `packages/ui` has the tokens and an empty
@@ -156,7 +164,7 @@ type, and that now comes from `FIELD_TYPE_META` rather than being guessed.
 
 | File | Why |
 |---|---|
-| `DECISIONS.md` | 49 entries. Every non-obvious choice, the alternatives rejected, and the trade-off accepted. Written for explaining the project out loud. D-049 is the most interesting one to talk through. |
+| `DECISIONS.md` | 51 entries. Every non-obvious choice, the alternatives rejected, and the trade-off accepted. Written for explaining the project out loud. D-049 is the most interesting one to talk through. |
 | `docs/decisions/` | Five ADRs — the structural choices most expensive to reverse. |
 | `docs/design-plan.html` | Interface plan: palette, type, density, screens, keyboard map, AWS topology. Open in a browser. |
 | `docs/work-os-research.html` | The architecture teardown the whole project is built from. |
@@ -173,3 +181,11 @@ type, and that now comes from `FIELD_TYPE_META` rather than being guessed.
 - **Hiding an inherited field.** Fields accumulate down the tree and cannot be
   suppressed lower (D-046). If a real case appears, it should be an explicit
   per-container suppression rather than a change to the inheritance rule.
+- **Two position columns.** `tasks.position` and `task_lists.position` both
+  exist; only the first is read for ordering, and the board writes it. They
+  diverge the moment a task can sit at a different place in two lists, which is
+  what `task_lists` exists for (D-010). Decide which is authoritative before
+  building multi-list ordering, not after.
+- **Keyboard and touch on the board.** Native drag has neither (D-051). Moving
+  between statuses has a keyboard path already; reordering within a column does
+  not.
