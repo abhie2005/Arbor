@@ -1,8 +1,7 @@
+import { AppShell, FooterNote, LoadFailure, chromeFrom } from "@/components/app-shell";
 import { FilterBar } from "@/components/filter-bar";
 import { NewTaskRow } from "@/components/new-task";
 import { TaskRow, type TaskRowData } from "@/components/task-row";
-import { UndoButton, UndoProvider } from "@/components/undo";
-import { UserSwitcher } from "@/components/user-switcher";
 import { ViewTabs } from "@/components/view-tabs";
 import { getCurrentUser, listSwitchableUsers } from "@/server/auth";
 import { loadFilterOptions, loadView } from "@/server/views";
@@ -70,28 +69,11 @@ export default async function Page({
     // saying so is the difference between "fix your link" and "start Docker".
     const badLink = error !== null && f !== undefined;
 
-    return (
-      <main className="empty">
-        <h2>{badLink ? "That filter link is not valid" : error ? "Could not reach the database" : "No demo workspace yet"}</h2>
-        {badLink ? (
-          <p>
-            <a href="/">Clear the filter</a> and start again.
-          </p>
-        ) : (
-          <>
-            <p>Start the local services and seed the demo workspace:</p>
-            <p>
-              <code>npm run docker:up</code> <code>npm run db:migrate</code>{" "}
-              <code>npm run db:seed</code>
-            </p>
-          </>
-        )}
-        {error ? <p style={{ color: "var(--text-3)" }}>{error}</p> : null}
-      </main>
-    );
+    return <LoadFailure badLink={badLink} clearTo="/" error={error} />;
   }
 
   const users = await listSwitchableUsers();
+  const chrome = chromeFrom(data, viewer, users);
 
   // Group by the compiler's own group_key (the status id), not by status group,
   // or "In Progress" and "In Review" collapse into one section.
@@ -104,111 +86,64 @@ export default async function Page({
   const visibleStatuses = data.statuses.filter((s) => s.group !== "closed");
 
   return (
-    <UndoProvider>
-      <div className="shell">
-        <aside className="sidebar">
-          <div className="ws">
-            <div className="mark">{data.workspaceName[0]}</div>
-            <div className="ws-name">{data.workspaceName}</div>
-          </div>
+    <AppShell chrome={chrome}>
+      <ViewTabs
+        views={data.views}
+        currentViewId={data.viewId}
+        definition={data.definition}
+        savedDefinition={data.savedDefinition}
+        dirty={data.dirty}
+      />
 
-          <nav className="nav-group">
-            <a className="nav" href="#"><span className="ic">⌂</span>Home</a>
-            <a className="nav" href="#"><span className="ic">✦</span>My Work</a>
-            <a className="nav" href="#"><span className="ic">⧉</span>Inbox<span className="count">3</span></a>
-          </nav>
+      <FilterBar
+        fields={options.fields}
+        values={options}
+        filters={data.definition.filters}
+      />
 
-          <nav className="nav-group">
-            <div className="nav-label">Spaces</div>
-            <a className="nav" href="#"><span className="ic">▾</span>{data.spaceName}</a>
-            <a className="nav depth-1" href="#" aria-current="page">
-              <span className="ic">▤</span>
-              {data.listName}
-              {/* The list's tasks, not the page's rows — a calendar showing one
-                  month must not report the list as empty. */}
-              <span className="count">{data.listTaskCount}</span>
-            </a>
-            <a className="nav depth-1" href="#"><span className="ic">▤</span>Backlog</a>
-          </nav>
-        </aside>
+      {visibleStatuses.map((status) => {
+        const rows = byStatus.get(status.id) ?? [];
+        const token = status.group.replace("_", "-");
 
-        <main className="main">
-          <header className="header">
-            <div className="crumb">
-              {data.spaceName}<span>›</span>{data.folderName}<span>›</span>
-              <strong>{data.listName}</strong>
+        return (
+          <section key={status.id}>
+            <div className="group">
+              {/* Colour comes from the status group, never the name — a
+                  custom "Shipping" status is still active blue. */}
+              <span className="group-name" style={{ color: `var(--status-${token})` }}>
+                {status.name}
+              </span>
+              <span className="group-count">{rows.length}</span>
             </div>
-            <div className="header-right">
-              <a className="settings-link" href="/settings/statuses" title="Workspace settings">
-                Settings
-              </a>
-              <UndoButton />
-              <UserSwitcher users={users} currentId={viewer.id} />
-            </div>
-          </header>
 
-          <ViewTabs
-            views={data.views}
-            currentViewId={data.viewId}
-            definition={data.definition}
-            savedDefinition={data.savedDefinition}
-            dirty={data.dirty}
-          />
+            {rows.map((row) => {
+              const task: TaskRowData = {
+                id: row.id,
+                key: row.key,
+                name: row.name,
+                priority: row.priority,
+                statusGroup: row.status_group,
+                dueAt: row.due_at,
+                dueHasTime: row.due_has_time,
+                assignees: data.assignees.get(row.id) ?? [],
+                subtaskCount: data.subtaskCounts.get(row.id) ?? 0,
+              };
+              return <TaskRow key={row.id} task={task} />;
+            })}
 
-          <FilterBar
-            fields={options.fields}
-            values={options}
-            filters={data.definition.filters}
-          />
+            <NewTaskRow
+              listId={data.listId}
+              statusId={status.id}
+              statusLabel={status.name}
+            />
+          </section>
+        );
+      })}
 
-          {visibleStatuses.map((status) => {
-            const rows = byStatus.get(status.id) ?? [];
-            const token = status.group.replace("_", "-");
-
-            return (
-              <section key={status.id}>
-                <div className="group">
-                  {/* Colour comes from the status group, never the name — a
-                      custom "Shipping" status is still active blue. */}
-                  <span className="group-name" style={{ color: `var(--status-${token})` }}>
-                    {status.name}
-                  </span>
-                  <span className="group-count">{rows.length}</span>
-                </div>
-
-                {rows.map((row) => {
-                  const task: TaskRowData = {
-                    id: row.id,
-                    key: row.key,
-                    name: row.name,
-                    priority: row.priority,
-                    statusGroup: row.status_group,
-                    dueAt: row.due_at,
-                    dueHasTime: row.due_has_time,
-                    assignees: data.assignees.get(row.id) ?? [],
-                    subtaskCount: data.subtaskCounts.get(row.id) ?? 0,
-                  };
-                  return <TaskRow key={row.id} task={task} />;
-                })}
-
-                <NewTaskRow
-                  listId={data.listId}
-                  statusId={status.id}
-                  statusLabel={status.name}
-                />
-              </section>
-            );
-          })}
-
-          <div className="footer-note">
-            <span className="live" />
-            <span>
-              {data.rows.length} {data.rows.length === 1 ? "task" : "tasks"} · acting as {viewer.name} · rendered through the
-              @arbor/core view compiler
-            </span>
-          </div>
-        </main>
-      </div>
-    </UndoProvider>
+      <FooterNote>
+        {data.rows.length} {data.rows.length === 1 ? "task" : "tasks"} · acting as {viewer.name} · rendered through the
+        @arbor/core view compiler
+      </FooterNote>
+    </AppShell>
   );
 }

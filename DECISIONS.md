@@ -106,6 +106,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-076](#d-076) | A session is a row, and the token is never stored | Auth |
 | [D-077](#d-077) | A renderer draws the status set the list resolves | Query |
 | [D-078](#d-078) | A timeline is a nested clause, not a new query | Query |
+| [D-079](#d-079) | The shell is a component, extracted at the sixth copy | Frontend |
 
 ---
 
@@ -2109,3 +2110,31 @@ explicitly rather than leaving to the accident that both other clauses pass.
 
 *In one sentence:* the timeline needed the compiler to learn one thing, and
 learning it is cheaper than any renderer working around it.
+
+### D-079
+**The shell is a component, extracted at the sixth copy** · 2026-09-07 · active
+
+`AppShell`, `FooterNote` and `LoadFailure` in `components/app-shell.tsx`. The
+five renderer pages each carried their own sidebar, header, breadcrumb, error
+state and footer — around sixty lines apiece.
+
+**It was flagged at three, ignored at four, and by then it had already gone
+wrong.** The four copies were not identical. The list said "That filter link is
+not valid" where the other three said "That link is not valid", and only the
+list told you to start Docker and seed — the three screens most likely to be
+opened from a shared link were the three that explained the failure worst. That
+is what duplicated chrome does: it does not stay duplicated, it diverges along
+whichever copy someone last touched.
+
+**Three components, not one.** The pieces are not always used together. A task
+detail page wants the sidebar and header but no view tabs and no filter bar; a
+failure state wants none of it. One `<AppShell>` taking a dozen props to
+express that would be the same duplication moved behind a props bag.
+
+**The breadcrumb takes an override rather than a flag.** A renderer is looking
+at a list, so the list is the leaf. A task is one level deeper, and it passes
+what it is instead of setting `isTask` and letting the shell guess.
+
+*In one sentence:* extracted the moment a sixth page needed it, and the four
+copies had already drifted apart in exactly the way that argues for extracting
+at three.

@@ -1,7 +1,6 @@
+import { AppShell, FooterNote, LoadFailure, chromeFrom } from "@/components/app-shell";
 import { Board, type BoardColumn } from "@/components/board";
 import { FilterBar } from "@/components/filter-bar";
-import { UndoButton, UndoProvider } from "@/components/undo";
-import { UserSwitcher } from "@/components/user-switcher";
 import { ViewTabs } from "@/components/view-tabs";
 import { getCurrentUser, listSwitchableUsers } from "@/server/auth";
 import { loadFilterOptions, loadView } from "@/server/views";
@@ -64,25 +63,11 @@ export default async function BoardPage({
   if (error || !viewer || !data || !options) {
     const badLink = error !== null && f !== undefined;
 
-    return (
-      <main className="empty">
-        <h2>{badLink ? "That filter link is not valid" : error ? "Could not reach the database" : "No demo workspace yet"}</h2>
-        {badLink ? (
-          <p>
-            <a href="/board">Clear the filter</a> and start again.
-          </p>
-        ) : (
-          <p>
-            <code>npm run docker:up</code> <code>npm run db:migrate</code>{" "}
-            <code>npm run db:seed</code>
-          </p>
-        )}
-        {error ? <p style={{ color: "var(--text-3)" }}>{error}</p> : null}
-      </main>
-    );
+    return <LoadFailure badLink={badLink} clearTo="/board" error={error} />;
   }
 
   const users = await listSwitchableUsers();
+  const chrome = chromeFrom(data, viewer, users);
 
   const byStatus = new Map<string, typeof data.rows>();
   for (const row of data.rows) {
@@ -114,74 +99,27 @@ export default async function BoardPage({
     }));
 
   return (
-    <UndoProvider>
-      <div className="shell">
-        <aside className="sidebar">
-          <div className="ws">
-            <div className="mark">{data.workspaceName[0]}</div>
-            <div className="ws-name">{data.workspaceName}</div>
-          </div>
+    <AppShell chrome={chrome}>
+      <ViewTabs
+        views={data.views}
+        currentViewId={data.viewId}
+        definition={data.definition}
+        savedDefinition={data.savedDefinition}
+        dirty={data.dirty}
+      />
 
-          <nav className="nav-group">
-            <a className="nav" href="#"><span className="ic">⌂</span>Home</a>
-            <a className="nav" href="#"><span className="ic">✦</span>My Work</a>
-            <a className="nav" href="#"><span className="ic">⧉</span>Inbox<span className="count">3</span></a>
-          </nav>
+      <FilterBar
+        fields={options.fields}
+        values={options}
+        filters={data.definition.filters}
+      />
 
-          <nav className="nav-group">
-            <div className="nav-label">Spaces</div>
-            <a className="nav" href="#"><span className="ic">▾</span>{data.spaceName}</a>
-            <a className="nav depth-1" href="#" aria-current="page">
-              <span className="ic">▤</span>
-              {data.listName}
-              {/* The list's tasks, not the page's rows — a calendar showing one
-                  month must not report the list as empty. */}
-              <span className="count">{data.listTaskCount}</span>
-            </a>
-            <a className="nav depth-1" href="#"><span className="ic">▤</span>Backlog</a>
-          </nav>
-        </aside>
+      <Board columns={columns} />
 
-        <main className="main">
-          <header className="header">
-            <div className="crumb">
-              {data.spaceName}<span>›</span>{data.folderName}<span>›</span>
-              <strong>{data.listName}</strong>
-            </div>
-            <div className="header-right">
-              <a className="settings-link" href="/settings/statuses" title="Workspace settings">
-                Settings
-              </a>
-              <UndoButton />
-              <UserSwitcher users={users} currentId={viewer.id} />
-            </div>
-          </header>
-
-          <ViewTabs
-            views={data.views}
-            currentViewId={data.viewId}
-            definition={data.definition}
-            savedDefinition={data.savedDefinition}
-            dirty={data.dirty}
-          />
-
-          <FilterBar
-            fields={options.fields}
-            values={options}
-            filters={data.definition.filters}
-          />
-
-          <Board columns={columns} />
-
-          <div className="footer-note">
-            <span className="live" />
-            <span>
-              {data.rows.length} {data.rows.length === 1 ? "task" : "tasks"} · acting as {viewer.name} · same compiler as the list,
-              grouped by status
-            </span>
-          </div>
-        </main>
-      </div>
-    </UndoProvider>
+      <FooterNote>
+        {data.rows.length} {data.rows.length === 1 ? "task" : "tasks"} · acting as {viewer.name} · same compiler as the list,
+        grouped by status
+      </FooterNote>
+    </AppShell>
   );
 }

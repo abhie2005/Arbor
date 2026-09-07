@@ -1,3 +1,4 @@
+import { AppShell, FooterNote, LoadFailure, chromeFrom } from "@/components/app-shell";
 import {
   daysOfMonth,
   dayKeyFor,
@@ -11,8 +12,6 @@ import { redirect } from "next/navigation";
 
 import { FilterBar } from "@/components/filter-bar";
 import { Gantt, type GanttBar } from "@/components/gantt";
-import { UndoButton, UndoProvider } from "@/components/undo";
-import { UserSwitcher } from "@/components/user-switcher";
 import { ViewTabs } from "@/components/view-tabs";
 import { getCurrentUser, listSwitchableUsers } from "@/server/auth";
 import { loadFilterOptions, loadView } from "@/server/views";
@@ -110,25 +109,11 @@ export default async function GanttPage({
   if (error || !data || !options) {
     const badLink = error !== null && f !== undefined;
 
-    return (
-      <main className="empty">
-        <h2>{badLink ? "That link is not valid" : error ? "Could not reach the database" : "No demo workspace yet"}</h2>
-        {badLink ? (
-          <p>
-            <a href="/gantt">Clear it</a> and start again.
-          </p>
-        ) : (
-          <p>
-            <code>npm run docker:up</code> <code>npm run db:migrate</code>{" "}
-            <code>npm run db:seed</code>
-          </p>
-        )}
-        {error ? <p style={{ color: "var(--text-3)" }}>{error}</p> : null}
-      </main>
-    );
+    return <LoadFailure badLink={badLink} clearTo="/gantt" error={error} />;
   }
 
   const users = await listSwitchableUsers();
+  const chrome = chromeFrom(data, viewer, users);
 
   const bars: GanttBar[] = data.rows.map((row) => {
     const start = row.start_at as string | null;
@@ -146,68 +131,23 @@ export default async function GanttPage({
   });
 
   return (
-    <UndoProvider>
-      <div className="shell">
-        <aside className="sidebar">
-          <div className="ws">
-            <div className="mark">{data.workspaceName[0]}</div>
-            <div className="ws-name">{data.workspaceName}</div>
-          </div>
+    <AppShell chrome={chrome}>
+      <ViewTabs
+        views={data.views}
+        currentViewId={data.viewId}
+        definition={data.definition}
+        savedDefinition={data.savedDefinition}
+        dirty={data.dirty}
+      />
 
-          <nav className="nav-group">
-            <a className="nav" href="#"><span className="ic">&#8962;</span>Home</a>
-            <a className="nav" href="#"><span className="ic">&#10022;</span>My Work</a>
-            <a className="nav" href="#"><span className="ic">&#9033;</span>Inbox<span className="count">3</span></a>
-          </nav>
+      <FilterBar fields={options.fields} values={options} filters={data.definition.filters} />
 
-          <nav className="nav-group">
-            <div className="nav-label">Spaces</div>
-            <a className="nav" href="#"><span className="ic">&#9662;</span>{data.spaceName}</a>
-            <a className="nav depth-1" href="#" aria-current="page">
-              <span className="ic">&#9636;</span>
-              {data.listName}
-              <span className="count">{data.listTaskCount}</span>
-            </a>
-            <a className="nav depth-1" href="#"><span className="ic">&#9636;</span>Backlog</a>
-          </nav>
-        </aside>
+      <Gantt month={month} days={days} bars={bars} today={today} />
 
-        <main className="main">
-          <header className="header">
-            <div className="crumb">
-              {data.spaceName}<span>&#8250;</span>{data.folderName}<span>&#8250;</span>
-              <strong>{data.listName}</strong>
-            </div>
-            <div className="header-right">
-              <a className="settings-link" href="/settings/statuses" title="Workspace settings">
-                Settings
-              </a>
-              <UndoButton />
-              <UserSwitcher users={users} currentId={viewer.id} />
-            </div>
-          </header>
-
-          <ViewTabs
-            views={data.views}
-            currentViewId={data.viewId}
-            definition={data.definition}
-            savedDefinition={data.savedDefinition}
-            dirty={data.dirty}
-          />
-
-          <FilterBar fields={options.fields} values={options} filters={data.definition.filters} />
-
-          <Gantt month={month} days={days} bars={bars} today={today} />
-
-          <div className="footer-note">
-            <span className="live" />
-            <span>
-              {bars.length} {bars.length === 1 ? "task" : "tasks"} overlapping this month · acting as{" "}
-              {viewer.name} · same compiler as the list, scoped with a nested clause
-            </span>
-          </div>
-        </main>
-      </div>
-    </UndoProvider>
+      <FooterNote>
+        {bars.length} {bars.length === 1 ? "task" : "tasks"} overlapping this month · acting as{" "}
+        {viewer.name} · same compiler as the list, scoped with a nested clause
+      </FooterNote>
+    </AppShell>
   );
 }

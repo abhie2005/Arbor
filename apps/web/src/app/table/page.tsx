@@ -1,8 +1,7 @@
+import { AppShell, FooterNote, LoadFailure, chromeFrom } from "@/components/app-shell";
 import { ColumnMenu } from "@/components/column-menu";
 import { FilterBar } from "@/components/filter-bar";
 import { TaskTable, type TableRowData } from "@/components/task-table";
-import { UndoButton, UndoProvider } from "@/components/undo";
-import { UserSwitcher } from "@/components/user-switcher";
 import { ViewTabs } from "@/components/view-tabs";
 import { getCurrentUser, listSwitchableUsers } from "@/server/auth";
 import { cellsFor } from "@/server/cells";
@@ -73,25 +72,11 @@ export default async function TablePage({
     // wrong sends them to fix the wrong thing.
     const badLink = error !== null && (f !== undefined || s !== undefined);
 
-    return (
-      <main className="empty">
-        <h2>{badLink ? "That link is not valid" : error ? "Could not reach the database" : "No demo workspace yet"}</h2>
-        {badLink ? (
-          <p>
-            <a href="/table">Clear it</a> and start again.
-          </p>
-        ) : (
-          <p>
-            <code>npm run docker:up</code> <code>npm run db:migrate</code>{" "}
-            <code>npm run db:seed</code>
-          </p>
-        )}
-        {error ? <p style={{ color: "var(--text-3)" }}>{error}</p> : null}
-      </main>
-    );
+    return <LoadFailure badLink={badLink} clearTo="/table" error={error} />;
   }
 
   const users = await listSwitchableUsers();
+  const chrome = chromeFrom(data, viewer, users);
   const context = { values: data.values, statuses: data.statuses, assignees: data.assignees };
 
   const rows: TableRowData[] = data.rows.map((row) => ({
@@ -105,91 +90,44 @@ export default async function TablePage({
   }));
 
   return (
-    <UndoProvider>
-      <div className="shell">
-        <aside className="sidebar">
-          <div className="ws">
-            <div className="mark">{data.workspaceName[0]}</div>
-            <div className="ws-name">{data.workspaceName}</div>
-          </div>
+    <AppShell chrome={chrome}>
+      <ViewTabs
+        views={data.views}
+        currentViewId={data.viewId}
+        definition={data.definition}
+        savedDefinition={data.savedDefinition}
+        dirty={data.dirty}
+      />
 
-          <nav className="nav-group">
-            <a className="nav" href="#"><span className="ic">⌂</span>Home</a>
-            <a className="nav" href="#"><span className="ic">✦</span>My Work</a>
-            <a className="nav" href="#"><span className="ic">⧉</span>Inbox<span className="count">3</span></a>
-          </nav>
-
-          <nav className="nav-group">
-            <div className="nav-label">Spaces</div>
-            <a className="nav" href="#"><span className="ic">▾</span>{data.spaceName}</a>
-            <a className="nav depth-1" href="#" aria-current="page">
-              <span className="ic">▤</span>
-              {data.listName}
-              {/* The list's tasks, not the page's rows — a calendar showing one
-                  month must not report the list as empty. */}
-              <span className="count">{data.listTaskCount}</span>
-            </a>
-            <a className="nav depth-1" href="#"><span className="ic">▤</span>Backlog</a>
-          </nav>
-        </aside>
-
-        <main className="main">
-          <header className="header">
-            <div className="crumb">
-              {data.spaceName}<span>›</span>{data.folderName}<span>›</span>
-              <strong>{data.listName}</strong>
-            </div>
-            <div className="header-right">
-              <a className="settings-link" href="/settings/statuses" title="Workspace settings">
-                Settings
-              </a>
-              <UndoButton />
-              <UserSwitcher users={users} currentId={viewer.id} />
-            </div>
-          </header>
-
-          <ViewTabs
-            views={data.views}
-            currentViewId={data.viewId}
-            definition={data.definition}
-            savedDefinition={data.savedDefinition}
-            dirty={data.dirty}
-          />
-
-          <div className="table-bar">
-            <FilterBar
-              fields={options.fields}
-              values={options}
-              filters={data.definition.filters}
-            />
-            <ColumnMenu
-              viewId={data.viewId}
-              definition={data.savedDefinition}
-              options={options.allColumns}
-            />
-          </div>
-
-          {/* A column naming a deleted field is dropped rather than thrown
-              (D-060) — but silently dropping it would look like missing data,
-              so the table says which one went. */}
-          {data.droppedColumns.length > 0 ? (
-            <p className="table-dropped" role="status">
-              {data.droppedColumns.length === 1 ? "One column refers" : `${data.droppedColumns.length} columns refer`}{" "}
-              to a field that no longer exists and {data.droppedColumns.length === 1 ? "was" : "were"} left out.
-            </p>
-          ) : null}
-
-          <TaskTable columns={data.columns} rows={rows} sort={data.definition.sort} />
-
-          <div className="footer-note">
-            <span className="live" />
-            <span>
-              {data.rows.length} {data.rows.length === 1 ? "task" : "tasks"} · acting as {viewer.name} · same compiler as the list,
-              showing the view&apos;s own columns
-            </span>
-          </div>
-        </main>
+      <div className="table-bar">
+        <FilterBar
+          fields={options.fields}
+          values={options}
+          filters={data.definition.filters}
+        />
+        <ColumnMenu
+          viewId={data.viewId}
+          definition={data.savedDefinition}
+          options={options.allColumns}
+        />
       </div>
-    </UndoProvider>
+
+      {/* A column naming a deleted field is dropped rather than thrown
+          (D-060) — but silently dropping it would look like missing data,
+          so the table says which one went. */}
+      {data.droppedColumns.length > 0 ? (
+        <p className="table-dropped" role="status">
+          {data.droppedColumns.length === 1 ? "One column refers" : `${data.droppedColumns.length} columns refer`}{" "}
+          to a field that no longer exists and {data.droppedColumns.length === 1 ? "was" : "were"} left out.
+        </p>
+      ) : null}
+
+      <TaskTable columns={data.columns} rows={rows} sort={data.definition.sort} />
+
+      <FooterNote>
+        {data.rows.length} {data.rows.length === 1 ? "task" : "tasks"} · acting as {viewer.name} · same compiler as the list,
+        showing the view&apos;s own columns
+      </FooterNote>
+    </AppShell>
   );
 }
