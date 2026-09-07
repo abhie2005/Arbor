@@ -1,27 +1,29 @@
 import "server-only";
 
-import { pool } from "@arbor/db";
+import { type SessionUser, pool, sessionUser } from "@arbor/db";
 import { cookies } from "next/headers";
 
 /**
  * Identity.
  *
- * Right now this is a development switcher over the seeded users (D-034). Real
- * email/password sessions land in Phase 5 alongside permissions.
+ * Sessions are real now: the cookie holds a token, the token hashes to a row in
+ * `sessions`, and that row names the user. What has not changed is the rule
+ * that made the swap cheap — **application code only ever calls
+ * `getCurrentUser()`**. Nothing else reads a cookie or knows how identity is
+ * established, which is why replacing the switcher touched this file and
+ * almost nothing else.
  *
- * The rule that makes that swap cheap: **application code only ever calls
- * `getCurrentUser()`**. Nothing else reads the cookie or knows how identity is
- * established. If a component starts reaching for `DEV_USER_COOKIE` directly,
- * this abstraction has leaked and needs fixing before it spreads.
+ * The development switcher (D-034) survives *underneath* real sessions rather
+ * than instead of them: it applies only when its cookie is explicitly set, so a
+ * browser with no cookies is signed out and sees the login screen. Being able
+ * to become another user without their password is worth keeping for a demo
+ * workspace, and it is gated on `devAuthEnabled()`.
  */
 
+export const SESSION_COOKIE = "arbor_session";
 export const DEV_USER_COOKIE = "arbor_dev_user";
 
-export interface CurrentUser {
-  id: string;
-  name: string;
-  email: string;
-}
+export type CurrentUser = SessionUser;
 
 /**
  * A development-only bypass that reaches production is a critical
@@ -35,27 +37,23 @@ export function devAuthEnabled(): boolean {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function getCurrentUser(): Promise<CurrentUser | null> {
-  if (!devAuthEnabled()) {
-    // Phase 5 replaces this branch with a real session lookup.
-    throw new Error(
-      "Real authentication is not implemented yet. The development user switcher is disabled outside development.",
-    );
-  }
-
   const store = await cookies();
-  const selected = store.get(DEV_USER_COOKIE)?.value;
 
-  // The cookie is attacker-controlled even in development. Validate its shape
-  // before it reaches a query, and let the parameterized lookup do the rest.
-  const requested = selected && UUID_RE.test(selected) ? selected : null;
+  const fromSession = await sessionUser(store.get(SESSION_COOKIE)?.value);
+  if (fromSession) return fromSession;
+
+  if (!devAuthEnabled()) return null;
+
+  // Explicitly set only. Falling back to "the first user" when no cookie is
+  // present would mean nobody is ever signed out in development, and a login
+  // screen that cannot be reached is a login screen nobody tests.
+  const selected = store.get(DEV_USER_COOKIE)?.value;
+  if (!selected || !UUID_RE.test(selected)) return null;
 
   const result = await pool().query<CurrentUser>(
-    requested
-      ? `SELECT id, name, email FROM users WHERE id = $1 AND deactivated_at IS NULL`
-      : `SELECT id, name, email FROM users WHERE deactivated_at IS NULL ORDER BY created_at LIMIT 1`,
-    requested ? [requested] : [],
+    `SELECT id, name, email FROM users WHERE id = $1 AND deactivated_at IS NULL`,
+    [selected],
   );
-
   return result.rows[0] ?? null;
 }
 
@@ -76,8 +74,6 @@ export async function listSwitchableUsers(): Promise<CurrentUser[]> {
  */
 export async function requireUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();
-  if (!user) {
-    throw new Error("Not signed in. Run `npm run db:seed` to create the demo users.");
-  }
+  if (!user) throw new Error("Not signed in");
   return user;
 }

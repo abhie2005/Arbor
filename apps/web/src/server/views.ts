@@ -25,6 +25,7 @@ import {
   loadFieldCatalog,
   loadFieldNames,
   pool,
+  resolveStatusSetFor,
 } from "@arbor/db";
 
 import { type ColumnValues, loadColumnValues } from "./column-values";
@@ -283,12 +284,13 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
     for (const row of grouped.rows) counts.set(row.group_key ?? "none", Number(row.count));
   }
 
-  const statuses = await connection.query<StatusRow>(
-    `SELECT st.id, st.name, st."group", st.color FROM statuses st
-     JOIN status_sets ss ON ss.id = st.status_set_id
-     WHERE ss.workspace_id = $1 ORDER BY st.position`,
-    [meta.workspace_id],
-  );
+  // The set this list resolves, not every set in the workspace.
+  //
+  // Loading them all worked for exactly as long as there was one: the moment a
+  // workspace had a second set, every renderer drew a section for each of its
+  // statuses — "Open 0, Doing 0" beside the real ones. A list's statuses are
+  // whatever it inherits (D-014), and this is the one place that should decide.
+  const statusSet = await resolveStatusSetFor(meta.workspace_id, meta.list_id, connection);
 
   const assigneeRows = await connection.query<{ task_id: string; name: string }>(
     `SELECT ta.task_id, u.name FROM task_assignees ta JOIN users u ON u.id = ta.user_id`,
@@ -353,7 +355,12 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
     definition,
     rows,
     counts,
-    statuses: statuses.rows,
+    statuses: statusSet.set.statuses.map((status) => ({
+      id: status.id,
+      name: status.name,
+      group: status.group,
+      color: status.color,
+    })),
     assignees,
     subtaskCounts: new Map(subRows.rows.map((r) => [r.parent_task_id, Number(r.n)])),
     columns,
@@ -425,6 +432,8 @@ export async function loadFilterOptions(workspaceId: string): Promise<FilterOpti
   return {
     fields: filterableFields(catalog, archived, names),
     allColumns: availableColumns(catalog, archived, names),
+    // Every status in the workspace, unlike the renderer's sections: a filter
+    // may be written on a view that spans lists with different sets.
     statuses: statuses.rows,
     statusGroups: [
       { id: "not_started", name: "Not started" },

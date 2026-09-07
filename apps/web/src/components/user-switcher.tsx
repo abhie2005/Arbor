@@ -3,6 +3,7 @@
 import { useTransition } from "react";
 
 import { switchUser } from "@/server/actions";
+import { signOutAction } from "@/server/auth-actions";
 
 /**
  * Development-only identity switcher (D-034).
@@ -36,6 +37,19 @@ export function UserSwitcher({
           </option>
         ))}
       </select>
+
+      {/* Signing out is the only way back to the login screen, so it lives
+          beside the thing that says who you are rather than in a menu. */}
+      <button
+        type="button"
+        className="switcher-out"
+        title="Sign out"
+        aria-label="Sign out"
+        disabled={pending}
+        onClick={() => startTransition(() => void signOutAction())}
+      >
+        ⏻
+      </button>
     </label>
   );
 }

@@ -24,7 +24,9 @@
  *
  *   npm run check:actions -- 3100
  */
+import { signIn } from "@arbor/db";
 import { UndoStack } from "@arbor/core";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
 
@@ -44,7 +46,9 @@ const DATABASE_URL = process.env.DATABASE_URL ?? "postgres://arbor:arbor@localho
  * bundle to read ids out of until something asks for the page. Ask for it.
  */
 async function warm(path: string): Promise<void> {
-  const response = await fetch(`http://localhost:${PORT}${path}`);
+  const response = await fetch(`http://localhost:${PORT}${path}`, {
+    headers: COOKIE ? { Cookie: COOKIE } : {},
+  });
   if (!response.ok) {
     throw new Error(`GET ${path} returned ${response.status} — is the dev server on ${PORT}?`);
   }
@@ -72,6 +76,17 @@ function actionIds(route = "app/settings/statuses/page"): Record<string, string>
   return ids;
 }
 
+/**
+ * A real session, minted the way signing in does.
+ *
+ * Every page redirects to /login without one now, so these checks have to be
+ * authenticated — which is an improvement: they exercise the same session
+ * lookup a browser does, rather than a development bypass that will not exist
+ * in production.
+ */
+const { token: sessionToken } = await signIn("avery@example.com", "arbor-demo-2026");
+const COOKIE = `arbor_session=${sessionToken}`;
+
 await warm("/settings/statuses");
 await warm("/");
 
@@ -90,7 +105,11 @@ function report(label: string, problem: string | null) {
 async function callOn(url: string, id: string, args: unknown) {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Next-Action": id, "Content-Type": "text/plain;charset=UTF-8" },
+    headers: {
+      "Next-Action": id,
+      "Content-Type": "text/plain;charset=UTF-8",
+      Cookie: COOKIE,
+    },
     body: JSON.stringify(args),
   });
 
@@ -318,6 +337,63 @@ report(
   reverted.status_id === dragged.status_id && reverted.position === dragged.position
     ? null
     : `status ${reverted.status_id} position ${reverted.position}`,
+);
+
+console.log("\nsigning in → a session, or nothing\n");
+
+await warm("/login");
+const LOGIN_ACTIONS = actionIds("app/login/page");
+const LOGIN_URL = "http://localhost:" + PORT + "/login";
+
+// Posted without a cookie: this is the one request in the file that must work
+// for someone who is not signed in.
+const badLogin = await fetch(LOGIN_URL, {
+  method: "POST",
+  headers: { "Next-Action": LOGIN_ACTIONS.signInAction!, "Content-Type": "text/plain;charset=UTF-8" },
+  body: JSON.stringify(["avery@example.com", "not the password"]),
+});
+const badBody = await badLogin.text();
+report(
+  "the wrong password is refused",
+  /"ok":false/.test(badBody) ? null : "a wrong password was accepted",
+);
+report(
+  "and no session cookie comes back with the refusal",
+  !String(badLogin.headers.get("set-cookie") ?? "").includes("arbor_session=")
+    ? null
+    : "a session cookie was issued for a failed sign-in",
+);
+
+const goodLogin = await fetch(LOGIN_URL, {
+  method: "POST",
+  headers: { "Next-Action": LOGIN_ACTIONS.signInAction!, "Content-Type": "text/plain;charset=UTF-8" },
+  body: JSON.stringify(["avery@example.com", "arbor-demo-2026"]),
+});
+const issued = String(goodLogin.headers.get("set-cookie") ?? "");
+report(
+  "the right password issues a session cookie",
+  issued.includes("arbor_session=") ? null : `set-cookie was "${issued.slice(0, 60)}"`,
+);
+report(
+  "and the cookie is httpOnly, so script on the page cannot read the token",
+  /httponly/i.test(issued) ? null : "the session cookie is readable from JavaScript",
+);
+
+// The token in the cookie must be a real session, not a bearer of the user id.
+const issuedToken = issued.match(/arbor_session=([^;]+)/)?.[1] ?? "";
+const sessionRow = await one(`SELECT user_id FROM sessions WHERE token_hash = $1`, [
+  createHash("sha256").update(decodeURIComponent(issuedToken)).digest("hex"),
+]);
+report(
+  "the cookie's token hashes to a session row",
+  sessionRow?.user_id ? null : "the issued token matches no session",
+);
+
+report(
+  "a page loaded with no cookie at all redirects rather than rendering",
+  (await fetch("http://localhost:" + PORT + "/", { redirect: "manual" })).status === 307
+    ? null
+    : "an unauthenticated request rendered the app",
 );
 
 console.log("\ncalendar drag → a day, and back\n");

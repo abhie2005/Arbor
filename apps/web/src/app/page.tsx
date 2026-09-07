@@ -7,6 +7,7 @@ import { ViewTabs } from "@/components/view-tabs";
 import { getCurrentUser, listSwitchableUsers } from "@/server/auth";
 import { loadFilterOptions, loadView } from "@/server/views";
 import { requireWorkspace } from "@/server/workspace";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +60,10 @@ export default async function Page({
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }
+
+  // Outside the try on purpose: `redirect` signals by throwing, and the catch
+  // above would turn it into an error message on a page nobody should reach.
+  if (!viewer) redirect("/login");
 
   if (error || !viewer || !data || !options) {
     // A bad filter link is a different failure from a missing database, and

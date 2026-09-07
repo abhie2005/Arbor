@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { SettingsTabs } from "@/components/settings/tabs";
+import { getCurrentUser } from "@/server/auth";
 import { requireWorkspace } from "@/server/workspace";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +13,10 @@ export const dynamic = "force-dynamic";
  * status set is here". A modal has no address.
  */
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
+  // Settings writes configuration, so it needs an actor for the activity log
+  // as much as the work screens do.
+  if (!(await getCurrentUser())) redirect("/login");
+
   const workspace = await requireWorkspace();
 
   return (

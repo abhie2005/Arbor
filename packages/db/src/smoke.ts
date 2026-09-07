@@ -15,6 +15,8 @@ import {
   invertBatch,
   type Operation,
 } from "@arbor/core";
+import { createHash } from "node:crypto";
+
 import { Pool } from "pg";
 
 import {
@@ -34,6 +36,13 @@ import {
   revokeAccess,
   setContainerPrivacy,
 } from "./access";
+import {
+  purgeExpiredSessions,
+  sessionUser,
+  setPassword,
+  signIn,
+  signOut,
+} from "./auth";
 import { applyOperations } from "./mutations";
 import { createTaskType, deleteTaskType, listTaskTypes } from "./task-types";
 import {
@@ -758,6 +767,94 @@ async function main() {
   report(
     "every container resolves a status set",
     unresolved.length === 0 ? null : `no set resolves for: ${unresolved.join(", ")}`,
+  );
+
+  // --- authentication -------------------------------------------------------
+  console.log("\nauthentication → passwords and sessions\n");
+
+  const account = await one("SELECT id, email, password_hash FROM users WHERE email='sam@example.com'");
+
+  report(
+    "the seed leaves every demo user able to sign in",
+    typeof account.password_hash === "string" && account.password_hash.startsWith("scrypt$")
+      ? null
+      : `stored hash was ${String(account.password_hash).slice(0, 20)}`,
+  );
+
+  report(
+    "the password itself is not in the row",
+    String(account.password_hash).includes("arbor-demo-2026")
+      ? "the plaintext password is stored"
+      : null,
+  );
+
+  const session = await signIn("Sam@Example.com ", "arbor-demo-2026", {}, pool);
+  report(
+    "signing in works, and the address is matched case-insensitively",
+    session.user.id === account.id ? null : "signed in as the wrong user",
+  );
+
+  const stored = await one(
+    `SELECT token_hash FROM sessions WHERE user_id = '${account.id}' ORDER BY created_at DESC LIMIT 1`,
+  );
+  report(
+    "the session token is not stored, only a hash of it",
+    stored.token_hash !== session.token && String(stored.token_hash).length === 64
+      ? null
+      : "the raw token is in the database",
+  );
+
+  report(
+    "the token resolves back to its user",
+    (await sessionUser(session.token, pool))?.id === account.id ? null : "the session did not resolve",
+  );
+
+  report(
+    "a token nobody issued resolves to nobody",
+    (await sessionUser("not-a-real-token", pool)) === null ? null : "an invented token was accepted",
+  );
+
+  report(
+    "the wrong password is refused",
+    await expectRejection(() => signIn("sam@example.com", "not the password", {}, pool)),
+  );
+
+  // Account enumeration: the two failures must be indistinguishable, or the
+  // form tells an attacker which addresses are registered.
+  const unknownEmail = await signIn("nobody@example.com", "arbor-demo-2026", {}, pool).catch(
+    (error: Error) => error.message,
+  );
+  const wrongPassword = await signIn("sam@example.com", "wrong password here", {}, pool).catch(
+    (error: Error) => error.message,
+  );
+  report(
+    "an unknown email and a wrong password fail identically",
+    unknownEmail === wrongPassword ? null : `"${unknownEmail}" vs "${wrongPassword}"`,
+  );
+
+  await signOut(session.token, pool);
+  report(
+    "signing out ends the session immediately",
+    (await sessionUser(session.token, pool)) === null ? null : "a signed-out token still resolves",
+  );
+
+  const expired = await signIn("sam@example.com", "arbor-demo-2026", {}, pool);
+  await pool.query(`UPDATE sessions SET expires_at = now() - interval '1 day' WHERE token_hash = $1`, [
+    createHash("sha256").update(expired.token).digest("hex"),
+  ]);
+  report(
+    "an expired session stops resolving without anything having to purge it",
+    (await sessionUser(expired.token, pool)) === null ? null : "an expired session still resolves",
+  );
+
+  report(
+    "purging expired sessions removes them",
+    (await purgeExpiredSessions(pool)) >= 1 ? null : "nothing was purged",
+  );
+
+  report(
+    "a password below the policy is refused before it is hashed",
+    await expectRejection(() => setPassword(account.id!, "short", pool)),
   );
 
   // --- permissions ----------------------------------------------------------

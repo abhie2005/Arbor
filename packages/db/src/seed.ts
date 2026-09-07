@@ -20,10 +20,12 @@ import {
 import { eq } from "drizzle-orm";
 
 import { rebuildAccessIndex } from "./access";
+import { setPassword } from "./auth";
 import { createDatabase, pool } from "./client";
 import * as s from "./schema";
 
 const DEMO_SLUG = "northwind";
+const DEMO_PASSWORD = "arbor-demo-2026";
 
 async function main() {
   const db = createDatabase();
@@ -63,6 +65,13 @@ async function main() {
 
   const [avery, riley, sam, jordan] = users;
   if (!avery || !riley || !sam || !jordan) throw new Error("seed: expected four users");
+
+  // Every demo user gets the same password, printed below. A seeded account
+  // with no password cannot sign in, and "log in as anyone" is the whole point
+  // of a demo workspace.
+  for (const user of users) {
+    await setPassword(user.id, DEMO_PASSWORD, pool());
+  }
 
   // --- workspace ------------------------------------------------------------
   const [workspace] = await db
@@ -603,7 +612,8 @@ async function main() {
     [
       "",
       `  Workspace   ${workspace.name} (/${workspace.slug})`,
-      `  Members     ${users.length}`,
+      `  Members     ${users.length}  (sign in as any of them)`,
+      `  Password    ${DEMO_PASSWORD}`,
       `  Hierarchy   ${space.name} › ${folder.name} › ${sprint.name}  (+ folderless "${backlog.name}")`,
       `  Private     ${privateSpace.name} › ${privateList.name}  (granted to ${riley.name} only)`,
       `  Access      ${access.length} rows, computed by rebuildAccessIndex`,

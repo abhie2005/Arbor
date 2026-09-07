@@ -101,6 +101,10 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-071](#d-071) | The index is rebuilt inside the transaction that changed the grant | Auth |
 | [D-072](#d-072) | A workspace always has a default status set | Data |
 | [D-073](#d-073) | Inherited grants are shown, and cannot be removed where they are shown | Frontend |
+| [D-074](#d-074) | scrypt from the standard library, not argon2id | Auth |
+| [D-075](#d-075) | Every sign-in failure is the same failure | Auth |
+| [D-076](#d-076) | A session is a row, and the token is never stored | Auth |
+| [D-077](#d-077) | A renderer draws the status set the list resolves | Query |
 
 ---
 
@@ -1982,3 +1986,95 @@ ever disagree, this screen shows what is true rather than what was intended.
 
 *In one sentence:* the screen shows the whole picture including the parts it
 cannot change, and says which is which.
+
+### D-074
+**scrypt from the standard library, not argon2id** · 2026-09-06 · active
+
+Passwords are hashed with `node:crypto`'s scrypt at N=2^16, r=8, p=1 — roughly
+64 MB and 100 ms per hash.
+
+**Argon2id is the better function and every guide says so.** It is also a
+native module. This project is meant to be cloned and run with Node and Docker
+and nothing else; a compile step in `npm install` is a cost paid by every
+self-hoster, on every architecture, forever, and it is the kind of cost that
+turns "clone and run" into "clone and read the build errors". scrypt is
+memory-hard, it is in the standard library, and at these parameters it is the
+same order of work.
+
+**The stored hash names its own algorithm and parameters**
+(`scrypt$N$r$p$salt$hash`), so raising the cost or moving to argon2id later is
+a rehash on next sign-in rather than a migration — which is the property that
+makes this a reversible decision rather than a permanent one.
+
+*In one sentence:* the second-best hash in the standard library beats the best
+one behind a compiler, for a project whose promise is that it runs anywhere.
+
+### D-075
+**Every sign-in failure is the same failure** · 2026-09-06 · active
+
+"That email and password do not match an account", for an unknown address and
+for a wrong password alike. An unknown address is also verified against a dummy
+hash, so both paths cost the same.
+
+**Because the difference is an oracle.** A form that says "no account with that
+email" lets anyone check which addresses are registered, one request at a time
+— which matters more for a work tool than most places, since the addresses are
+colleagues' and the answer is "where these people work".
+
+**The timing has to match too**, or the message refusing to answer is undone by
+how long it takes to refuse. The dummy hash is derived once per process; doing
+it per miss would be its own signal.
+
+**The cost is a worse error message**, and it is a real cost — someone who
+mistyped their address gets no help. That is the trade every serious login form
+makes, and the place to help them is a password reset flow that also refuses to
+say whether the address exists.
+
+*In one sentence:* the login form answers one question, and "does this person
+have an account" is not it.
+
+### D-076
+**A session is a row, and the token is never stored** · 2026-09-06 · active
+
+Signing in inserts into `sessions` with a SHA-256 of a 32-byte random token;
+the token itself exists only in an httpOnly cookie. Signing out deletes the
+row.
+
+**Server-side sessions rather than a signed stateless token**, because
+revocation has to be immediate and true. A JWT is valid until it expires no
+matter what the server thinks; a row can be deleted, which is what "sign out
+everywhere" and "this account is compromised" actually need. The cost is a
+lookup per request, which is one indexed read against a table the connection
+pool is already talking to.
+
+**Hashed, for the same reason the password is.** A database that leaks hands
+over no live sessions.
+
+**The development switcher survives underneath it** (D-034), not instead of it:
+it applies only when its cookie is explicitly set, so a browser with no cookies
+is signed out and meets the login screen. It used to fall back to "the first
+user", which meant nobody was ever signed out in development and the login
+screen could not be reached — a screen nobody can reach is a screen nobody
+tests.
+
+*In one sentence:* sessions are rows because the important operation is not
+issuing them, it is ending them.
+
+### D-077
+**A renderer draws the status set the list resolves, not every set in the workspace** · 2026-09-06 · active
+
+`loadView` calls `resolveStatusSetFor(workspace, list)` and renders that set's
+statuses. It used to select every status in the workspace.
+
+**It worked for exactly as long as there was one set.** Adding a workspace
+default (D-072) put "Open 0 · Doing 0 · Done 0" on the list beside the real
+sections — statuses belonging to a set this list does not use. The list was
+never asking the right question; there had only ever been one answer.
+
+**The filter bar still offers all of them**, deliberately: a filter can be
+written on a view that spans lists with different sets, so restricting the menu
+to one list's statuses would refuse filters the compiler accepts.
+
+*In one sentence:* what a list shows comes from what the list inherits, and
+what a filter may say comes from the whole workspace — they are different
+questions with the same-looking answer until they are not.

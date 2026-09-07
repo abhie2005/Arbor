@@ -8,6 +8,7 @@ import { getCurrentUser, listSwitchableUsers } from "@/server/auth";
 import { cellsFor } from "@/server/cells";
 import { loadFilterOptions, loadView } from "@/server/views";
 import { requireWorkspace } from "@/server/workspace";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +61,10 @@ export default async function TablePage({
   } catch (e) {
     error = e instanceof Error ? e.message : String(e);
   }
+
+  // Outside the try on purpose: `redirect` signals by throwing, and the catch
+  // above would turn it into an error message on a page nobody should reach.
+  if (!viewer) redirect("/login");
 
   if (error || !viewer || !data || !options) {
     // Both parameters are decoded before anything is queried, so either one

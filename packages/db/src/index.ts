@@ -8,6 +8,19 @@ export {
   type Database,
   type DatabaseOptions,
 } from "./client";
+export {
+  AuthError,
+  SESSION_DAYS,
+  hashPassword,
+  purgeExpiredSessions,
+  sessionUser,
+  setPassword,
+  signIn,
+  signOut,
+  signOutEverywhere,
+  verifyPassword,
+  type SessionUser,
+} from "./auth";
 export { loadContainerTree } from "./containers";
 export {
   grantAccess,
