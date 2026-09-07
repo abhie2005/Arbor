@@ -72,9 +72,34 @@ export interface FilterCondition {
   value?: unknown;
 }
 
-export interface FilterGroup {
+/**
+ * A combinator over conditions, which may themselves be combinators.
+ *
+ * Nesting arrived with the Gantt view and is the first thing a renderer needed
+ * that the compiler could not express. A bar belongs on screen when it overlaps
+ * the visible window, and with open-ended tasks that is
+ * `(start IS NULL OR start <= end) AND (due IS NULL OR due >= begin)` - mixed
+ * AND and OR, which a flat list joined by one operator cannot say.
+ */
+export interface FilterClause {
   op: "AND" | "OR";
-  conditions: FilterCondition[];
+  conditions: FilterNode[];
+}
+
+export type FilterNode = FilterCondition | FilterClause;
+
+/** A nested clause has `conditions`; a leaf condition has a `field`. */
+export function isFilterClause(node: FilterNode): node is FilterClause {
+  return "conditions" in node;
+}
+
+/**
+ * The top-level group: a clause, plus the things that are true of the view as
+ * a whole rather than of any one condition. Nested clauses are plain
+ * `FilterClause` precisely so they cannot carry a second, contradictory
+ * `showClosed`.
+ */
+export interface FilterGroup extends FilterClause {
   /** Free-text search across name and description. */
   search?: string;
   /** Closed-group tasks are hidden unless this is true. */

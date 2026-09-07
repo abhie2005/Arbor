@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { type FieldDefinition, indexFields } from "../fields";
-import { ViewCompileError, compileGroupCounts, compileViewQuery } from "./compile";
-import { DEFAULT_VIEW_DEFINITION, type ViewDefinition } from "./types";
+import {
+  MAX_CONDITIONS,
+  MAX_FILTER_DEPTH,
+  ViewCompileError,
+  compileGroupCounts,
+  compileViewQuery,
+} from "./compile";
+import { DEFAULT_VIEW_DEFINITION, type FilterGroup, type ViewDefinition } from "./types";
 
 const WORKSPACE = "11111111-1111-4111-8111-111111111111";
 const VIEWER = "22222222-2222-4222-8222-222222222222";
@@ -368,5 +374,122 @@ describe("compileGroupCounts", () => {
 
   it("refuses to count an ungrouped view", () => {
     expect(() => counts({ grouping: { field: "none", dir: "asc" } })).toThrow(ViewCompileError);
+  });
+});
+
+describe("nested filter clauses", () => {
+  const base = {
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    viewerId: "22222222-2222-4222-8222-222222222222",
+    scope: { kind: "everything" } as const,
+  };
+
+  const compileWith = (filters: FilterGroup) =>
+    compileViewQuery({ ...base, definition: { ...DEFAULT_VIEW_DEFINITION, filters } });
+
+  it("brackets a nested OR inside an AND", () => {
+    // The whole reason this exists: an unbracketed OR beside an AND means
+    // something else entirely, and reads as if it means the right thing.
+    const { text } = compileWith({
+      op: "AND",
+      conditions: [
+        { field: "priority", op: "eq", value: 1 },
+        {
+          op: "OR",
+          conditions: [
+            { field: "dueAt", op: "isNull" },
+            { field: "dueAt", op: "lte", value: "2026-09-30" },
+          ],
+        },
+      ],
+    });
+
+    expect(text).toContain("(t.priority = $3 AND (t.due_at IS NULL OR t.due_at <= $4))");
+  });
+
+  it("compiles the overlap question a timeline asks", () => {
+    // (start IS NULL OR start <= end) AND (due IS NULL OR due >= begin)
+    const { text, params } = compileWith({
+      op: "AND",
+      conditions: [
+        {
+          op: "OR",
+          conditions: [
+            { field: "startAt", op: "isNull" },
+            { field: "startAt", op: "lte", value: "2026-10-01" },
+          ],
+        },
+        {
+          op: "OR",
+          conditions: [
+            { field: "dueAt", op: "isNull" },
+            { field: "dueAt", op: "gte", value: "2026-09-01" },
+          ],
+        },
+      ],
+    });
+
+    expect(text).toContain("t.start_at IS NULL");
+    expect(text).toContain("t.due_at IS NULL");
+    expect(params).toContain("2026-10-01");
+    expect(params).toContain("2026-09-01");
+  });
+
+  it("still binds every value inside a nested clause", () => {
+    const { text, params } = compileWith({
+      op: "OR",
+      conditions: [
+        { op: "AND", conditions: [{ field: "name", op: "contains", value: "'; DROP TABLE" }] },
+      ],
+    });
+
+    expect(text).not.toContain("DROP TABLE");
+    expect(params).toContain("%'; DROP TABLE%");
+  });
+
+  it("drops an empty clause rather than emitting ()", () => {
+    const { text } = compileWith({
+      op: "AND",
+      conditions: [{ field: "priority", op: "eq", value: 1 }, { op: "OR", conditions: [] }],
+    });
+
+    expect(text).not.toContain("()");
+    expect(text).toContain("t.priority = $3");
+  });
+
+  it("counts nested conditions against the ceiling", () => {
+    const many = Array.from({ length: MAX_CONDITIONS + 1 }, () => ({
+      field: "priority" as const,
+      op: "eq" as const,
+      value: 1,
+    }));
+
+    expect(() =>
+      compileWith({ op: "AND", conditions: [{ op: "OR", conditions: many }] }),
+    ).toThrow(/at most/);
+  });
+
+  it("refuses to nest deeper than the limit", () => {
+    let clause: FilterGroup = {
+      op: "AND",
+      conditions: [{ field: "priority", op: "eq", value: 1 }],
+    };
+    for (let i = 0; i <= MAX_FILTER_DEPTH + 1; i++) {
+      clause = { op: "AND", conditions: [clause] };
+    }
+
+    expect(() => compileWith(clause)).toThrow(/nest at most/);
+  });
+
+  it("leaves a flat definition compiling exactly as it did", () => {
+    const flat = compileWith({
+      op: "AND",
+      conditions: [
+        { field: "priority", op: "eq", value: 1 },
+        { field: "statusGroup", op: "eq", value: "active" },
+      ],
+    });
+
+    expect(flat.text).toContain("(t.priority = $3 AND s.group = $4)");
   });
 });

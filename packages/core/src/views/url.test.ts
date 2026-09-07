@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { FilterUrlError, decodeFilters, decodeSort, encodeFilters, encodeSort } from "./url";
-import { DEFAULT_VIEW_DEFINITION, type FilterGroup, type SortField } from "./types";
+import {
+  DEFAULT_VIEW_DEFINITION,
+  type FilterGroup,
+  type SortField,
+  isFilterClause,
+} from "./types";
 
 const base: FilterGroup = DEFAULT_VIEW_DEFINITION.filters;
 
@@ -63,7 +68,8 @@ describe("filters in the URL", () => {
     // Not this module's job — the compiler resolves fields through a closed map
     // and duplicating that list here would give it two places to drift.
     const decoded = decodeFilters('{"c":[["nonsense","eq",1]]}', base);
-    expect(decoded.conditions[0]?.field).toBe("nonsense");
+    const first = decoded.conditions[0];
+    expect(first && !isFilterClause(first) ? first.field : null).toBe("nonsense");
   });
 
   it("preserves the base's subtask and archive settings", () => {

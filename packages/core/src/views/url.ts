@@ -18,7 +18,7 @@
  * already answers all three and is the boundary that matters (D-042).
  */
 
-import type { FilterCondition, FilterGroup, FilterOp, SortField } from "./types";
+import { type FilterCondition, type FilterGroup, type FilterOp, type SortField, isFilterClause } from "./types";
 
 export class FilterUrlError extends Error {}
 
@@ -56,11 +56,17 @@ export interface UrlFilterState {
  * omit the parameter entirely rather than writing `?f=[]` on every navigation.
  */
 export function encodeFilters(filters: FilterGroup): string | null {
-  const triples: Triple[] = filters.conditions.map((condition) =>
-    condition.value === undefined
-      ? [condition.field, condition.op]
-      : [condition.field, condition.op, condition.value],
-  );
+  // Leaf conditions only. The tuple form has no way to say "a nested group",
+  // and it does not need one: nesting exists today so a renderer can scope the
+  // query it runs (a Gantt window), and that scope is appended after the URL
+  // has had its say precisely so a link cannot carry or remove it (D-068).
+  const triples: Triple[] = filters.conditions
+    .filter((node) => !isFilterClause(node))
+    .map((condition) =>
+      condition.value === undefined
+        ? [condition.field, condition.op]
+        : [condition.field, condition.op, condition.value],
+    );
 
   const parts: string[] = [];
   if (triples.length > 0) parts.push(JSON.stringify(triples));

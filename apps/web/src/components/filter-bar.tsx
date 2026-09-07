@@ -7,6 +7,7 @@ import {
   type FilterableField,
   type ValueInput,
   encodeFilters,
+  isFilterClause,
   opNeedsValue,
   operatorLabel,
 } from "@arbor/core";
@@ -86,7 +87,12 @@ export function FilterBar({
         </button>
       ) : null}
 
-      {filters.conditions.map((condition, index) => {
+      {/* Leaf conditions only. A nested clause is a renderer's own scope
+          (D-068) — it is not something anyone typed here, and offering to
+          remove it would break the screen it is holding together. */}
+      {filters.conditions.map((node, index) => {
+        if (isFilterClause(node)) return null;
+        const condition = node;
         const field = fields.find((f) => f.ref === condition.field);
         return (
           <ConditionChip

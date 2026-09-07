@@ -6,6 +6,7 @@ import {
   type FieldRef,
   type FilterCondition,
   type FilterGroup,
+  type FilterNode,
   type FilterableField,
   type ResolvedColumn,
   type SortField,
@@ -17,6 +18,7 @@ import {
   decodeFilters,
   decodeSort,
   filterableFields,
+  isFilterClause,
   resolveColumns,
 } from "@arbor/core";
 import {
@@ -198,7 +200,7 @@ export interface LoadViewOptions {
    * say so a link cannot remove them. The calendar's date range is one: a month
    * grid that quietly showed tasks from another month would not be a month.
    */
-  required?: FilterCondition[];
+  required?: FilterNode[];
   /** Overrides the compiler's default page size. */
   limit?: number;
 }
@@ -486,13 +488,19 @@ function sameSort(a: readonly SortField[], b: readonly SortField[]): boolean {
 }
 
 function sameFilters(a: FilterGroup, b: FilterGroup): boolean {
+  // Recursive since filters can nest (a renderer's scope is a clause), and a
+  // comparison that stopped at the top level would call two different trees
+  // equal as soon as they differed only inside one.
+  const nodeKey = (node: FilterNode): string =>
+    isFilterClause(node)
+      ? `(${node.op}\u0000${node.conditions.map(nodeKey).join("\u0001")})`
+      : `${String(node.field)}\u0000${node.op}\u0000${JSON.stringify(node.value ?? null)}`;
+
   const key = (f: FilterGroup) =>
     [
       f.op ?? "AND",
       f.showClosed === true ? "closed" : "open",
-      ...f.conditions.map(
-        (c) => `${String(c.field)}\u0000${c.op}\u0000${JSON.stringify(c.value ?? null)}`,
-      ),
+      ...f.conditions.map(nodeKey),
     ].join("\u0001");
 
   return key(a) === key(b);

@@ -6,13 +6,16 @@ import {
   fieldValueColumn,
   parseFilterValue,
 } from "../fields";
-import type {
-  BuiltinField,
-  FieldRef,
-  FilterCondition,
-  SortField,
-  ViewDefinition,
-  ViewScope,
+import {
+  type BuiltinField,
+  type FieldRef,
+  type FilterCondition,
+  type FilterClause,
+  type FilterNode,
+  type SortField,
+  type ViewDefinition,
+  type ViewScope,
+  isFilterClause,
 } from "./types";
 
 /**
@@ -61,6 +64,13 @@ export class ViewCompileError extends Error {}
 
 /** Hard ceiling — a view with 40 filters is a bug report, not a use case. */
 export const MAX_CONDITIONS = 25;
+
+/**
+ * Nesting depth. Deep enough for anything a person builds in a filter bar,
+ * shallow enough that a hand-written definition cannot recurse the compiler
+ * into a stack overflow.
+ */
+export const MAX_FILTER_DEPTH = 5;
 export const MAX_SORTS = 5;
 export const DEFAULT_LIMIT = 100;
 export const MAX_LIMIT = 500;
@@ -282,6 +292,48 @@ function customFieldSql(
   return rowFor(comparisonSql(column, { ...condition, value }, params));
 }
 
+/**
+ * One clause, and everything nested inside it.
+ *
+ * Returns null for a clause with nothing in it rather than `()`, which is not
+ * SQL. An empty clause is not an error — a view with no filters is the common
+ * case, and a renderer appending an empty group should not have to check.
+ */
+function clauseSql(
+  clause: FilterClause,
+  params: ParamBag,
+  fields: FieldCatalog | undefined,
+  depth: number,
+): string | null {
+  if (depth > MAX_FILTER_DEPTH) {
+    throw new ViewCompileError(`Filters may nest at most ${MAX_FILTER_DEPTH} deep`);
+  }
+
+  const parts = clause.conditions
+    .map((node) =>
+      isFilterClause(node)
+        ? clauseSql(node, params, fields, depth + 1)
+        : conditionSql(node, params, fields),
+    )
+    .filter((part): part is string => part !== null);
+
+  if (parts.length === 0) return null;
+
+  // Always parenthesized: an OR nested inside an AND without brackets means
+  // something else entirely, and that is the bug this whole shape exists to
+  // make impossible.
+  const joiner = clause.op === "OR" ? " OR " : " AND ";
+  return `(${parts.join(joiner)})`;
+}
+
+/** Every leaf condition in the tree, for the ceiling above. */
+function countConditions(clause: FilterClause): number {
+  return clause.conditions.reduce(
+    (total, node) => total + (isFilterClause(node) ? countConditions(node) : 1),
+    0,
+  );
+}
+
 function conditionSql(
   condition: FilterCondition,
   params: ParamBag,
@@ -385,9 +437,10 @@ function buildBase(options: CompileOptions): QueryBase {
   const { workspaceId, viewerId, definition, scope } = options;
   const { filters } = definition;
 
-  if (filters.conditions.length > MAX_CONDITIONS) {
+  const total = countConditions(filters);
+  if (total > MAX_CONDITIONS) {
     throw new ViewCompileError(
-      `A view may have at most ${MAX_CONDITIONS} filters (received ${filters.conditions.length})`,
+      `A view may have at most ${MAX_CONDITIONS} filters (received ${total})`,
     );
   }
 
@@ -423,11 +476,8 @@ function buildBase(options: CompileOptions): QueryBase {
     where.push(`t.name ILIKE ${term}`);
   }
 
-  if (filters.conditions.length > 0) {
-    const joiner = filters.op === "OR" ? " OR " : " AND ";
-    const parts = filters.conditions.map((c) => conditionSql(c, params, options.fields));
-    where.push(`(${parts.join(joiner)})`);
-  }
+  const predicate = clauseSql(filters, params, options.fields, 0);
+  if (predicate) where.push(predicate);
 
   return { joins, where, params };
 }
