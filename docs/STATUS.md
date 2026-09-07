@@ -48,7 +48,9 @@ docker start arbor-pg || docker run -d --name arbor-pg \
 cd apps/web && npx next dev -p 3100
 ```
 
-Then `http://localhost:3100`. **Port 3000 is usually taken by another project on
+Then `http://localhost:3100`, which now asks you to sign in: **any seeded user,
+password `arbor-demo-2026`** (the seed prints it). The login screen shows the
+demo credentials in development only. **Port 3000 is usually taken by another project on
 this machine** (`tempo`) — check before assuming a page you are looking at is
 Arbor. First compile is around 6 seconds once `.next` exists; the "~5 minutes"
 noted here previously was a cold cache.
@@ -56,9 +58,9 @@ noted here previously was a cold cache.
 Verify without the browser:
 
 ```bash
-npm test                                       # 241 unit tests, no database needed
-npm run db:seed && npm run db:smoke            # 72 checks against real Postgres
-PORT=3100 npm run check:actions                # 25 checks — needs the dev server
+npm test                                       # 249 unit tests, no database needed
+npm run db:seed && npm run db:smoke            # 84 checks against real Postgres
+PORT=3100 npm run check:actions                # 31 checks — needs the dev server
 ```
 
 `check:actions` is the only one that needs a running server: it POSTs to the
@@ -91,9 +93,9 @@ machine, and the failure it gives you is a 404 rather than a wrong-app warning.
 | **Settings UI** | `/settings` — statuses, custom fields, task types. |
 | **Permissions** | Grants are the source of truth; a pure rule in `@arbor/core` flattens them plus inheritance into the access index every query joins against. Private containers, inherited grants, group grants, role baselines. Rebuilt inside the transaction that changed the grant, so a revocation has no stale window. |
 | **Sharing UI** | `/settings/sharing` — the container tree with how many people each one reaches, a private toggle, and share/unshare. Inherited grants are shown with their source and are not removable there. |
-| **Identity** | Dev-only user switcher behind `getCurrentUser()`. **Still not real auth** — this is the remaining half of Phase 5. |
+| **Identity** | Real sessions: scrypt password hashes, a `sessions` row per sign-in with the token stored only as a hash, an httpOnly cookie, and a login screen. Every screen redirects to `/login` without one. The dev user switcher survives *underneath* sessions and applies only when explicitly set. |
 
-**Verified:** 241 unit tests, 72 live-Postgres checks, 25 server-action checks,
+**Verified:** 249 unit tests, 84 live-Postgres checks, 31 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 **The permission checks are the ones to read.** They assert the property
@@ -170,20 +172,29 @@ so an empty month reported the list as empty (D-069).
 
 ## Where to pick up
 
-**Next — real identity.** Phase 5 was two halves and the access-control half is
-done: the rule that decides who sees what is a pure function with 26 tests, the
-index is rebuilt inside the transaction that changes a grant, and there is a
-screen for writing them. What is left is that `getCurrentUser()` reads a cookie
-holding a user id and trusts it (D-034).
+**Phase 5 is done.** Both halves: the rule that decides who sees what is a pure
+function with 26 tests and the index is rebuilt inside the transaction that
+changes a grant; and sign-in is real, with scrypt hashes and server-side
+sessions. Nothing in the app is pretending any more — the dev switcher is a
+convenience layered on top of real sessions rather than a stand-in for them.
 
-That is a smaller job than it sounds, because everything downstream already
-takes a viewer id and scopes to it. What it needs is a decision about the
-mechanism — passwords, magic links, or an OAuth provider — and then sessions,
-a `users.password_hash` or equivalent, and replacing the switcher. **Nothing
-else should be built on the dev stub**; it is the last thing pretending.
+**Next — Phase 6's last renderer, or Phase 7.** Two honest options:
 
-Table and Calendar landed 2026-09-05; the permission layer and sharing screen
-on 2026-09-06.
+- **Gantt**, which is the renderer most likely to break the compiler bet: a bar
+  spanning start to due is not a row at a point, and dependencies between bars
+  are a genuinely new query. Worth doing *because* it is the one that might
+  need the compiler to learn something.
+- **Collaboration (Phase 7)**, which is now unblocked for the first time —
+  every fan-out (comments, notifications, presence) needs "whoever can see this
+  thing", and that is a join against a table that is now correct.
+
+The things that would make the product *feel* finished, in rough order of
+payoff: a task detail panel (D-031 says it is a route, and nothing opens one
+yet), inviting a real person rather than seeding four, and a group management
+screen so group grants can be used.
+
+Table and Calendar landed 2026-09-05; permissions, sharing and real auth on
+2026-09-06.
 
 **Gantt, when it comes, is the renderer most likely to break the bet.** A bar
 spanning start to due is not a row at a point, and nothing in the compiler
@@ -289,6 +300,13 @@ twice).
 - **Keyboard and touch on the board.** Native drag has neither (D-051). Moving
   between statuses has a keyboard path already; reordering within a column does
   not.
+- **No password reset, and no way to create an account.** Sign-in works; the
+  rest of the account lifecycle does not exist. Reset needs email, which the
+  compose file already runs (Mailpit) and the reference deployment already
+  names (SES) — it is a flow, not an infrastructure decision.
+- **Every `check:actions` run leaves a session row.** Harmless, and
+  `purgeExpiredSessions` only takes expired ones. Worth a cleanup in the script
+  eventually.
 - **Groups have no UI.** The model supports group grants and the sharing panel
   offers them, but nothing creates a group or puts people in one, so the demo
   has none. `user_groups` and `user_group_members` are seeded empty.

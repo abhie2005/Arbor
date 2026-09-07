@@ -7,8 +7,8 @@ and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 > permission index, mutation layer, and the configuration engines all work and
 > are tested against a real Postgres. Four renderers — List, Board, Table and
 > Calendar — read through the same compiler, with a filter bar, sortable columns
-> and working undo. Auth is a development stub, and most of the product is
-> unbuilt.
+> and working undo. Sign-in, private containers and sharing are real. Most of
+> the product is still unbuilt.
 > **[docs/STATUS.md](docs/STATUS.md) is the current state and where to pick up.**
 
 ---
@@ -27,15 +27,17 @@ npm run db:seed        # a populated demo workspace, not an empty shell
 npm run dev
 ```
 
-Requires Node 22+ and Docker. Nothing else, and no cloud account.
+Requires Node 22+ and Docker. Nothing else, and no cloud account — sign-in is
+part of the app rather than a service you register for. The seed prints the
+demo password.
 
 Verify the stack end to end:
 
 ```bash
-npm test               # 241 unit tests, no database needed
-npm run db:smoke       # 72 checks against real Postgres: compiled queries,
+npm test               # 249 unit tests, no database needed
+npm run db:smoke       # 84 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
-npm run check:actions  # 25 checks that POST what a button click posts, then
+npm run check:actions  # 31 checks that POST what a button click posts, then
                        # assert against Postgres — needs `npm run dev` running
 ```
 
@@ -134,10 +136,10 @@ connections, and API Gateway's WebSocket API bills per message.
 - [x] **4 — Configuration engines.** Status sets with inheritance and task
       migration on delete, twenty custom field types with per-type validation,
       task types with field scoping, workflow templates, and a settings screen.
-- [ ] **5 — Access control.** Private containers, grants, group grants, role
-      baselines and the access-index rebuild are done, with a sharing screen.
-      *Real auth is not:* everything still runs behind a development user
-      switcher, and that is the next thing to build.
+- [x] **5 — Access control.** Private containers, grants, group grants, role
+      baselines, the access-index rebuild and a sharing screen — plus real
+      sign-in: scrypt password hashes, server-side sessions, and a login
+      screen. Account creation and password reset are not built.
 - [ ] **6 — Views.** Saved-view CRUD, Table and Calendar are done; Gantt
       remains, and it is the one that may need the compiler to learn about
       ranges.
