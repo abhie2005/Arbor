@@ -7,6 +7,7 @@ const SECTIONS = [
   { href: "/settings/statuses", label: "Statuses", icon: "◍" },
   { href: "/settings/fields", label: "Custom fields", icon: "⌗" },
   { href: "/settings/types", label: "Task types", icon: "◈" },
+  { href: "/settings/sharing", label: "Sharing", icon: "◌" },
 ];
 
 export function SettingsTabs() {

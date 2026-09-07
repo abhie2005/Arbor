@@ -99,6 +99,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-069](#d-069) | The sidebar counts the list, not the page | Query |
 | [D-070](#d-070) | The rule about who sees what is pure, and lives in core | Auth |
 | [D-071](#d-071) | The index is rebuilt inside the transaction that changed the grant | Auth |
+| [D-072](#d-072) | A workspace always has a default status set | Data |
+| [D-073](#d-073) | Inherited grants are shown, and cannot be removed where they are shown | Frontend |
 
 ---
 
@@ -1937,3 +1939,46 @@ queued job with the immediate-delete escape hatch ADR 3 already describes.
 *In one sentence:* a permission change is not eventually correct, it is correct
 when it commits — and that is worth a rebuild per share until the numbers say
 otherwise.
+
+### D-072
+**A workspace always has a default status set** · 2026-09-06 · active
+
+The seed creates one attached to nothing, alongside the set attached to the
+Engineering space. `resolveStatusSet` walks container → ancestors → workspace
+default and throws if all three come up empty.
+
+**The throw is correct; the data was wrong.** With one space, whose tree held
+the only set, nothing had ever asked about a container outside it. Adding a
+second space made `/settings/statuses` return 500 — from a function doing
+exactly what it should, because guessing a status set for a container that has
+none is how tasks end up in a status their list does not have.
+
+**So the invariant belongs in the data**: a workspace has a default, and every
+container therefore resolves something. A smoke check now asserts it for *every*
+container rather than for the demo list, which is the shape of check that would
+have caught this before a screen did.
+
+*In one sentence:* a function that refuses to guess is only as useful as the
+data that stops it having to.
+
+### D-073
+**Inherited grants are shown, and cannot be removed where they are shown** · 2026-09-06 · active
+
+The sharing panel lists a container's own grants and the ones it inherits,
+labelled with where they came from. Only its own have a Remove button.
+
+**Showing them is the point.** A panel listing only a container's own grants
+tells someone their list is unshared while the space above it is open to
+everyone — which is precisely the misunderstanding that leaks things.
+
+**Not removing them is the honest half.** A grant on a parent cannot be undone
+from a child; the fix is either a change further up or making this container
+private. A Remove button that silently did nothing, or that quietly made the
+container private as a side effect, would both be worse than no button.
+
+**The number beside each container is read from the access index**, not counted
+from its grants. The index is what queries actually join against, so if the two
+ever disagree, this screen shows what is true rather than what was intended.
+
+*In one sentence:* the screen shows the whole picture including the parts it
+cannot change, and says which is which.

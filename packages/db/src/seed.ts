@@ -117,6 +117,24 @@ async function main() {
     .set({ containerId: space.id })
     .where(eq(s.statusSets.id, statusSet.id));
 
+  // A workspace-level default, attached to nothing.
+  //
+  // Without one, a container outside the Engineering tree resolves no status
+  // set at all and `resolveStatusSet` throws - which is correct of it, and
+  // meant the settings screen 500ed the moment a second space existed. The
+  // demo had exactly one space, so nothing had ever asked.
+  const [defaultSet] = await db
+    .insert(s.statusSets)
+    .values({ workspaceId: workspace.id, name: "Default", isTemplate: false })
+    .returning();
+  if (!defaultSet) throw new Error("seed: default status set insert failed");
+
+  await db.insert(s.statuses).values([
+    { statusSetId: defaultSet.id, name: "Open", group: "not_started", color: "#6B7686", position: 0 },
+    { statusSetId: defaultSet.id, name: "Doing", group: "active", color: "#5B8DEF", position: 1 },
+    { statusSetId: defaultSet.id, name: "Done", group: "done", color: "#43B581", position: 2 },
+  ]);
+
   const spaceChildPositions = initialPositions(2);
 
   const [folder] = await db

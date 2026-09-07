@@ -739,6 +739,27 @@ async function main() {
 
   await pool.query(`DELETE FROM fields WHERE id = $1`, [estimate.id]);
 
+  // Every container, not just the demo list. A workspace with no default status
+  // set resolves nothing for anything outside the tree its one set is attached
+  // to, and `resolveStatusSet` throws - correctly, which turned into a 500 on
+  // the settings screen the first time a second space existed.
+  const everyContainer = await pool.query<{ id: string; name: string }>(
+    `SELECT id, name FROM containers WHERE workspace_id = $1`,
+    [ws.id],
+  );
+  const unresolved: string[] = [];
+  for (const container of everyContainer.rows) {
+    try {
+      await resolveStatusSetFor(ws.id!, container.id, pool);
+    } catch {
+      unresolved.push(container.name);
+    }
+  }
+  report(
+    "every container resolves a status set",
+    unresolved.length === 0 ? null : `no set resolves for: ${unresolved.join(", ")}`,
+  );
+
   // --- permissions ----------------------------------------------------------
   console.log("\npermissions → grants become the index\n");
 
