@@ -19,7 +19,8 @@ import {
 } from "@arbor/core";
 import { eq } from "drizzle-orm";
 
-import { createDatabase } from "./client";
+import { rebuildAccessIndex } from "./access";
+import { createDatabase, pool } from "./client";
 import * as s from "./schema";
 
 const DEMO_SLUG = "northwind";
@@ -534,20 +535,50 @@ async function main() {
     },
   ]);
 
+  // --- a private space ------------------------------------------------------
+  // One container nobody reaches by default, so the demo exercises the half of
+  // the permission model that matters: Riley is granted it explicitly, and
+  // everyone else is left out.
+  const [privateSpace] = await db
+    .insert(s.containers)
+    .values({
+      workspaceId: workspace.id,
+      parentId: null,
+      kind: "space",
+      name: "Founders",
+      position: firstPosition(),
+      isPrivate: true,
+      createdBy: avery.id,
+    })
+    .returning();
+  if (!privateSpace) throw new Error("seed: private space insert failed");
+
+  const [privateList] = await db
+    .insert(s.containers)
+    .values({
+      workspaceId: workspace.id,
+      parentId: privateSpace.id,
+      kind: "list",
+      name: "Hiring",
+      position: firstPosition(),
+      createdBy: avery.id,
+    })
+    .returning();
+  if (!privateList) throw new Error("seed: private list insert failed");
+
+  await db.insert(s.grants).values({
+    containerId: privateSpace.id,
+    principalKind: "user",
+    principalId: riley.id,
+    permission: "edit",
+    grantedBy: avery.id,
+  });
+
   // --- access index ---------------------------------------------------------
-  // Normally rebuilt by the worker. Seeded directly here so the demo has
-  // working permissions before any background job has run.
-  const lists = [sprint.id, backlog.id];
-  await db.insert(s.accessIndex).values(
-    users.flatMap((u) =>
-      lists.map((listId) => ({
-        workspaceId: workspace.id,
-        principalId: u.id,
-        listId,
-        permission: "manage" as const,
-      })),
-    ),
-  );
+  // Computed by the real job rather than written by hand. The seed used to
+  // insert "everyone can manage everything", which meant the demo could not
+  // have shown a permission bug even in principle.
+  const access = await rebuildAccessIndex(workspace.id, pool());
 
   const taskCount = await db.$count(s.tasks);
   console.log(
@@ -556,6 +587,8 @@ async function main() {
       `  Workspace   ${workspace.name} (/${workspace.slug})`,
       `  Members     ${users.length}`,
       `  Hierarchy   ${space.name} › ${folder.name} › ${sprint.name}  (+ folderless "${backlog.name}")`,
+      `  Private     ${privateSpace.name} › ${privateList.name}  (granted to ${riley.name} only)`,
+      `  Access      ${access.length} rows, computed by rebuildAccessIndex`,
       `  Statuses    ${statusRows.map((r) => r.name).join(", ")}`,
       `  Fields      Severity (Bug only), Story Points, Components`,
       `  Tasks       ${taskCount}`,

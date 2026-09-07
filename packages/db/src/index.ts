@@ -10,6 +10,16 @@ export {
 } from "./client";
 export { loadContainerTree } from "./containers";
 export {
+  grantAccess,
+  listGrants,
+  loadAccessInputs,
+  rebuildAccessIndex,
+  revokeAccess,
+  setContainerPrivacy,
+  type ContainerGrant,
+  type GrantInput,
+} from "./access";
+export {
   FieldNotFound,
   archiveField,
   changeFieldType,

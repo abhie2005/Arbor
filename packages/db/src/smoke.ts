@@ -27,6 +27,13 @@ import {
   setFieldScopes,
   updateField,
 } from "./fields";
+import {
+  grantAccess,
+  listGrants,
+  rebuildAccessIndex,
+  revokeAccess,
+  setContainerPrivacy,
+} from "./access";
 import { applyOperations } from "./mutations";
 import { createTaskType, deleteTaskType, listTaskTypes } from "./task-types";
 import {
@@ -731,6 +738,126 @@ async function main() {
   );
 
   await pool.query(`DELETE FROM fields WHERE id = $1`, [estimate.id]);
+
+  // --- permissions ----------------------------------------------------------
+  console.log("\npermissions → grants become the index\n");
+
+  // Everything here is checked *through a compiled view query*, not by reading
+  // access_index. The index existing is not the property that matters; a task
+  // in a private list not coming back is.
+  const founders = await one("SELECT id FROM containers WHERE name='Founders'");
+  const hiring = await one("SELECT id FROM containers WHERE name='Hiring'");
+  const owner = await one("SELECT id FROM users WHERE email='avery@example.com'");
+  const outsider = await one("SELECT id FROM users WHERE email='sam@example.com'");
+
+  const seesHiring = async (userId: string) => {
+    const compiled = compileViewQuery({
+      workspaceId: ws.id!,
+      viewerId: userId,
+      scope: { kind: "list", id: hiring.id! },
+      definition: DEFAULT_VIEW_DEFINITION,
+    });
+    const result = await pool.query(compiled.text, compiled.params);
+    return result.rows.length;
+  };
+
+  // Cleared first and inserted plainly, with no ON CONFLICT: a check whose
+  // fixture can silently not be created reports "nobody can see it" and looks
+  // exactly like a permission bug, which is how this cost twenty minutes.
+  await pool.query(`DELETE FROM tasks WHERE name = 'Offer letter template'`);
+  const privateTask = await one(
+    `INSERT INTO tasks (workspace_id, home_list_id, space_id, name, position, created_by)
+     VALUES ('${ws.id}', '${hiring.id}', '${founders.id}', 'Offer letter template', 'a0',
+             '${owner.id}')
+     RETURNING id`,
+  );
+  await pool.query(`INSERT INTO task_lists (task_id, list_id, position) VALUES ($1, $2, 'a0')`, [
+    privateTask.id,
+    hiring.id,
+  ]);
+
+  report(
+    "the private task the next checks depend on exists",
+    privateTask?.id ? null : "the fixture was not created",
+  );
+
+  report(
+    "a task in a private list is invisible to a member with no grant",
+    (await seesHiring(outsider.id!)) === 0 ? null : "permission leak: the private task came back",
+  );
+
+  report(
+    "the same task is visible to the member it was shared with",
+    (await seesHiring(viewer.id!)) === 1 ? null : "the grantee cannot see what they were granted",
+  );
+
+  report(
+    "and to the owner, who cannot be locked out of their own workspace",
+    (await seesHiring(owner.id!)) === 1 ? null : "the owner cannot see a private list",
+  );
+
+  const accessConfig = { actorId: owner.id!, connection: pool };
+
+  await grantAccess(
+    { containerId: hiring.id!, principalKind: "user", principalId: outsider.id!, permission: "view" },
+    accessConfig,
+  );
+  report(
+    "granting access makes it visible without a separate rebuild step",
+    (await seesHiring(outsider.id!)) === 1 ? null : "the grant did not reach the index",
+  );
+
+  await revokeAccess(hiring.id!, "user", outsider.id!, accessConfig);
+  report(
+    "revoking it takes the access away again",
+    (await seesHiring(outsider.id!)) === 0 ? null : "permission leak: revoked access still reads",
+  );
+
+  report(
+    "revoking a grant that is not there is refused rather than silently ignored",
+    await expectRejection(() => revokeAccess(hiring.id!, "user", outsider.id!, accessConfig)),
+  );
+
+  // Closing an open space is the operation with the widest blast radius, and
+  // the one where an incremental rebuild would be most likely to miss a list.
+  await setContainerPrivacy(space.id!, true, accessConfig);
+  const closedOff = await pool.query(
+    `SELECT 1 FROM access_index WHERE principal_id = $1 AND list_id = $2`,
+    [outsider.id, list.id],
+  );
+  report(
+    "making a space private closes every list beneath it",
+    closedOff.rows.length === 0 ? null : "a list under a private space is still reachable",
+  );
+
+  await setContainerPrivacy(space.id!, false, accessConfig);
+  const openedAgain = await pool.query(
+    `SELECT 1 FROM access_index WHERE principal_id = $1 AND list_id = $2`,
+    [outsider.id, list.id],
+  );
+  report(
+    "and opening it again restores what inheritance implies",
+    openedAgain.rows.length === 1 ? null : "reopening a space did not restore access",
+  );
+
+  const firstRun = await rebuildAccessIndex(ws.id!, pool);
+  const secondRun = await rebuildAccessIndex(ws.id!, pool);
+  report(
+    "a rebuild that changes nothing produces exactly the same rows",
+    JSON.stringify(firstRun) === JSON.stringify(secondRun)
+      ? null
+      : `${firstRun.length} rows then ${secondRun.length}`,
+  );
+
+  const inherited = await listGrants(hiring.id!, pool);
+  report(
+    "a list reports the grants it inherits, not only its own",
+    inherited.some((grant) => grant.inherited && grant.containerName === "Founders")
+      ? null
+      : `grants seen: ${inherited.map((g) => `${g.containerName}/${g.principalName}`).join(", ")}`,
+  );
+
+  await pool.query(`DELETE FROM tasks WHERE name = 'Offer letter template'`);
 
   // --- saved views ---------------------------------------------------------
   console.log("\nsaved views → validated on write\n");

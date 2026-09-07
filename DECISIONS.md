@@ -1876,3 +1876,62 @@ materialized index exists to prevent.
 
 *In one sentence:* a number beside a list's name is about the list, so it is
 counted once and not left to whichever renderer happens to be open.
+
+### D-070
+**The rule about who sees what is pure, and lives in core** · 2026-09-06 · active
+
+`resolveAccess(containers, grants, members, groupMembers)` returns the rows of
+the access index. It has no database in it, so the rule can be tested without
+one and cannot differ between the job that rebuilds the index and anything else
+that asks.
+
+Three rules produce every row: an open list is reachable by every member at the
+permission their role implies; a list that is effectively private is reachable
+only through an explicit grant on it or above it; and the strongest applicable
+permission wins.
+
+**The owner is the exception to privacy; the admin is not.** An owner reaches
+every list because the alternative is a workspace whose owner can be locked out
+of their own data. An admin does not, because a private space an admin can
+silently read is not private — "admin" is permission to administer, not to
+read. That asymmetry is the kind of thing that gets decided by accident in a
+query somewhere; here it is one branch with a test named after it.
+
+**A guest's baseline is `null`, not `view`.** A guest is someone invited to
+specific things, so "everything not marked private" is precisely the wrong
+default. Grants are the only way a guest reaches anything.
+
+**A grant never lowers what a role already gives.** Sharing something with
+someone must not take access away, so the merge is strongest-wins rather than
+last-wins.
+
+*In one sentence:* the question every query depends on is answered by one pure
+function with 26 tests, rather than by SQL nobody can exercise in isolation.
+
+### D-071
+**The index is rebuilt inside the transaction that changed the grant** · 2026-09-06 · active
+
+`grantAccess`, `revokeAccess` and `setContainerPrivacy` recompute the whole
+workspace's index before they commit. ADR 3 describes this as a background job;
+it is synchronous for now, deliberately.
+
+**Because eventual consistency on a revocation is a leak.** ADR 3 accepts a
+stale window and says revocations that must be immediate need a direct delete.
+Doing the rebuild in the same transaction means there is no window at all: the
+grant and the access it implies land together or neither does.
+
+**Whole-workspace, not incremental.** A container tree is hundreds of rows, and
+an incremental rebuild has to work out what a change implies — which is exactly
+the reasoning that goes wrong quietly, and wrongly here means someone reads what
+they should not. `affectedLists` exists for when a workspace is big enough that
+this matters; until then, recomputing everything is the version that cannot
+drift. The rebuild is idempotent by construction (delete, then insert what the
+rule says), so it can be re-run whenever anything is unsure.
+
+**The trade being accepted:** a share costs a full rebuild. At a thousand lists
+and a hundred members that is a hundred thousand rows, and this becomes a
+queued job with the immediate-delete escape hatch ADR 3 already describes.
+
+*In one sentence:* a permission change is not eventually correct, it is correct
+when it commits — and that is worth a rebuild per share until the numbers say
+otherwise.
