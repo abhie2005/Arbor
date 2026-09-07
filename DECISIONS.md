@@ -97,6 +97,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-067](#d-067) | A calendar day is stored at UTC midnight and read in UTC | Data |
 | [D-068](#d-068) | A renderer may narrow the query; the URL may not widen it back | Query |
 | [D-069](#d-069) | The sidebar counts the list, not the page | Query |
+| [D-070](#d-070) | The rule about who sees what is pure, and lives in core | Auth |
+| [D-071](#d-071) | The index is rebuilt inside the transaction that changed the grant | Auth |
 
 ---
 
