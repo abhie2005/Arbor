@@ -2,6 +2,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { SettingsTabs } from "@/components/settings/tabs";
+import { workspaceRole } from "@arbor/db";
+
 import { getCurrentUser } from "@/server/auth";
 import { requireWorkspace } from "@/server/workspace";
 
@@ -15,9 +17,17 @@ export const dynamic = "force-dynamic";
 export default async function SettingsLayout({ children }: { children: React.ReactNode }) {
   // Settings writes configuration, so it needs an actor for the activity log
   // as much as the work screens do.
-  if (!(await getCurrentUser())) redirect("/login");
+  const viewer = await getCurrentUser();
+  if (!viewer) redirect("/login");
 
   const workspace = await requireWorkspace();
+
+  // Configuration is administered rather than edited (D-081), so a member's
+  // controls here will be refused by the server. Saying so once at the top
+  // beats fifteen controls that look live and are not — the same rule the
+  // unsortable table headers follow (D-065).
+  const role = await workspaceRole(workspace.id, viewer.id);
+  const readOnly = role !== "owner" && role !== "admin";
 
   return (
     <div className="shell">
@@ -39,7 +49,16 @@ export default async function SettingsLayout({ children }: { children: React.Rea
         </nav>
       </aside>
 
-      <main className="main">{children}</main>
+      <main className="main">
+        {readOnly ? (
+          <div className="notice">
+            You are a {role ?? "guest"} in this workspace. Statuses, fields, task types and
+            sharing are workspace configuration, so only an owner or admin can change them.
+            Everything here is readable; saving will be refused.
+          </div>
+        ) : null}
+        {children}
+      </main>
     </div>
   );
 }

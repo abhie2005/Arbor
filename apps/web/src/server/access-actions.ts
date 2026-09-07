@@ -1,7 +1,13 @@
 "use server";
 
 import type { Permission } from "@arbor/core";
-import { grantAccess, rebuildAccessIndex, revokeAccess, setContainerPrivacy } from "@arbor/db";
+import {
+  grantAccess,
+  rebuildAccessIndex,
+  requireWorkspaceRole,
+  revokeAccess,
+  setContainerPrivacy,
+} from "@arbor/db";
 import { revalidatePath } from "next/cache";
 
 import { requireUser } from "./auth";
@@ -18,7 +24,20 @@ import { requireWorkspace } from "./workspace";
  * Every path revalidates every renderer, because a permission change can add
  * or remove whole lists from what the viewer sees — unlike a task edit, which
  * only changes a row.
+ *
+ * **These are the actions that had to be closed first** (D-081). Until they
+ * were, every other permission check in the app was advisory: anyone signed in
+ * could grant themselves `manage` on any container and then do legitimately
+ * whatever the check had just refused. A gate beside an open door is not a
+ * gate.
  */
+
+/** Sharing is administration. See D-081 for why this is a role and not yet a permission. */
+async function admin() {
+  const [actor, workspace] = await Promise.all([requireUser(), requireWorkspace()]);
+  await requireWorkspaceRole(workspace.id, actor.id, "admin");
+  return actor;
+}
 
 export type AccessResult = { ok: true } | { ok: false; error: string };
 
@@ -39,7 +58,7 @@ export async function shareContainerAction(
   permission: Permission,
 ): Promise<AccessResult> {
   try {
-    const actor = await requireUser();
+    const actor = await admin();
     await grantAccess(
       { containerId, principalKind, principalId, permission },
       { actorId: actor.id },
@@ -57,7 +76,7 @@ export async function unshareContainerAction(
   principalId: string,
 ): Promise<AccessResult> {
   try {
-    const actor = await requireUser();
+    const actor = await admin();
     await revokeAccess(containerId, principalKind, principalId, { actorId: actor.id });
     revalidateEverything();
     return { ok: true };
@@ -71,7 +90,7 @@ export async function setPrivacyAction(
   isPrivate: boolean,
 ): Promise<AccessResult> {
   try {
-    const actor = await requireUser();
+    const actor = await admin();
     await setContainerPrivacy(containerId, isPrivate, { actorId: actor.id });
     revalidateEverything();
     return { ok: true };
@@ -90,8 +109,9 @@ export async function setPrivacyAction(
  */
 export async function rebuildAccessAction(): Promise<AccessResult> {
   try {
-    await requireUser();
     const workspace = await requireWorkspace();
+    const actor = await requireUser();
+    await requireWorkspaceRole(workspace.id, actor.id, "admin");
     await rebuildAccessIndex(workspace.id);
     revalidateEverything();
     return { ok: true };

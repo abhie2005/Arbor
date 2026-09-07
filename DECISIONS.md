@@ -108,6 +108,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-078](#d-078) | A timeline is a nested clause, not a new query | Query |
 | [D-079](#d-079) | The shell is a component, extracted at the sixth copy | Frontend |
 | [D-080](#d-080) | Authenticating is not authorizing, and every write does both | Auth |
+| [D-081](#d-081) | Configuration is administered; a view is authorized as two things | Auth |
 
 ---
 
@@ -2191,3 +2192,54 @@ as the seed writing "everyone can manage everything" by hand, one level down.
 *In one sentence:* knowing who someone is was never the same as knowing what
 they may touch, and the detail panel is what turns that from a latent hole into
 a reachable one.
+
+### D-081
+**Configuration is administered; a view is authorized as two things** · 2026-09-07 · active
+
+`requireWorkspaceRole` guards sharing and every configuration action;
+`requireViewAccess` guards saved views. With D-080, no server action in the app
+now authenticates without also authorizing.
+
+**D-080 was not a fix until this landed.** `shareContainerAction` took a
+container id and a permission from any signed-in user and wrote a grant. So the
+task check could be walked around in one extra request: grant yourself `manage`
+on the private space, then edit the task legitimately. `check:actions` performs
+exactly that sequence, and reverting this commit makes it succeed — the task is
+renamed to "Renamed after granting myself access". A gate beside an open door
+is not a gate.
+
+**Why a workspace role and not a container permission.** The honest rule is
+"you may share a container if you can manage it", and it cannot be written
+today: `access_index` is keyed on *lists*, because `resolveAccess` emits one row
+per reachable list by design (ADR 3), and a grant may target a space or a
+folder. There is no fact in the system that answers "may this person manage the
+space Founders". Inventing one inside a commit about something else is how a
+permission model acquires a rule nobody decided, so the boundary is the
+workspace role until the rule exists. Blunt and closed beats precise and open.
+
+**What that costs, stated plainly.** A team lead who makes a private space
+cannot share it without being a workspace admin. That is wrong, and it is wrong
+in the safe direction. The fix is to extend `resolveAccess` to emit container
+permissions alongside list rows, which is a change to the pure rule and its 30
+tests — worth doing deliberately, not as a side effect.
+
+**A view is two different objects.** A personal view is one person's: nobody
+else may rename, redefine or delete it, *including an admin*, because a
+personal view is invisible to everyone else and a control that edits what it
+cannot see is not one anyone can reason about. A shared view is part of its
+container and takes that container's `edit`. `requireViewAccess` decides which
+by looking at `ownerId`, so no action has to remember the distinction — and
+because it returns the actor config the services need, an action cannot obtain
+its argument without having been checked.
+
+**Fifteen actions, one line.** Every configuration action already went through
+one `context()` helper, so the check went there. That is what a chokepoint is
+for, and it is the difference between adding one check and remembering fifteen.
+
+**The settings screen says so before it refuses.** A member sees a banner rather
+than fifteen controls that look live and fail on click — the same rule as the
+table headers that explain why they cannot sort (D-065).
+
+*In one sentence:* the task check only became true once the action that could
+hand out permissions was closed, and closing it needed a boundary that exists
+rather than the one that should.

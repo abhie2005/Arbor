@@ -522,6 +522,11 @@ console.log("\nauthorization → an id is not permission\n");
 // the case that matters: signed in, legitimate, and not entitled to this row.
 const { token: samToken } = await signIn("sam@example.com", "arbor-demo-2026");
 const SAM = `arbor_session=${samToken}`;
+const samUserId = (await one(`SELECT id FROM users WHERE email = 'sam@example.com'`)).id;
+
+await warm("/settings/sharing");
+const SHARING_URL = `http://localhost:${PORT}/settings/sharing`;
+const SHARING_ACTIONS = actionIds("app/settings/sharing/page");
 
 const privateTask = await one(`SELECT id, name, status_id FROM tasks WHERE key = 'HIRE-1'`);
 report(
@@ -607,6 +612,84 @@ report(
     : `a permitted edit was refused: the name is "${memberRenamed.name}"`,
 );
 await db.query(`UPDATE tasks SET name = $1 WHERE id = $2`, [reachable.name, reachable.id]);
+
+// Sharing and configuration are administered, not edited (D-081). Sam is a
+// member: the strongest thing he holds is `edit` on a container, and none of
+// these are scoped to a container at all.
+const founders = await one(`SELECT id FROM containers WHERE name = 'Founders'`);
+
+const forgedGrant = await callOn(
+  SHARING_URL,
+  SHARING_ACTIONS.shareContainerAction!,
+  [founders.id, "user", samUserId, "manage"],
+  SAM,
+);
+const grantLanded = await one(
+  `SELECT 1 FROM grants WHERE container_id = $1 AND principal_id = $2`,
+  [founders.id, samUserId],
+);
+report(
+  "a member cannot grant themselves access to a private space",
+  /admin/i.test(forgedGrant.text) && !grantLanded
+    ? null
+    : grantLanded
+      ? "the grant was written — the escalation path is open"
+      : `refused, but not as an admin check: ${forgedGrant.text.slice(0, 140)}`,
+);
+
+// The escalation this closes, end to end: with the grant refused, the task
+// check from D-080 still stands rather than being walked around.
+const stillHidden = await callOn(
+  "http://localhost:" + PORT + "/",
+  PAGE_ACTIONS.renameTask!,
+  [privateTask.id, "Renamed after granting myself access"],
+  SAM,
+);
+const stillNamed = await one(`SELECT name FROM tasks WHERE id = $1`, [privateTask.id]);
+report(
+  "so the task check cannot be walked around by granting first",
+  stillHidden.text.includes("no longer exists") && stillNamed.name === privateTask.name
+    ? null
+    : `the task is now named "${stillNamed.name}"`,
+);
+
+const forgedPrivacy = await callOn(
+  SHARING_URL,
+  SHARING_ACTIONS.setPrivacyAction!,
+  [founders.id, false],
+  SAM,
+);
+const stillPrivate = await one(`SELECT is_private FROM containers WHERE id = $1`, [founders.id]);
+report(
+  "and cannot open a private space by turning privacy off",
+  /admin/i.test(forgedPrivacy.text) && stillPrivate.is_private === true
+    ? null
+    : "the space was opened",
+);
+
+const forgedStatus = await callOn(
+  PAGE,
+  IDS.createStatusSetAction!,
+  [`Forged ${Date.now()}`, "simple", null],
+  SAM,
+);
+report(
+  "a member cannot create a workspace status set",
+  /admin/i.test(forgedStatus.text) ? null : `got ${forgedStatus.text.slice(0, 140)}`,
+);
+
+// The owner is checked on the same call, so none of the above can be passing
+// because the server stopped writing.
+const allowedPrivacy = await callOn(SHARING_URL, SHARING_ACTIONS.setPrivacyAction!, [
+  founders.id,
+  true,
+]);
+report(
+  "an admin may still change privacy",
+  returned(allowedPrivacy.text)?.ok === true
+    ? null
+    : `the owner was refused: ${allowedPrivacy.text.slice(0, 140)}`,
+);
 
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);

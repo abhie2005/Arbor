@@ -12,6 +12,7 @@ import {
   deleteStatus,
   deleteTaskType,
   moveStatus,
+  requireWorkspaceRole,
   setDefaultTaskType,
   setFieldScopes,
   updateField,
@@ -43,8 +44,18 @@ function failed(error: unknown): ActionResult {
   return { ok: false, error: error instanceof Error ? error.message : String(error) };
 }
 
+/**
+ * Who is asking, and whether they may.
+ *
+ * Every action in this file goes through here, which is why the authorization
+ * is one line rather than fifteen. Workspace configuration is administered
+ * rather than edited (D-081): a status set, a custom field and a task type are
+ * shared by every list, and a member holding `manage` on one container is not
+ * thereby entitled to delete the status set the others depend on.
+ */
 async function context() {
-  const [actor] = await Promise.all([requireUser(), requireWorkspace()]);
+  const [actor, workspace] = await Promise.all([requireUser(), requireWorkspace()]);
+  await requireWorkspaceRole(workspace.id, actor.id, "admin");
   return { actorId: actor.id };
 }
 

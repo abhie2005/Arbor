@@ -2286,3 +2286,19 @@ select.filter-add option {
   font-size: var(--text-meta);
   color: var(--text-3);
 }
+
+/* Says once, at the top, what fifteen controls would otherwise say by failing
+   (D-081). Warning rather than danger: nothing is broken, it is not yours. */
+.notice {
+  /* The width of the cards it sits above, so it reads as part of the page
+     rather than as chrome bolted to the top of it. */
+  max-width: 900px;
+  margin: var(--space-5) var(--space-5) 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-panel);
+  color: var(--text-2);
+  background: none;
+  font-size: var(--text-meta);
+  line-height: 1.5;
+}

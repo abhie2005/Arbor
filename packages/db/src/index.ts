@@ -103,6 +103,11 @@ export {
   requireListAccess,
   requireTaskAccess,
   requireTasksAccess,
+  requireViewAccess,
+  requireWorkspaceRole,
   taskAccess,
+  workspaceRole,
+  type MemberRole,
   type TaskAccess,
+  type ViewAccess,
 } from "./task-access";
