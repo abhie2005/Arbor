@@ -58,8 +58,8 @@ noted here previously was a cold cache.
 Verify without the browser:
 
 ```bash
-npm test                                       # 249 unit tests, no database needed
-npm run db:seed && npm run db:smoke            # 84 checks against real Postgres
+npm test                                       # 260 unit tests, no database needed
+npm run db:seed && npm run db:smoke            # 90 checks against real Postgres
 PORT=3100 npm run check:actions                # 31 checks — needs the dev server
 ```
 
@@ -83,6 +83,8 @@ machine, and the failure it gives you is a 404 rather than a wrong-app warning.
 | **Board view** | Same compiler, `grouping.field = status`. Drag between and within columns, one row written per drag, one undo entry per drag. |
 | **Table view** | Same compiler again, and the first renderer to read a definition's `columns`. Built-in and custom-field columns, sortable headers with the saved order one click away, and a chooser to show, hide and reorder. Status, priority, rename and archive work in the cells. |
 | **Calendar view** | Month grid over the same query, narrowed to the six weeks on screen. Paging by month lives in the URL; dragging a task to another day reschedules it, with undo. `settings.dateField` picks which date the squares mean. |
+| **Timeline (Gantt)** | Bars from start to due across a month of day columns. The renderer that made the compiler learn nested filter clauses, because "overlaps this window" is irreducibly mixed AND and OR. Read-only so far — no dragging, no dependencies. |
+| **Filters** | Conditions may nest, so a clause can say `(a OR b) AND (c OR d)`. The filter bar and the URL stay flat; nesting exists for renderer scope. |
 | **Dates** | A due date flagged as a calendar day is stored at midnight UTC and read in UTC, everywhere. Overdue means the day is over, not that the clock has passed midnight. |
 | **Saved views** | The tab strip is the list of saved views. Create, rename, duplicate, set default, delete — validated by compiling the definition before it is written. Personal views are invisible to others. |
 | **Filter bar** | On all three renderers. Menus are built from the same declaration the compiler validates against, so an invalid filter cannot be expressed. Filter state lives in the URL and is shareable; a malformed link errors instead of showing everything. |
@@ -95,7 +97,7 @@ machine, and the failure it gives you is a 404 rather than a wrong-app warning.
 | **Sharing UI** | `/settings/sharing` — the container tree with how many people each one reaches, a private toggle, and share/unshare. Inherited grants are shown with their source and are not removable there. |
 | **Identity** | Real sessions: scrypt password hashes, a `sessions` row per sign-in with the token stored only as a hash, an httpOnly cookie, and a login screen. Every screen redirects to `/login` without one. The dev user switcher survives *underneath* sessions and applies only when explicitly set. |
 
-**Verified:** 249 unit tests, 84 live-Postgres checks, 31 server-action checks,
+**Verified:** 260 unit tests, 90 live-Postgres checks, 31 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 **The permission checks are the ones to read.** They assert the property
@@ -178,20 +180,21 @@ changes a grant; and sign-in is real, with scrypt hashes and server-side
 sessions. Nothing in the app is pretending any more — the dev switcher is a
 convenience layered on top of real sessions rather than a stand-in for them.
 
-**Next — Phase 6's last renderer, or Phase 7.** Two honest options:
+**Phase 6 is done.** Five renderers over one compiler. The timeline answered
+the open question: the bet held on the part that mattered — no renderer has a
+query of its own — but it did *not* hold that the compiler could already say
+everything a renderer needs. Overlap required nested filter clauses, so the
+compiler grew them (D-078). A renderer finding a gap and the query layer
+closing it is the system working; the next renderer inherits the fix.
 
-- **Gantt**, which is the renderer most likely to break the compiler bet: a bar
-  spanning start to due is not a row at a point, and dependencies between bars
-  are a genuinely new query. Worth doing *because* it is the one that might
-  need the compiler to learn something.
-- **Collaboration (Phase 7)**, which is now unblocked for the first time —
-  every fan-out (comments, notifications, presence) needs "whoever can see this
-  thing", and that is a join against a table that is now correct.
+**Next — the task detail panel.** Every row in five renderers is a dead end:
+there is no way to open a task. D-031 already decided it is a route rather than
+a modal. It is also the thing comments will live in, so it is the honest first
+step of Phase 7 rather than a detour from it.
 
-The things that would make the product *feel* finished, in rough order of
-payoff: a task detail panel (D-031 says it is a route, and nothing opens one
-yet), inviting a real person rather than seeding four, and a group management
-screen so group grants can be used.
+**Then collaboration (Phase 7)**, unblocked for the first time — every fan-out
+needs "whoever can see this thing", and that is now a join against a table that
+is correct.
 
 Table and Calendar landed 2026-09-05; permissions, sharing and real auth on
 2026-09-06.
@@ -215,6 +218,9 @@ twice).
   values is not possible from the UI yet, though the compiler, the URL codec,
   and `parseFilterValue` all handle arrays. A value-control feature, not a
   plumbing one.
+- **The timeline is read-only.** No dragging a bar to reschedule, and no
+  dependencies between bars — the second needs a relations model that does not
+  exist yet, and is the one genuinely new query a timeline could want.
 - **Unscheduled tasks have nowhere to go on the calendar.** The month filter
   excludes tasks with no date, which is correct, but the usual way to schedule
   one is to drag it in from a tray. There is no tray.

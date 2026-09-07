@@ -5,10 +5,10 @@ and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 
 > **Status: early, but real.** The container tree, task model, view compiler,
 > permission index, mutation layer, and the configuration engines all work and
-> are tested against a real Postgres. Four renderers — List, Board, Table and
-> Calendar — read through the same compiler, with a filter bar, sortable columns
-> and working undo. Sign-in, private containers and sharing are real. Most of
-> the product is still unbuilt.
+> are tested against a real Postgres. Five renderers — List, Board, Table,
+> Calendar and Timeline — read through the same compiler, with a filter bar,
+> sortable columns and working undo. Sign-in, private containers and sharing
+> are real. Most of the product is still unbuilt.
 > **[docs/STATUS.md](docs/STATUS.md) is the current state and where to pick up.**
 
 ---
@@ -34,8 +34,8 @@ demo password.
 Verify the stack end to end:
 
 ```bash
-npm test               # 249 unit tests, no database needed
-npm run db:smoke       # 84 checks against real Postgres: compiled queries,
+npm test               # 260 unit tests, no database needed
+npm run db:smoke       # 90 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
 npm run check:actions  # 31 checks that POST what a button click posts, then
                        # assert against Postgres — needs `npm run dev` running
@@ -57,7 +57,7 @@ without writing code.
 
 | Engine | What it does |
 | --- | --- |
-| **Views** | A view is a saved query plus a renderer. Every view type serializes to the same definition, so a board is just `grouping.field = "status"`, a table is the same query showing the definition's own `columns`, and a month is that query narrowed to six weeks. Four renderers, no view-specific SQL. |
+| **Views** | A view is a saved query plus a renderer. Every view type serializes to the same definition, so a board is just `grouping.field = "status"`, a table is the same query showing the definition's own `columns`, and a timeline is that query scoped to what overlaps a window. Five renderers, no view-specific SQL. |
 | **Statuses** | User-named statuses that each belong to a fixed group (`not_started`, `active`, `done`, `closed`). Everything else — filters, reporting, burndown — keys off the group, never the name. |
 | **Fields** | Custom fields defined on any container, optionally scoped to a task type, stored in a typed EAV table so filtering and sorting stay on an index. Twenty types, each declaring its own storage column, legal operators, and config schema — the filter bar builds its menus from the same declaration the query compiler validates against. |
 | **Permissions** | Grants are the source of truth; a materialized access index is what queries actually join against, so permission checks cost one join instead of one per level of nesting. The rule that flattens one into the other is a pure function, tested without a database. |
@@ -140,9 +140,10 @@ connections, and API Gateway's WebSocket API bills per message.
       baselines, the access-index rebuild and a sharing screen — plus real
       sign-in: scrypt password hashes, server-side sessions, and a login
       screen. Account creation and password reset are not built.
-- [ ] **6 — Views.** Saved-view CRUD, Table and Calendar are done; Gantt
-      remains, and it is the one that may need the compiler to learn about
-      ranges.
+- [x] **6 — Views.** Saved-view CRUD, and Table, Calendar and Timeline over the
+      compiler that already served List and Board. The timeline is the one that
+      made the compiler learn something: nested filter clauses, because
+      "overlaps this window" is mixed AND and OR.
 - [ ] **7 — Collaboration.** Comments, notifications, realtime deltas, presence.
 - [ ] **8 — Depth.** Time tracking, goals, dashboards.
 - [ ] **9 — Docs.** CRDT editor, nested pages, backlinks.
@@ -160,10 +161,10 @@ Good first issues are the ones shaped like this: a new view renderer, a new
 custom field type, a keyboard shortcut. Each is self-contained, visible, and
 satisfying.
 
-There is a worked example of each. The Board, Table and Calendar renderers
-(`apps/web/src/app/board/`, `table/`, `calendar/`) are complete renderers over
-the shared compiler, and between them they needed no view-specific SQL — so
-another one is the same shape of work. A field type is one entry in
+There is a worked example of each. The Board, Table, Calendar and Timeline
+renderers (`apps/web/src/app/board/`, `table/`, `calendar/`, `gantt/`) are
+complete renderers over the shared compiler, and between them they needed no
+view-specific SQL — so another one is the same shape of work. A field type is one entry in
 `FIELD_TYPE_META` plus a parser and a value control, and the compiler, the
 mutation executor, and the filter menu all pick it up from there.
 
