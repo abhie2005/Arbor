@@ -102,13 +102,13 @@ function report(label: string, problem: string | null) {
   }
 }
 
-async function callOn(url: string, id: string, args: unknown) {
+async function callOn(url: string, id: string, args: unknown, cookie: string = COOKIE) {
   const response = await fetch(url, {
     method: "POST",
     headers: {
       "Next-Action": id,
       "Content-Type": "text/plain;charset=UTF-8",
-      Cookie: COOKIE,
+      Cookie: cookie,
     },
     body: JSON.stringify(args),
   });
@@ -508,6 +508,105 @@ await db.query(`UPDATE views SET definition = $1 WHERE id = $2`, [
   originalDefinition,
   tableView.id,
 ]);
+
+// --- authorization, through the action boundary -----------------------------
+//
+// `db:smoke` proves the check refuses. This proves the actions *call* it — and
+// it is the half that was missing, because every action authenticated and none
+// authorized. A check that only asserts the refusal message would pass against
+// a server that refused everything, so each one is paired with the same call
+// succeeding for someone who may make it, and with Postgres afterwards.
+console.log("\nauthorization → an id is not permission\n");
+
+// Sam is a member of the workspace with no grant on the private list, which is
+// the case that matters: signed in, legitimate, and not entitled to this row.
+const { token: samToken } = await signIn("sam@example.com", "arbor-demo-2026");
+const SAM = `arbor_session=${samToken}`;
+
+const privateTask = await one(`SELECT id, name, status_id FROM tasks WHERE key = 'HIRE-1'`);
+report(
+  "the private task these checks need exists",
+  privateTask?.id ? null : "the seed did not create HIRE-1 — re-run npm run db:seed",
+);
+
+const refusedCycle = await callOn(
+  "http://localhost:" + PORT + "/",
+  PAGE_ACTIONS.cycleStatus!,
+  [privateTask.id],
+  SAM,
+);
+const unchangedStatus = await one(`SELECT status_id FROM tasks WHERE id = $1`, [privateTask.id]);
+report(
+  "a member with no grant cannot cycle a private task's status",
+  refusedCycle.text.includes("no longer exists") &&
+    unchangedStatus.status_id === privateTask.status_id
+    ? null
+    : "the write landed, or the refusal named the wrong reason",
+);
+
+const refusedRename = await callOn(
+  "http://localhost:" + PORT + "/",
+  PAGE_ACTIONS.renameTask!,
+  [privateTask.id, "Renamed by someone with no access"],
+  SAM,
+);
+const unchangedName = await one(`SELECT name FROM tasks WHERE id = $1`, [privateTask.id]);
+report(
+  "and cannot rename it",
+  refusedRename.text.includes("no longer exists") && unchangedName.name === privateTask.name
+    ? null
+    : `the name is now "${unchangedName.name}"`,
+);
+
+// The widest one: `undo` takes operations from the client, so a hand-built
+// batch naming any task at all is the request this most needed to refuse.
+await callOn(
+  "http://localhost:" + PORT + "/",
+  PAGE_ACTIONS.undo!,
+  [[{ kind: "setField", taskId: privateTask.id, field: "name", from: privateTask.name, to: "Undone into" }]],
+  SAM,
+);
+const afterForgedUndo = await one(`SELECT name FROM tasks WHERE id = $1`, [privateTask.id]);
+report(
+  "a hand-built undo batch cannot write to a task the caller cannot reach",
+  afterForgedUndo.name === privateTask.name
+    ? null
+    : `undo wrote "${afterForgedUndo.name}" to a task the caller has no grant on`,
+);
+
+// Same call, someone who may make it — or the three above would pass against a
+// server that had simply stopped writing.
+const allowedRename = await callOn(
+  "http://localhost:" + PORT + "/",
+  PAGE_ACTIONS.renameTask!,
+  [privateTask.id, "Draft the staff engineer offer (edited)"],
+);
+const ownerRenamed = await one(`SELECT name FROM tasks WHERE id = $1`, [privateTask.id]);
+report(
+  "the owner, who can reach it, still can",
+  allowedRename.status === 200 && ownerRenamed.name.endsWith("(edited)")
+    ? null
+    : `the owner was refused: ${allowedRename.text.slice(0, 120)}`,
+);
+await db.query(`UPDATE tasks SET name = $1 WHERE id = $2`, [privateTask.name, privateTask.id]);
+
+// A task Sam *can* reach, to show the refusal is about the grant and not about
+// Sam being a second session.
+const reachable = await one(`SELECT id, name FROM tasks WHERE key = 'ENG-417'`);
+await callOn(
+  "http://localhost:" + PORT + "/",
+  PAGE_ACTIONS.renameTask!,
+  [reachable.id, "Renamed by a member who may"],
+  SAM,
+);
+const memberRenamed = await one(`SELECT name FROM tasks WHERE id = $1`, [reachable.id]);
+report(
+  "and a member may still edit a task in a list they can reach",
+  memberRenamed.name === "Renamed by a member who may"
+    ? null
+    : `a permitted edit was refused: the name is "${memberRenamed.name}"`,
+);
+await db.query(`UPDATE tasks SET name = $1 WHERE id = $2`, [reachable.name, reachable.id]);
 
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);

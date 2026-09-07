@@ -64,6 +64,13 @@ import {
   statusUsage,
   updateStatus,
 } from "./statuses";
+import {
+  listAccess,
+  requireListAccess,
+  requireTaskAccess,
+  requireTasksAccess,
+  taskAccess,
+} from "./task-access";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL ?? "postgres://arbor:arbor@localhost:5432/arbor",
@@ -995,7 +1002,7 @@ async function main() {
       definition: DEFAULT_VIEW_DEFINITION,
     });
     const result = await pool.query(compiled.text, compiled.params);
-    return result.rows.length;
+    return (result.rows as { id: string }[]).map((row) => row.id);
   };
 
   // Cleared first and inserted plainly, with no ON CONFLICT: a check whose
@@ -1020,17 +1027,23 @@ async function main() {
 
   report(
     "a task in a private list is invisible to a member with no grant",
-    (await seesHiring(outsider.id!)) === 0 ? null : "permission leak: the private task came back",
+    (await seesHiring(outsider.id!)).length === 0
+      ? null
+      : "permission leak: the private task came back",
   );
 
   report(
     "the same task is visible to the member it was shared with",
-    (await seesHiring(viewer.id!)) === 1 ? null : "the grantee cannot see what they were granted",
+    (await seesHiring(viewer.id!)).includes(privateTask.id!)
+      ? null
+      : "the grantee cannot see what they were granted",
   );
 
   report(
     "and to the owner, who cannot be locked out of their own workspace",
-    (await seesHiring(owner.id!)) === 1 ? null : "the owner cannot see a private list",
+    (await seesHiring(owner.id!)).includes(privateTask.id!)
+      ? null
+      : "the owner cannot see a private list",
   );
 
   const accessConfig = { actorId: owner.id!, connection: pool };
@@ -1041,13 +1054,17 @@ async function main() {
   );
   report(
     "granting access makes it visible without a separate rebuild step",
-    (await seesHiring(outsider.id!)) === 1 ? null : "the grant did not reach the index",
+    (await seesHiring(outsider.id!)).includes(privateTask.id!)
+      ? null
+      : "the grant did not reach the index",
   );
 
   await revokeAccess(hiring.id!, "user", outsider.id!, accessConfig);
   report(
     "revoking it takes the access away again",
-    (await seesHiring(outsider.id!)) === 0 ? null : "permission leak: revoked access still reads",
+    (await seesHiring(outsider.id!)).length === 0
+      ? null
+      : "permission leak: revoked access still reads",
   );
 
   report(
@@ -1092,6 +1109,101 @@ async function main() {
     inherited.some((grant) => grant.inherited && grant.containerName === "Founders")
       ? null
       : `grants seen: ${inherited.map((g) => `${g.containerName}/${g.principalName}`).join(", ")}`,
+  );
+
+  // --- writing is scoped too ------------------------------------------------
+  console.log("\npermissions → what a viewer may change, not only see\n");
+
+  // Reads were scoped from the beginning and writes were not: an action
+  // established who was asking and then wrote. These assert the other half —
+  // through the same index, on the same fixture the read checks just used.
+  const sprintTask = await one(`SELECT id FROM tasks WHERE key = 'ENG-402'`);
+
+  report(
+    "a member may edit a task in a list they can reach",
+    (await taskAccess(sprintTask.id!, outsider.id!, pool))?.permission === "edit"
+      ? null
+      : "a member was refused a list their role reaches",
+  );
+
+  report(
+    "a member may not edit a task in a private list they have no grant on",
+    await expectRejection(() =>
+      requireTaskAccess(privateTask.id!, outsider.id!, "edit", pool),
+    ),
+  );
+
+  // The refusal must not distinguish "not yours" from "not there", or a
+  // stranger can enumerate the workspace one id at a time.
+  const refusals = await Promise.all([
+    messageOf(() => requireTaskAccess(privateTask.id!, outsider.id!, "edit", pool)),
+    messageOf(() =>
+      requireTaskAccess("00000000-0000-4000-8000-000000000000", outsider.id!, "edit", pool),
+    ),
+  ]);
+  report(
+    "and an unreachable task is refused with the same words as one that is gone",
+    refusals[0] === refusals[1] ? null : `"${refusals[0]}" vs "${refusals[1]}"`,
+  );
+
+  // A view-only grant is only expressible on a private container: elsewhere a
+  // member's `edit` baseline is stronger and `strongest` keeps it.
+  await grantAccess(
+    { containerId: hiring.id!, principalKind: "user", principalId: outsider.id!, permission: "view" },
+    accessConfig,
+  );
+
+  report(
+    "a view-only grant can read the task",
+    (await seesHiring(outsider.id!)).includes(privateTask.id!)
+      ? null
+      : "a view grant did not reach the index",
+  );
+
+  report(
+    "and cannot write to it",
+    await expectRejection(() =>
+      requireTaskAccess(privateTask.id!, outsider.id!, "edit", pool),
+    ),
+  );
+
+  report(
+    "a refusal for a task you can see says so, rather than claiming it is gone",
+    (await messageOf(() =>
+      requireTaskAccess(privateTask.id!, outsider.id!, "edit", pool),
+    )) !== (await messageOf(() =>
+      requireTaskAccess("00000000-0000-4000-8000-000000000000", outsider.id!, "edit", pool),
+    ))
+      ? null
+      : "an existing task was reported as missing",
+  );
+
+  await revokeAccess(hiring.id!, "user", outsider.id!, accessConfig);
+
+  // The undo action takes operations straight from the client, so a batch that
+  // names one unreachable task is the shape that matters.
+  report(
+    "a batch of reachable tasks is allowed",
+    await expectNoRejection(() =>
+      requireTasksAccess([sprintTask.id!], outsider.id!, "edit", pool),
+    ),
+  );
+
+  report(
+    "a batch with one unreachable task is refused whole",
+    await expectRejection(() =>
+      requireTasksAccess([sprintTask.id!, privateTask.id!], outsider.id!, "edit", pool),
+    ),
+  );
+
+  report(
+    "a malformed id is a refusal, not a database error",
+    await expectRejection(() => requireTaskAccess("not-a-uuid", outsider.id!, "edit", pool)),
+  );
+
+  report(
+    "creating in a private list is refused for someone with no grant",
+    await expectRejection(() => requireListAccess(hiring.id!, outsider.id!, "edit", pool)),
   );
 
   await pool.query(`DELETE FROM tasks WHERE name = 'Offer letter template'`);
@@ -1308,6 +1420,25 @@ async function expectRejection(fn: () => Promise<unknown>): Promise<string | nul
     return "expected a rejection, but the call succeeded";
   } catch {
     return null;
+  }
+}
+
+async function expectNoRejection(fn: () => Promise<unknown>): Promise<string | null> {
+  try {
+    await fn();
+    return null;
+  } catch (error) {
+    return `expected it to be allowed: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+/** The words a refusal used, so two refusals can be compared for sameness. */
+async function messageOf(fn: () => Promise<unknown>): Promise<string> {
+  try {
+    await fn();
+    return "";
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
 }
 

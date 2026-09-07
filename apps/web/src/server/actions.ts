@@ -3,7 +3,13 @@
 import { randomUUID } from "node:crypto";
 
 import { type Operation, invertBatch, positionBetween, startOfUtcDay } from "@arbor/core";
-import { applyOperations, pool } from "@arbor/db";
+import {
+  applyOperations,
+  pool,
+  requireListAccess,
+  requireTaskAccess,
+  requireTasksAccess,
+} from "@arbor/db";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 
@@ -16,6 +22,12 @@ import { DEV_USER_COOKIE, devAuthEnabled, requireUser } from "./auth";
  * never write SQL themselves — that keeps the activity log complete by
  * construction, and it means undo works for free, since every action's effect
  * is already expressed as invertible operations.
+ *
+ * **Every one authorizes before it writes** (D-080). `requireUser` establishes
+ * who is asking; `requireTaskAccess` establishes whether they may. Until the
+ * task detail page there was no way to name a task you could not already see,
+ * so the second was missing and nothing demonstrated it. A URL carrying an id
+ * is the thing that made it demonstrable.
  */
 
 /**
@@ -28,6 +40,8 @@ import { DEV_USER_COOKIE, devAuthEnabled, requireUser } from "./auth";
  */
 export async function cycleStatus(taskId: string): Promise<Operation[]> {
   const actor = await requireUser();
+  await requireTaskAccess(taskId, actor.id, "edit");
+
   const current = await pool().query<{ status_id: string; status_set_id: string }>(
     `SELECT t.status_id, s.status_set_id
      FROM tasks t JOIN statuses s ON s.id = t.status_id
@@ -67,6 +81,8 @@ export async function cycleStatus(taskId: string): Promise<Operation[]> {
 
 export async function setPriority(taskId: string, priority: number | null): Promise<Operation[]> {
   const actor = await requireUser();
+  await requireTaskAccess(taskId, actor.id, "edit");
+
   const current = await pool().query<{ priority: number | null }>(
     `SELECT priority FROM tasks WHERE id = $1`,
     [taskId],
@@ -83,6 +99,8 @@ export async function setPriority(taskId: string, priority: number | null): Prom
 
 export async function renameTask(taskId: string, name: string): Promise<Operation[]> {
   const actor = await requireUser();
+  await requireTaskAccess(taskId, actor.id, "edit");
+
   const trimmed = name.trim();
   if (!trimmed) throw new Error("A task needs a name");
 
@@ -101,6 +119,8 @@ export async function renameTask(taskId: string, name: string): Promise<Operatio
 
 export async function archiveTask(taskId: string): Promise<Operation[]> {
   const actor = await requireUser();
+  await requireTaskAccess(taskId, actor.id, "edit");
+
   await applyOperations([{ kind: "archiveTask", taskId }], { actorId: actor.id });
   revalidatePath("/");
   return [{ kind: "restoreTask", taskId }];
@@ -119,6 +139,10 @@ export async function createTask(
   statusId: string | null,
 ): Promise<Operation[]> {
   const actor = await requireUser();
+  // A container, not a task — an unchecked create is how a row lands inside a
+  // private list its author cannot read.
+  await requireListAccess(listId, actor.id, "edit");
+
   const trimmed = name.trim();
   if (!trimmed) throw new Error("A task needs a name");
 
@@ -184,6 +208,7 @@ export async function moveTask(
   afterTaskId: string | null,
 ): Promise<Operation[]> {
   const actor = await requireUser();
+  await requireTaskAccess(taskId, actor.id, "edit");
 
   const current = await pool().query<{ status_id: string | null; position: string }>(
     `SELECT status_id, position FROM tasks WHERE id = $1 AND deleted_at IS NULL`,
@@ -257,6 +282,7 @@ export async function setTaskDate(
   day: string | null,
 ): Promise<Operation[]> {
   const actor = await requireUser();
+  await requireTaskAccess(taskId, actor.id, "edit");
 
   if (field !== "dueAt" && field !== "startAt") {
     throw new Error(`A calendar may only move a due or start date, not ${String(field)}`);
@@ -294,10 +320,24 @@ export async function setTaskDate(
   return [{ ...op, from: to, to: from }];
 }
 
-/** Applies an inverse batch produced by one of the actions above. */
+/**
+ * Applies an inverse batch produced by one of the actions above.
+ *
+ * **The widest write in the app**, and so the one that most needed a check: the
+ * operations arrive from the client, and every other action derives its target
+ * from a task the caller already named. A batch is authorized whole and refused
+ * whole — applying the reachable half of an undo would half-restore a task and
+ * tell the caller which of the ids were real.
+ */
 export async function undo(ops: Operation[]): Promise<void> {
   if (ops.length === 0) return;
   const actor = await requireUser();
+  await requireTasksAccess(
+    ops.map((op) => op.taskId),
+    actor.id,
+    "edit",
+  );
+
   await applyOperations(ops, { actorId: actor.id });
   revalidatePath("/");
   revalidatePath("/board");

@@ -97,3 +97,12 @@ export {
   type ApplyContext,
   type ApplyResult,
 } from "./mutations";
+export {
+  AccessDenied,
+  listAccess,
+  requireListAccess,
+  requireTaskAccess,
+  requireTasksAccess,
+  taskAccess,
+  type TaskAccess,
+} from "./task-access";

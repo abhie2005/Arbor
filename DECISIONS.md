@@ -107,6 +107,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-077](#d-077) | A renderer draws the status set the list resolves | Query |
 | [D-078](#d-078) | A timeline is a nested clause, not a new query | Query |
 | [D-079](#d-079) | The shell is a component, extracted at the sixth copy | Frontend |
+| [D-080](#d-080) | Authenticating is not authorizing, and every write does both | Auth |
 
 ---
 
@@ -2138,3 +2139,55 @@ what it is instead of setting `isTask` and letting the shell guess.
 *In one sentence:* extracted the moment a sixth page needed it, and the four
 copies had already drifted apart in exactly the way that argues for extracting
 at three.
+
+### D-080
+**Authenticating is not authorizing, and every write does both** · 2026-09-07 · active
+
+`requireTaskAccess`, `requireTasksAccess` and `requireListAccess` in
+`@arbor/db`. Every server action that changes a task now calls one before it
+writes.
+
+**What was wrong.** Reads were permission-scoped from the beginning — every
+view query joins `access_index` (ADR 3), so a task in a list you cannot reach
+never reaches a screen. Writes were not. `cycleStatus`, `renameTask`,
+`setPriority`, `archiveTask`, `moveTask` and `setTaskDate` each called
+`requireUser` and then wrote. `requireUser` answers *who is asking*. Nothing
+asked *whether they may*.
+
+**Why it survived five phases.** It was unreachable in practice: the only way
+to obtain a task id was to render a row, and rendering was scoped. The hole was
+real and undemonstrable at the same time, which is the most durable kind. The
+task detail page is what ends that — an id in a URL is something a person can
+type — so this had to land before the page did, not after.
+
+**`undo` was the worst of them.** It takes an `Operation[]` *from the client*
+and applies it. Every other action derives its target from a task the caller
+named; undo accepts a whole batch naming anything. Reverting the fix and
+re-running `check:actions` renames a task in a private list to "Undone into",
+which is the entire exploit in one line.
+
+**Two refusals, not one.** Unreachable is reported as *gone*, in the same words
+as a task that never existed — otherwise the check is an existence oracle and a
+stranger can enumerate the workspace one id at a time. Reachable-but-
+insufficient says what it is: the viewer is looking at the row, so there is
+nothing left to conceal, and "it does not exist" would be a lie about something
+on their screen. A smoke check asserts the first two messages are identical and
+the third differs.
+
+**In `@arbor/db`, not in the web app.** The worker will apply operations too
+(that is what an automation action is), and a check that lives beside one
+caller is a check the next caller does not have — the same argument that put
+`applyOperations` there.
+
+**A batch is refused whole.** Applying the reachable half of an undo would
+half-restore a task, and the difference between "some of it worked" and "none
+of it did" would tell the caller which ids were real.
+
+**The seed now puts a task in the private list.** It had none, so the demo's
+one private container proved nothing: the index could have been right and there
+was still no row a broken check could wrongly return. That is the same failure
+as the seed writing "everyone can manage everything" by hand, one level down.
+
+*In one sentence:* knowing who someone is was never the same as knowing what
+they may touch, and the detail panel is what turns that from a latent hole into
+a reachable one.

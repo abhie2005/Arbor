@@ -6,6 +6,7 @@ import {
   ROLE_BASELINE,
   affectedLists,
   resolveAccess,
+  satisfies,
   strongest,
 } from "./access";
 import type { ContainerNode } from "./hierarchy";
@@ -261,5 +262,31 @@ describe("what a change forces a rebuild of", () => {
 
   it("is nothing for a container that no longer exists", () => {
     expect(affectedLists("deleted", containers)).toEqual([]);
+  });
+});
+
+describe("whether a permission reaches what an action needs", () => {
+  it("is true for the exact permission", () => {
+    expect(satisfies("edit", "edit")).toBe(true);
+    expect(satisfies("view", "view")).toBe(true);
+  });
+
+  it("is true for a stronger one", () => {
+    expect(satisfies("manage", "view")).toBe(true);
+    expect(satisfies("edit", "comment")).toBe(true);
+    expect(satisfies("comment", "view")).toBe(true);
+  });
+
+  it("is false for a weaker one", () => {
+    expect(satisfies("view", "edit")).toBe(false);
+    expect(satisfies("comment", "edit")).toBe(false);
+    expect(satisfies("edit", "manage")).toBe(false);
+  });
+
+  // The ladder read backwards is the failure mode this function exists to
+  // prevent, so it is asserted in both directions rather than once.
+  it("is not symmetric", () => {
+    expect(satisfies("manage", "edit")).toBe(true);
+    expect(satisfies("edit", "manage")).toBe(false);
   });
 });

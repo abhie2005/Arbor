@@ -83,6 +83,18 @@ export function strongest(a: Permission, b: Permission): Permission {
 }
 
 /**
+ * Does the permission someone holds reach the one an action needs?
+ *
+ * The ladder is `view < comment < edit < manage`, so this is an index
+ * comparison. It is a named function rather than an inline comparison at each
+ * call site because the ladder is the kind of thing that gets reimplemented
+ * backwards once, in one place, and then guards nothing.
+ */
+export function satisfies(have: Permission, need: Permission): boolean {
+  return PERMISSIONS.indexOf(have) >= PERMISSIONS.indexOf(need);
+}
+
+/**
  * The complete access index for a workspace.
  *
  * Returns one row per (user, list) they can reach, sorted so two runs over the

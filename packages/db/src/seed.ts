@@ -627,6 +627,37 @@ async function main() {
     grantedBy: avery.id,
   });
 
+  // A task inside it, because an empty private list demonstrates nothing.
+  //
+  // The seed used to compute the access index by hand as "everyone can manage
+  // everything", which meant the demo could not have shown a permission bug
+  // even in principle. A private list with no rows in it is the same failure
+  // one level down: the index is right, and there is still nothing a broken
+  // check could wrongly return. This is the row that a leak would leak.
+  const [privateTask] = await db
+    .insert(s.tasks)
+    .values({
+      workspaceId: workspace.id,
+      homeListId: privateList.id,
+      spaceId: privateSpace.id,
+      folderId: null,
+      key: "HIRE-1",
+      name: "Draft the staff engineer offer",
+      statusId: status["Todo"]?.id ?? null,
+      priority: 2,
+      position: firstPosition(),
+      createdBy: avery.id,
+    })
+    .returning();
+  if (!privateTask) throw new Error("seed: private task insert failed");
+
+  await db.insert(s.taskLists).values({
+    taskId: privateTask.id,
+    listId: privateList.id,
+    isHome: true,
+    position: firstPosition(),
+  });
+
   // --- access index ---------------------------------------------------------
   // Computed by the real job rather than written by hand. The seed used to
   // insert "everyone can manage everything", which meant the demo could not
