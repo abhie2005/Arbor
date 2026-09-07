@@ -35,3 +35,4 @@ npm-debug.log*
 
 # TypeScript incremental build state — machine-local, regenerated on every build
 *.tsbuildinfo
+.rocketride/

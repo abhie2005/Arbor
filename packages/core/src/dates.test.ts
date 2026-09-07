@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   addMonths,
+  daysOfMonth,
+  monthBounds,
   addUtcDays,
   dayKeyFor,
   isMonth,
@@ -127,5 +129,30 @@ describe("month arithmetic", () => {
   it("refuses a value that is not a date rather than inventing one", () => {
     expect(() => utcDayKey("not a date")).toThrow(RangeError);
     expect(() => monthGrid("2026-99")).toThrow(RangeError);
+  });
+});
+
+describe("a month's own days", () => {
+  it("holds exactly the days of that month, and none of its neighbours'", () => {
+    expect(daysOfMonth("2026-09")).toHaveLength(30);
+    expect(daysOfMonth("2026-09")[0]).toBe("2026-09-01");
+    expect(daysOfMonth("2026-09")[29]).toBe("2026-09-30");
+  });
+
+  it("handles February, leap and otherwise", () => {
+    expect(daysOfMonth("2026-02")).toHaveLength(28);
+    expect(daysOfMonth("2028-02")).toHaveLength(29);
+  });
+
+  it("bounds the month half-open, so midnight on the last day is inside", () => {
+    const { from, to } = monthBounds("2026-09");
+    expect(from).toBe("2026-09-01T00:00:00.000Z");
+    expect(to).toBe("2026-10-01T00:00:00.000Z");
+  });
+
+  it("is narrower than the calendar's padded grid", () => {
+    // The grid pads to six weeks so squares line up; a timeline's columns must
+    // not include days from another month.
+    expect(daysOfMonth("2026-09").length).toBeLessThan(monthGrid("2026-09").flat().length);
   });
 });

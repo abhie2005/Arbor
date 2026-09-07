@@ -39,11 +39,12 @@ const RENDERER_ROUTE: Record<string, string> = {
   board: "/board",
   table: "/table",
   calendar: "/calendar",
+  gantt: "/gantt",
 };
 
 /** Renderer types with no screen yet. Shown greyed rather than hidden, so the
  *  gap is visible instead of implied. */
-const UNBUILT: string[] = ["Gantt"];
+const UNBUILT: string[] = [];
 
 export function ViewTabs({
   views,

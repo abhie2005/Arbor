@@ -142,3 +142,31 @@ const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/;
 export function isMonth(value: unknown): value is string {
   return typeof value === "string" && MONTH_RE.test(value);
 }
+
+/**
+ * The days of a month, without the neighbouring ones a grid pads with.
+ *
+ * A calendar shows six weeks because its squares have to line up under weekday
+ * headings. A timeline's columns are days, and padding them with last month's
+ * would put bars in a month they do not belong to.
+ */
+export function daysOfMonth(month: string): string[] {
+  const first = startOfUtcDay(`${month}-01`);
+  if (Number.isNaN(first.getTime())) throw new RangeError(`Not a month: ${month}`);
+
+  const days: string[] = [];
+  for (let day = first; utcDayKey(day).startsWith(month); day = addUtcDays(day, 1)) {
+    days.push(utcDayKey(day));
+  }
+  return days;
+}
+
+/** The half-open range covering exactly that month. */
+export function monthBounds(month: string): { from: string; to: string } {
+  const days = daysOfMonth(month);
+  const first = days[0];
+  const last = days[days.length - 1];
+  if (!first || !last) throw new RangeError(`Not a month: ${month}`);
+
+  return { from: `${first}T00:00:00.000Z`, to: `${utcDayKey(addUtcDays(last, 1))}T00:00:00.000Z` };
+}

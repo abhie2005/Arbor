@@ -105,6 +105,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-075](#d-075) | Every sign-in failure is the same failure | Auth |
 | [D-076](#d-076) | A session is a row, and the token is never stored | Auth |
 | [D-077](#d-077) | A renderer draws the status set the list resolves | Query |
+| [D-078](#d-078) | A timeline is a nested clause, not a new query | Query |
 
 ---
 
@@ -2078,3 +2079,33 @@ to one list's statuses would refuse filters the compiler accepts.
 *In one sentence:* what a list shows comes from what the list inherits, and
 what a filter may say comes from the whole workspace — they are different
 questions with the same-looking answer until they are not.
+
+### D-078
+**A timeline is a nested clause, not a new query** · 2026-09-06 · active
+
+The Gantt view runs the same compiled query as every other renderer, scoped by
+a nested filter clause: `(start IS NULL OR start < end) AND (due IS NULL OR due
+>= begin) AND (start IS NOT NULL OR due IS NOT NULL)`.
+
+**This is the renderer STATUS expected to break the bet, and it half did.** The
+bet was that a new view type needs no query of its own. That held — no new SQL,
+no join, no second query. What did not hold was that the *compiler could
+already say everything a renderer needs*: a `FilterGroup` was a flat list joined
+by one operator, and overlap is irreducibly mixed AND and OR. So the compiler
+learned to nest.
+
+That is the outcome the bet is supposed to produce. A renderer finding a gap in
+the query layer and the query layer growing to close it is the system working;
+a renderer writing its own SQL around the gap is the system failing. The
+difference is whether the next renderer inherits the fix.
+
+**A task with one date is one day, not a bar to the horizon.** "Starts on the
+4th, no deadline" is not "runs from the 4th to the end of the month", and
+drawing the second invents a date nobody set. The open end is marked instead, so
+the bar fades rather than stopping at an edge that would read as a deadline.
+
+**A task with neither date is not on a timeline**, which the third clause says
+explicitly rather than leaving to the accident that both other clauses pass.
+
+*In one sentence:* the timeline needed the compiler to learn one thing, and
+learning it is cheaper than any renderer working around it.

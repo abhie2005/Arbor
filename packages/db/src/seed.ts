@@ -377,6 +377,14 @@ async function main() {
             ? null
             : startOfUtcDay(new Date(now + t.dueInDays * 86_400_000)),
         dueHasTime: false,
+        // A start date on some of them, so the timeline has bars rather than a
+        // column of single days. Two-thirds of a task's lead time, rounded to
+        // a day like the due date it pairs with (D-067).
+        startAt:
+          t.dueInDays === null || t.dueInDays <= 1
+            ? null
+            : startOfUtcDay(new Date(now + Math.floor(t.dueInDays / 3) * 86_400_000)),
+        startHasTime: false,
         position: positions[i]!,
         createdBy: avery.id,
         completedAt: statusRow.group === "done" ? new Date(now - 86_400_000) : null,
@@ -472,7 +480,7 @@ async function main() {
   }
 
   // --- default views --------------------------------------------------------
-  const viewPositions = initialPositions(4);
+  const viewPositions = initialPositions(5);
   await db.insert(s.views).values([
     {
       workspaceId: workspace.id,
@@ -558,6 +566,24 @@ async function main() {
         filters: { op: "AND", conditions: [], showClosed: false, showSubtasks: 1 },
         columns: [{ field: "name" }, { field: "status" }, { field: "dueAt" }],
         settings: { dateField: "dueAt" },
+      },
+    },
+    {
+      workspaceId: workspace.id,
+      parentId: sprint.id,
+      parentKind: "list",
+      type: "gantt",
+      name: "Timeline",
+      position: viewPositions[4]!,
+      createdBy: avery.id,
+      definition: {
+        grouping: { field: "none", dir: "asc" },
+        sort: [
+          { field: "startAt", dir: "asc" },
+          { field: "dueAt", dir: "asc" },
+        ],
+        filters: { op: "AND", conditions: [], showClosed: false, showSubtasks: 1 },
+        columns: [{ field: "name" }, { field: "startAt" }, { field: "dueAt" }],
       },
     },
   ]);

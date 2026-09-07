@@ -769,6 +769,125 @@ async function main() {
     unresolved.length === 0 ? null : `no set resolves for: ${unresolved.join(", ")}`,
   );
 
+  // --- timeline scope -------------------------------------------------------
+  console.log("\ntimeline → overlapping a window, in SQL\n");
+
+  // The question a Gantt asks, which needed nested clauses to express:
+  // (start IS NULL OR start < end) AND (due IS NULL OR due >= begin)
+  // AND (start IS NOT NULL OR due IS NOT NULL)
+  const windowFrom = "2026-09-01T00:00:00.000Z";
+  const windowTo = "2026-10-01T00:00:00.000Z";
+
+  const overlapFilters = {
+    op: "AND" as const,
+    conditions: [
+      {
+        op: "OR" as const,
+        conditions: [
+          { field: "startAt" as const, op: "isNull" as const },
+          { field: "startAt" as const, op: "lt" as const, value: windowTo },
+        ],
+      },
+      {
+        op: "OR" as const,
+        conditions: [
+          { field: "dueAt" as const, op: "isNull" as const },
+          { field: "dueAt" as const, op: "gte" as const, value: windowFrom },
+        ],
+      },
+      {
+        op: "OR" as const,
+        conditions: [
+          { field: "startAt" as const, op: "isNotNull" as const },
+          { field: "dueAt" as const, op: "isNotNull" as const },
+        ],
+      },
+    ],
+    showClosed: true,
+    showSubtasks: 1 as const,
+  };
+
+  const onTimeline = async () => {
+    const compiled = compileViewQuery({
+      ...base,
+      scope: { kind: "list", id: list.id! },
+      definition: { ...DEFAULT_VIEW_DEFINITION, filters: overlapFilters },
+      limit: 500,
+    });
+    const result = await pool.query<{ name: string }>(compiled.text, compiled.params);
+    return result.rows.map((row) => row.name);
+  };
+
+  const fixtures: [string, string | null, string | null][] = [
+    ["Spans into the window", "2026-08-20", "2026-09-03"],
+    ["Spans out of the window", "2026-09-28", "2026-11-04"],
+    ["Wholly before", "2026-07-01", "2026-07-30"],
+    ["Wholly after", "2026-11-01", "2026-11-30"],
+    ["Starts inside, never ends", "2026-09-15", null],
+    ["Due inside, never started", null, "2026-09-20"],
+    ["No dates at all", null, null],
+  ];
+
+  await pool.query(`DELETE FROM tasks WHERE name LIKE '%the window%' OR name IN ($1,$2,$3,$4,$5)`, [
+    "Wholly before",
+    "Wholly after",
+    "Starts inside, never ends",
+    "Due inside, never started",
+    "No dates at all",
+  ]);
+
+  for (const [name, start, due] of fixtures) {
+    const row = await one(
+      `INSERT INTO tasks (workspace_id, home_list_id, space_id, name, position, created_by,
+                          start_at, start_has_time, due_at, due_has_time)
+       VALUES ('${ws.id}', '${list.id}', '${space.id}', '${name}', 'a0', '${viewer.id}',
+               ${start ? `'${start}T00:00:00Z'` : "NULL"}, false,
+               ${due ? `'${due}T00:00:00Z'` : "NULL"}, false)
+       RETURNING id`,
+    );
+    await pool.query(`INSERT INTO task_lists (task_id, list_id, position) VALUES ($1, $2, 'a0')`, [
+      row.id,
+      list.id,
+    ]);
+  }
+
+  const visible = await onTimeline();
+
+  report(
+    "a task that starts before the window and ends inside it is on the timeline",
+    visible.includes("Spans into the window") ? null : "a bar crossing the left edge was dropped",
+  );
+  report(
+    "so is one that starts inside and ends after it",
+    visible.includes("Spans out of the window") ? null : "a bar crossing the right edge was dropped",
+  );
+  report(
+    "a task wholly outside the window is not",
+    !visible.includes("Wholly before") && !visible.includes("Wholly after")
+      ? null
+      : "a task from another month appeared",
+  );
+  report(
+    "an open-ended task counts from its start",
+    visible.includes("Starts inside, never ends") ? null : "a task with no due date was dropped",
+  );
+  report(
+    "and a task with only a due date counts from that",
+    visible.includes("Due inside, never started") ? null : "a task with no start date was dropped",
+  );
+  report(
+    "a task with neither date is not on a timeline at all",
+    !visible.includes("No dates at all") ? null : "an unscheduled task appeared on the timeline",
+  );
+
+  await pool.query(`DELETE FROM tasks WHERE name LIKE '%the window%' OR name IN ($1,$2,$3,$4,$5)`, [
+    "Wholly before",
+    "Wholly after",
+    "Starts inside, never ends",
+    "Due inside, never started",
+    "No dates at all",
+  ]);
+
   // --- authentication -------------------------------------------------------
   console.log("\nauthentication → passwords and sessions\n");
 
@@ -987,7 +1106,7 @@ async function main() {
   const seededTypes = seeded.map((v) => v.type).sort();
   report(
     "every renderer has a seeded view",
-    seededTypes.join(",") === "board,calendar,list,table"
+    seededTypes.join(",") === "board,calendar,gantt,list,table"
       ? null
       : `got ${seeded.map((v) => `${v.name} (${v.type})`).join(", ")}`,
   );

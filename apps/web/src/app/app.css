@@ -2162,3 +2162,127 @@ select.filter-add option {
 .switcher-out:hover {
   color: var(--danger);
 }
+
+/* ---------- timeline ---------- */
+.gantt {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.gantt-scroll {
+  overflow-x: auto;
+}
+
+/* The column template is set inline: it depends on how many days the month has,
+   which CSS cannot know. */
+.gantt-grid {
+  display: grid;
+  min-width: 100%;
+  align-items: center;
+}
+
+.gantt-corner {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  height: var(--group-h);
+}
+
+.gantt-heading {
+  height: var(--group-h);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+
+.gantt-heading[data-weekend],
+.gantt-cell[data-weekend] {
+  background: color-mix(in srgb, var(--panel) 45%, transparent);
+}
+
+.gantt-heading[data-today] {
+  color: var(--accent);
+}
+
+/* The name column stays put while the days scroll — a bar with no name beside
+   it is a coloured rectangle. */
+.gantt-name {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--row-h);
+  padding: 0 var(--space-3);
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-row);
+  min-width: 0;
+}
+
+.gantt-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-cell {
+  position: relative;
+  height: var(--row-h);
+  border-bottom: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.gantt-cell[data-today] {
+  box-shadow: inset 1px 0 0 var(--accent);
+}
+
+.gantt-bar {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
+  height: 12px;
+  border-radius: 3px;
+  background: var(--status-not-started);
+  opacity: 0.85;
+}
+
+.gantt-bar[data-group="active"] { background: var(--status-active); }
+.gantt-bar[data-group="done"] { background: var(--status-done); }
+.gantt-bar[data-group="closed"] { background: var(--status-closed); }
+
+.gantt-bar[data-overdue] {
+  box-shadow: 0 0 0 1px var(--priority-urgent);
+}
+
+/* A bar that continues past the window is cut square on that side, so an
+   arbitrary edge does not read as a date somebody set. */
+.gantt-bar[data-open-start] {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.gantt-bar[data-open-end] {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  -webkit-mask-image: linear-gradient(90deg, #000 70%, transparent);
+  mask-image: linear-gradient(90deg, #000 70%, transparent);
+}
+
+.gantt-empty {
+  padding: var(--space-5) var(--space-4);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
