@@ -56,8 +56,8 @@ noted here previously was a cold cache.
 Verify without the browser:
 
 ```bash
-npm test                                       # 215 unit tests, no database needed
-npm run db:seed && npm run db:smoke            # 61 checks against real Postgres
+npm test                                       # 241 unit tests, no database needed
+npm run db:seed && npm run db:smoke            # 72 checks against real Postgres
 PORT=3100 npm run check:actions                # 25 checks — needs the dev server
 ```
 
@@ -89,10 +89,19 @@ machine, and the failure it gives you is a 404 rather than a wrong-app warning.
 | **Custom fields** | CRUD, per-type config, placement down the tree, task-type scoping, archive, and type change with a real value migration. |
 | **Task types** | CRUD, one default per workspace, deletion with reassignment. |
 | **Settings UI** | `/settings` — statuses, custom fields, task types. |
-| **Identity** | Dev-only user switcher behind `getCurrentUser()`. Not real auth. |
+| **Permissions** | Grants are the source of truth; a pure rule in `@arbor/core` flattens them plus inheritance into the access index every query joins against. Private containers, inherited grants, group grants, role baselines. Rebuilt inside the transaction that changed the grant, so a revocation has no stale window. |
+| **Sharing UI** | `/settings/sharing` — the container tree with how many people each one reaches, a private toggle, and share/unshare. Inherited grants are shown with their source and are not removable there. |
+| **Identity** | Dev-only user switcher behind `getCurrentUser()`. **Still not real auth** — this is the remaining half of Phase 5. |
 
-**Verified:** 215 unit tests, 61 live-Postgres checks, 25 server-action checks,
+**Verified:** 241 unit tests, 72 live-Postgres checks, 25 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
+
+**The permission checks are the ones to read.** They assert the property
+through a compiled view query — a task in a private list not coming back —
+rather than by inspecting the access index, because the index being right is
+not the thing that matters. The seed now computes the index with the real job
+instead of writing "everyone can manage everything" by hand, which is what made
+it possible to have a permission bug the demo could not show.
 
 **The renderer bet, measured twice.** The board took no compiler change, no new
 SQL, and one new server action (`moveTask`, because dragging is a mutation the
@@ -161,14 +170,20 @@ so an empty month reported the list as empty (D-069).
 
 ## Where to pick up
 
-**Next — real auth and permissions (Phase 5).** Four renderers is enough to
-have proven the compiler bet; the thing now blocking everything else is that
-`getCurrentUser()` is a cookie holding a user id. Every collaborative feature
-fans out to whoever can see a thing, and the access index is already the join
-every query starts with — what is missing is real identity, grants written by a
-UI, and the rebuild job that keeps the index true.
+**Next — real identity.** Phase 5 was two halves and the access-control half is
+done: the rule that decides who sees what is a pure function with 26 tests, the
+index is rebuilt inside the transaction that changes a grant, and there is a
+screen for writing them. What is left is that `getCurrentUser()` reads a cookie
+holding a user id and trusts it (D-034).
 
-Table and Calendar both landed on 2026-09-05.
+That is a smaller job than it sounds, because everything downstream already
+takes a viewer id and scopes to it. What it needs is a decision about the
+mechanism — passwords, magic links, or an OAuth provider — and then sessions,
+a `users.password_hash` or equivalent, and replacing the switcher. **Nothing
+else should be built on the dev stub**; it is the last thing pretending.
+
+Table and Calendar landed 2026-09-05; the permission layer and sharing screen
+on 2026-09-06.
 
 **Gantt, when it comes, is the renderer most likely to break the bet.** A bar
 spanning start to due is not a row at a point, and nothing in the compiler
@@ -274,6 +289,12 @@ twice).
 - **Keyboard and touch on the board.** Native drag has neither (D-051). Moving
   between statuses has a keyboard path already; reordering within a column does
   not.
+- **Groups have no UI.** The model supports group grants and the sharing panel
+  offers them, but nothing creates a group or puts people in one, so the demo
+  has none. `user_groups` and `user_group_members` are seeded empty.
+- **A rebuild per share.** Every grant recomputes the whole workspace's index
+  inside the transaction (D-071). Correct, and it stops being cheap somewhere
+  around a thousand lists — `affectedLists` exists for that day.
 - **An instant still has no timezone to be read in.** D-067 fixed calendar
   days, which have one right answer. A due date *with* a time is rendered in the
   server's zone during SSR and the browser's afterwards, and users carry no

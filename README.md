@@ -32,8 +32,8 @@ Requires Node 22+ and Docker. Nothing else, and no cloud account.
 Verify the stack end to end:
 
 ```bash
-npm test               # 215 unit tests, no database needed
-npm run db:smoke       # 61 checks against real Postgres: compiled queries,
+npm test               # 241 unit tests, no database needed
+npm run db:smoke       # 72 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
 npm run check:actions  # 25 checks that POST what a button click posts, then
                        # assert against Postgres — needs `npm run dev` running
@@ -58,7 +58,7 @@ without writing code.
 | **Views** | A view is a saved query plus a renderer. Every view type serializes to the same definition, so a board is just `grouping.field = "status"`, a table is the same query showing the definition's own `columns`, and a month is that query narrowed to six weeks. Four renderers, no view-specific SQL. |
 | **Statuses** | User-named statuses that each belong to a fixed group (`not_started`, `active`, `done`, `closed`). Everything else — filters, reporting, burndown — keys off the group, never the name. |
 | **Fields** | Custom fields defined on any container, optionally scoped to a task type, stored in a typed EAV table so filtering and sorting stay on an index. Twenty types, each declaring its own storage column, legal operators, and config schema — the filter bar builds its menus from the same declaration the query compiler validates against. |
-| **Permissions** | Grants are the source of truth; a materialized access index is what queries actually join against, so permission checks cost one join instead of one per level of nesting. |
+| **Permissions** | Grants are the source of truth; a materialized access index is what queries actually join against, so permission checks cost one join instead of one per level of nesting. The rule that flattens one into the other is a pure function, tested without a database. |
 
 The [architecture teardown](docs/) covers the reasoning in full.
 
@@ -90,7 +90,7 @@ documented; no Terraform is written.
 
 `packages/core` holds the things hardest to get right — the view compiler, the
 field type system, status resolution, and ordering. It has no database handle
-and no request object, which is why its 215 tests need no fixtures and why it is
+and no request object, which is why its 241 tests need no fixtures and why it is
 the easiest part of the codebase for a stranger to contribute to.
 
 ---
@@ -134,9 +134,10 @@ connections, and API Gateway's WebSocket API bills per message.
 - [x] **4 — Configuration engines.** Status sets with inheritance and task
       migration on delete, twenty custom field types with per-type validation,
       task types with field scoping, workflow templates, and a settings screen.
-- [ ] **5 — Access control.** Real auth, private containers, grants,
-      access-index rebuild job, guests. *Everything today runs behind a
-      development user switcher.*
+- [ ] **5 — Access control.** Private containers, grants, group grants, role
+      baselines and the access-index rebuild are done, with a sharing screen.
+      *Real auth is not:* everything still runs behind a development user
+      switcher, and that is the next thing to build.
 - [ ] **6 — Views.** Saved-view CRUD, Table and Calendar are done; Gantt
       remains, and it is the one that may need the compiler to learn about
       ranges.
