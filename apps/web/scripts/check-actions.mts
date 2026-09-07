@@ -691,6 +691,175 @@ report(
     : `the owner was refused: ${allowedPrivacy.text.slice(0, 140)}`,
 );
 
+// --- the task detail page --------------------------------------------------
+//
+// The page's own security property first, because it is the reason the route
+// needed D-080: an id in a URL is something anyone can type. Then the four
+// actions it introduced, each of which writes through the operation layer and
+// therefore has to produce an activity row and an inverse that works.
+console.log("\ntask detail → the page and its actions\n");
+
+const pageAsSam = await fetch(`http://localhost:${PORT}/t/HIRE-1`, { headers: { Cookie: SAM } });
+const samSaw = await pageAsSam.text();
+report(
+  "the detail page does not render a task the viewer cannot reach",
+  samSaw.includes("No such task") && !samSaw.includes("Draft the staff engineer offer")
+    ? null
+    : "a private task was rendered to a member with no grant",
+);
+
+const pageAsOwner = await fetch(`http://localhost:${PORT}/t/HIRE-1`, { headers: { Cookie: COOKIE } });
+const ownerSaw = await pageAsOwner.text();
+report(
+  "and does render it to someone who can",
+  ownerSaw.includes("Draft the staff engineer offer")
+    ? null
+    : "the owner was shown nothing — the check refuses everyone",
+);
+
+// A key that does not exist and a task that is not yours have to be the same
+// page, or the route is an existence oracle for every private list.
+const missing = await fetch(`http://localhost:${PORT}/t/NOPE-1`, { headers: { Cookie: SAM } });
+const missingSaw = await missing.text();
+report(
+  "a key that never existed is the same page as one you may not see",
+  missingSaw.includes("No such task") ? null : "a missing task rendered something else",
+);
+
+await warm("/t/ENG-415");
+const DETAIL_URL = `http://localhost:${PORT}/t/ENG-415`;
+const DETAIL_ACTIONS = actionIds("app/t/[key]/page");
+
+const detailTask = await one(`SELECT id, status_id, task_type_id FROM tasks WHERE key = 'ENG-415'`);
+const targetStatus = await one(
+  `SELECT s.id FROM statuses s
+   JOIN status_sets ss ON ss.id = s.status_set_id
+   WHERE ss.name = 'Engineering' AND s.name = 'In Review'`,
+);
+
+const picked = await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskStatus!, [
+  detailTask.id,
+  targetStatus.id,
+]);
+const afterPick = await one(`SELECT status_id FROM tasks WHERE id = $1`, [detailTask.id]);
+report(
+  "picking a status on the detail page moves the task",
+  afterPick.status_id === targetStatus.id ? null : "the status did not change",
+);
+
+// Same operation as the list's cycling, so the same stack has to undo it.
+const statusInverse = picked.text.match(/\[\{"kind":"setField".*?\}\]/);
+const statusStack = new UndoStack(20);
+statusStack.push(JSON.parse(statusInverse![0]));
+await callOn("http://localhost:" + PORT + "/", PAGE_ACTIONS.undo!, [statusStack.pop()]);
+const afterStatusUndo = await one(`SELECT status_id FROM tasks WHERE id = $1`, [detailTask.id]);
+report(
+  "and undo puts it back, through the same stack the list uses",
+  afterStatusUndo.status_id === detailTask.status_id ? null : "the status did not go back",
+);
+
+// A status from another set would make the task vanish from its own board.
+const foreignStatus = await one(
+  `SELECT s.id FROM statuses s
+   JOIN status_sets ss ON ss.id = s.status_set_id
+   WHERE ss.name = 'Default' AND s.name = 'Doing'`,
+);
+const refusedStatus = await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskStatus!, [
+  detailTask.id,
+  foreignStatus.id,
+]);
+const unmoved = await one(`SELECT status_id FROM tasks WHERE id = $1`, [detailTask.id]);
+report(
+  "a status from another set is refused, not written",
+  refusedStatus.text.includes("does not belong") && unmoved.status_id === detailTask.status_id
+    ? null
+    : "a foreign status was accepted",
+);
+
+// RelationOp has been in the union since Phase 3 with nothing calling it.
+const jordan = await one(`SELECT id FROM users WHERE email = 'jordan@example.com'`);
+const assigned = await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskRelation!, [
+  detailTask.id,
+  "assignee",
+  jordan.id,
+  true,
+]);
+const nowAssigned = await one(
+  `SELECT 1 FROM task_assignees WHERE task_id = $1 AND user_id = $2`,
+  [detailTask.id, jordan.id],
+);
+const assignActivity = await one(
+  `SELECT verb FROM activity WHERE object_id = $1 ORDER BY at DESC LIMIT 1`,
+  [detailTask.id],
+);
+report(
+  "assigning someone writes the row and the activity",
+  nowAssigned && assignActivity.verb === "task.assignee_added"
+    ? null
+    : `logged ${assignActivity?.verb}`,
+);
+
+const relationStack = new UndoStack(20);
+relationStack.push(JSON.parse(assigned.text.match(/\[\{"kind":"removeRelation".*?\}\]/)![0]));
+await callOn("http://localhost:" + PORT + "/", PAGE_ACTIONS.undo!, [relationStack.pop()]);
+const stillAssigned = await one(
+  `SELECT 1 FROM task_assignees WHERE task_id = $1 AND user_id = $2`,
+  [detailTask.id, jordan.id],
+);
+report(
+  "and undoing the assignment removes it again",
+  !stillAssigned ? null : "the assignee survived an undo",
+);
+
+// The typed column matters: a number in value_text is a value no filter will
+// ever find again (D-042), and only the executor knows which column is right.
+const points = await one(`SELECT id FROM fields WHERE name = 'Story Points'`);
+await callOn(DETAIL_URL, DETAIL_ACTIONS.setCustomFieldValue!, [detailTask.id, points.id, 13]);
+const storedPoints = await one(
+  `SELECT value_num, value_text FROM field_values WHERE task_id = $1 AND field_id = $2`,
+  [detailTask.id, points.id],
+);
+report(
+  "a custom field value lands in the column its type declares",
+  Number(storedPoints.value_num) === 13 && storedPoints.value_text === null
+    ? null
+    : `stored num=${storedPoints.value_num} text=${storedPoints.value_text}`,
+);
+
+const refusedType = await callOn(DETAIL_URL, DETAIL_ACTIONS.setCustomFieldValue!, [
+  detailTask.id,
+  points.id,
+  "not a number",
+]);
+const unchangedPoints = await one(
+  `SELECT value_num FROM field_values WHERE task_id = $1 AND field_id = $2`,
+  [detailTask.id, points.id],
+);
+report(
+  "and a value the field's type refuses is not written",
+  Number(unchangedPoints.value_num) === 13 && !/"ok":true/.test(refusedType.text)
+    ? null
+    : "a bad value reached the column",
+);
+
+// Sam can reach ENG-415, so this is about the rung and not about the grant.
+const samPicks = await callOn(
+  DETAIL_URL,
+  DETAIL_ACTIONS.setTaskRelation!,
+  [privateTask.id, "assignee", jordan.id, true],
+  SAM,
+);
+const forgedAssign = await one(
+  `SELECT 1 FROM task_assignees WHERE task_id = $1 AND user_id = $2`,
+  [privateTask.id, jordan.id],
+);
+report(
+  "the panel's actions are scoped like every other write",
+  samPicks.text.includes("no longer exists") && !forgedAssign
+    ? null
+    : "an assignee was written to a task the caller cannot reach",
+);
+
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);
 await db.end();

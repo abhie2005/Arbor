@@ -130,9 +130,15 @@ export function Calendar({
               </div>
 
               {dayTasks.map((task) => (
-                <div
-                  className="calendar-chip"
+                // The chip is an anchor rather than a div (D-082): a calendar
+                // has no key column to hang a link on, and nothing else claims
+                // a click here. It stays draggable — an anchor drags natively,
+                // and the drop handler reads `text/arbor-task`, which is set
+                // below, not the URL the browser also attaches.
+                <a
+                  className="calendar-chip task-link"
                   key={task.id}
+                  href={`/t/${task.key ?? task.id}`}
                   draggable
                   data-dragging={dragging === task.id || undefined}
                   data-overdue={task.overdue || undefined}
@@ -146,7 +152,7 @@ export function Calendar({
                 >
                   <span className="dot" data-group={task.statusGroup ?? undefined} />
                   <span className="calendar-chip-name">{task.name}</span>
-                </div>
+                </a>
               ))}
             </div>
           );

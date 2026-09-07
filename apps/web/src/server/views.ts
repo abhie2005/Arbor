@@ -127,7 +127,7 @@ interface MetaRow {
   workspace_name: string;
   list_id: string;
   list_name: string;
-  folder_name: string;
+  folder_name: string | null;
   space_name: string;
 }
 
@@ -142,7 +142,10 @@ async function listMeta(): Promise<MetaRow | undefined> {
            f.name AS folder_name, sp.name AS space_name
     FROM workspaces w
     JOIN containers l  ON l.workspace_id = w.id AND l.kind = 'list'
-    LEFT JOIN containers f  ON f.id = l.parent_id
+    -- A list may sit straight under a space, in which case there is no folder.
+    -- Without the kind test the space matches here as well and the breadcrumb
+    -- names it twice.
+    LEFT JOIN containers f  ON f.id = l.parent_id AND f.kind = 'folder'
     LEFT JOIN containers sp ON sp.id = COALESCE(f.parent_id, l.parent_id)
     WHERE w.slug = 'northwind' AND l.name = 'Sprint 24'
     LIMIT 1
@@ -337,7 +340,7 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
     workspaceName: meta.workspace_name,
     listId: meta.list_id,
     listName: meta.list_name,
-    folderName: meta.folder_name,
+    folderName: meta.folder_name ?? "",
     spaceName: meta.space_name,
     viewName: saved.name,
     listTaskCount,

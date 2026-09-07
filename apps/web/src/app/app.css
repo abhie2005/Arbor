@@ -2302,3 +2302,184 @@ select.filter-add option {
   font-size: var(--text-meta);
   line-height: 1.5;
 }
+
+/* --- task detail (D-031) --------------------------------------------------
+   A page, not an overlay, for now. Same density as a row: this is the screen
+   people will keep open, so it reads at the table's rhythm rather than a
+   modal's. */
+
+.detail {
+  padding: var(--space-5) var(--space-4);
+  max-width: 900px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.detail[data-pending] {
+  opacity: 0.7;
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.detail-title,
+.detail-title-static {
+  flex: 1;
+  font-size: var(--text-title);
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.detail-title {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: var(--space-2) var(--space-3);
+  font-family: inherit;
+}
+
+.detail-title:hover {
+  border-color: var(--line);
+}
+
+.detail-title:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.detail-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--text-meta);
+}
+
+.detail-note {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+/* A definition list, because that is what this is: labels and their values. */
+.detail-fields {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  align-items: start;
+  gap: var(--space-3) var(--space-4);
+  margin: 0;
+}
+
+.detail-fields dt {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  padding-top: 5px;
+}
+
+.detail-fields dd {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--text-body);
+  min-width: 0;
+}
+
+.detail-fields dd [data-muted] {
+  color: var(--text-3);
+}
+
+.detail-fields dd [data-overdue="true"] {
+  color: var(--danger);
+}
+
+.detail-fields input[type="text"],
+.detail-fields input[type="url"],
+.detail-fields input[type="email"],
+.detail-fields input[type="number"],
+.detail-fields input[type="date"],
+.detail-fields select,
+.detail-fields textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: var(--space-2) var(--space-3);
+  min-width: 200px;
+}
+
+.detail-fields textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+/* Checkboxes rather than a multi-select: one toggle is one operation and one
+   undo entry, which is what the relation ops already are. */
+.detail-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+}
+
+.detail-person {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.detail-section h2 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.detail-subtasks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.detail-subtasks li {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.detail-subtasks a {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.detail-subtasks a:hover {
+  color: var(--accent);
+}
+
+/* The name cell in every renderer is a link now. It has to stay looking like
+   the text it replaced — a row full of blue underlines is a worse list. */
+.task-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.task-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

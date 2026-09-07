@@ -96,7 +96,11 @@ function Row({
     <>
       <div className="gantt-name" title={`${bar.key ? `${bar.key} · ` : ""}${bar.name}`}>
         <span className="dot" data-group={bar.statusGroup ?? undefined} />
-        <span className="gantt-name-text">{bar.name}</span>
+        {/* Nothing else claims a click on a timeline bar's name, so the name
+            itself opens the task (D-082). */}
+        <a className="gantt-name-text task-link" href={`/t/${bar.key ?? bar.id}`}>
+          {bar.name}
+        </a>
       </div>
 
       {days.map((day, index) => (

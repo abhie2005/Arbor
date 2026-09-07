@@ -9,6 +9,7 @@ import {
   requireListAccess,
   requireTaskAccess,
   requireTasksAccess,
+  resolveStatusSetFor,
 } from "@arbor/db";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
@@ -77,6 +78,44 @@ export async function cycleStatus(taskId: string): Promise<Operation[]> {
   revalidatePath("/");
 
   return [{ ...op, from: nextId, to: row.status_id }];
+}
+
+/**
+ * Sets a status directly, rather than advancing to the next one.
+ *
+ * Cycling is right for a list row: one control's worth of space, and one click
+ * has to mean something. A detail page has room to show the whole set, and
+ * picking is what someone who opened a task expects. Both produce the same
+ * `setField` operation, so undo, the activity row and the inverse are shared —
+ * only the gesture differs.
+ *
+ * The status is checked against the set the task's list resolves (D-014), not
+ * merely against `statuses`, or a task could be moved into a status belonging
+ * to another space's set and then disappear from its own board.
+ */
+export async function setTaskStatus(taskId: string, statusId: string): Promise<Operation[]> {
+  const actor = await requireUser();
+  const access = await requireTaskAccess(taskId, actor.id, "edit");
+
+  const current = await pool().query<{ status_id: string | null }>(
+    `SELECT status_id FROM tasks WHERE id = $1`,
+    [taskId],
+  );
+
+  const resolved = await resolveStatusSetFor(access.workspaceId, access.homeListId);
+  if (!resolved.set.statuses.some((status) => status.id === statusId)) {
+    throw new Error("That status does not belong to this list's status set");
+  }
+
+  const from = current.rows[0]?.status_id ?? null;
+  if (from === statusId) return [];
+
+  const op: Operation = { kind: "setField", taskId, field: "statusId", from, to: statusId };
+
+  await applyOperations([op], { actorId: actor.id });
+  revalidatePath("/", "layout");
+
+  return [{ ...op, from: statusId, to: from }];
 }
 
 export async function setPriority(taskId: string, priority: number | null): Promise<Operation[]> {
@@ -318,6 +357,125 @@ export async function setTaskDate(
   revalidatePath("/calendar");
 
   return [{ ...op, from: to, to: from }];
+}
+
+/**
+ * Adds or removes an assignee or a watcher — the detail panel's people controls.
+ *
+ * `RelationOp` has been in the operation union since Phase 3 and the executor
+ * has handled it since; nothing had ever called it, because no screen could
+ * assign anyone. So this action is four lines and inherits an activity row and
+ * a working undo, which is the whole argument for the operation layer.
+ *
+ * The relation is closed to these two rather than taken from the caller: `tag`
+ * is the third member of the union, and a control that assigns people has no
+ * business being able to name it.
+ */
+export async function setTaskRelation(
+  taskId: string,
+  relation: "assignee" | "watcher",
+  targetId: string,
+  present: boolean,
+): Promise<Operation[]> {
+  const actor = await requireUser();
+  await requireTaskAccess(taskId, actor.id, "edit");
+
+  if (relation !== "assignee" && relation !== "watcher") {
+    throw new Error(`Not a people relation: ${String(relation)}`);
+  }
+
+  const op: Operation = {
+    kind: present ? "addRelation" : "removeRelation",
+    taskId,
+    relation,
+    targetId,
+  };
+
+  await applyOperations([op], { actorId: actor.id });
+  revalidatePath("/", "layout");
+
+  return invertBatch([op]);
+}
+
+/**
+ * Changes a task's type.
+ *
+ * Worth its own action rather than folding into a generic setter because the
+ * type decides *which custom fields the task has*, so the panel has to
+ * re-render its whole field section afterwards rather than one control.
+ */
+export async function setTaskType(
+  taskId: string,
+  taskTypeId: string | null,
+): Promise<Operation[]> {
+  const actor = await requireUser();
+  await requireTaskAccess(taskId, actor.id, "edit");
+
+  const current = await pool().query<{ task_type_id: string | null }>(
+    `SELECT task_type_id FROM tasks WHERE id = $1`,
+    [taskId],
+  );
+
+  const from = current.rows[0]?.task_type_id ?? null;
+  const op: Operation = { kind: "setField", taskId, field: "taskTypeId", from, to: taskTypeId };
+
+  await applyOperations([op], { actorId: actor.id });
+  revalidatePath("/", "layout");
+
+  return [{ ...op, from: taskTypeId, to: from }];
+}
+
+/**
+ * Writes a custom field value.
+ *
+ * **The action does not decide what the value is.** `setCustomField` reaches an
+ * executor that loads the field, picks the typed column from its type, and runs
+ * the value through `parseFieldValue` — which is what refuses a derived field
+ * and what stops a number landing in `value_text` where no filter would find it
+ * again (D-042). Validating here as well would be a second opinion, and the one
+ * that matters is the one nearest the write.
+ *
+ * The previous value is read here because the inverse has to carry it (D-036),
+ * and only the server knows it. One column of the row holds it — the rest are
+ * null by construction — so coalescing across them reads the one that is set.
+ */
+export async function setCustomFieldValue(
+  taskId: string,
+  fieldId: string,
+  value: unknown,
+): Promise<Operation[]> {
+  const actor = await requireUser();
+  await requireTaskAccess(taskId, actor.id, "edit");
+
+  const current = await pool().query<{
+    value_text: string | null;
+    value_num: string | null;
+    value_date: Date | null;
+    value_bool: boolean | null;
+    value_json: unknown;
+  }>(
+    `SELECT value_text, value_num, value_date, value_bool, value_json
+     FROM field_values WHERE task_id = $1 AND field_id = $2`,
+    [taskId, fieldId],
+  );
+
+  const stored = current.rows[0];
+  const from =
+    stored === undefined
+      ? null
+      : (stored.value_text ??
+        (stored.value_num === null ? null : Number(stored.value_num)) ??
+        (stored.value_date === null ? null : stored.value_date.toISOString()) ??
+        stored.value_bool ??
+        stored.value_json ??
+        null);
+
+  const op: Operation = { kind: "setCustomField", taskId, fieldId, from, to: value };
+
+  await applyOperations([op], { actorId: actor.id });
+  revalidatePath("/", "layout");
+
+  return [{ ...op, from: value, to: from }];
 }
 
 /**

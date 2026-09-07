@@ -45,7 +45,12 @@ export function TaskRow({ task }: { task: TaskRowData }) {
         <span className="dot" data-group={task.statusGroup ?? undefined} />
       </button>
 
-      <span className="key">{task.key ?? "—"}</span>
+      {/* The key is the permalink (D-082). Clicking the *name* already means
+          rename on this renderer, so the identifier that exists to be cited is
+          what opens the task. */}
+      <a className="key task-link" href={`/t/${task.key ?? task.id}`} title="Open task">
+        {task.key ?? "—"}
+      </a>
 
       {editing ? (
         <input

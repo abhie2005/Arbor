@@ -265,7 +265,11 @@ function Card({
       }}
     >
       <div className="card-top">
-        <span className="key">{card.key ?? "—"}</span>
+        {/* A card is draggable, so the whole card cannot be a link; the key
+            is (D-082). */}
+        <a className="key task-link" href={`/t/${card.key ?? card.id}`} title="Open task">
+          {card.key ?? "—"}
+        </a>
         {card.priority ? (
           <span className="flag" data-priority={card.priority} title={`Priority ${card.priority}`}>
             ▲

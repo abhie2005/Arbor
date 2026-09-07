@@ -191,7 +191,10 @@ function TableRow({ row, columns }: { row: TableRowData; columns: ResolvedColumn
                 />
               ) : (
                 <span className="table-name">
-                  <span className="key">{row.key ?? "—"}</span>
+                  {/* The permalink, for the same reason as the list (D-082). */}
+                  <a className="key task-link" href={`/t/${row.key ?? row.id}`} title="Open task">
+                    {row.key ?? "—"}
+                  </a>
                   <button type="button" className="title" onClick={() => setEditing(true)}>
                     {name}
                   </button>

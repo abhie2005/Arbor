@@ -109,6 +109,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-079](#d-079) | The shell is a component, extracted at the sixth copy | Frontend |
 | [D-080](#d-080) | Authenticating is not authorizing, and every write does both | Auth |
 | [D-081](#d-081) | Configuration is administered; a view is authorized as two things | Auth |
+| [D-082](#d-082) | A task is a page, and the key is what opens it | Frontend |
 
 ---
 
@@ -2243,3 +2244,73 @@ table headers that explain why they cannot sort (D-065).
 *In one sentence:* the task check only became true once the action that could
 hand out permissions was closed, and closing it needed a boundary that exists
 rather than the one that should.
+
+### D-082
+**A task is a page, and the key is what opens it** · 2026-09-07 · active
+
+`/t/ENG-402`, resolved as a key first and an id second. A full page, not an
+overlay, and every renderer links to it.
+
+**The address is the expensive half of D-031; the overlay is not.** D-031 chose
+a route over a modal so that back, deep links and cached list state work. The
+part that is costly to change later is what the URL says — links get pasted
+into messages and outlive any layout. Whether the panel renders *over* a list
+is a rendering choice that can change any week. So the address landed first and
+in full, and the overlay did not.
+
+**Why the overlay is not here yet, concretely.** Rendering beside a mounted
+list is a parallel route plus an interception in Next, and interception only
+catches navigations within the same segment tree. The five renderers sit at
+five different roots (`/`, `/board`, `/table`, `/calendar`, `/gantt`), so it
+would need writing five times, or the renderers need to move into one route
+group first. That refactor is worth doing on its own terms rather than
+underneath a feature.
+
+**Key first, id second.** `tasks.key` is nullable — a task outside a space with
+a prefix has none, and the two seeded subtasks are exactly that — so a
+key-only route would leave rows unaddressable. One segment resolves both, which
+is why the subtask links in the table read `/t/<uuid>` and work.
+
+**There is no compiler call, and that is not a hole in D-032.** A view compiles
+*which rows*; this page already knows the row. What it cannot skip is the thing
+the compiler was silently providing on every other screen — the `access_index`
+join — so `loadTask` does it, and returns null for a task the viewer cannot
+reach. Everything else is borrowed rather than rewritten: `fieldsAvailableOn`
+decides which custom fields appear, `resolveStatusSetFor` decides which statuses
+it can move between. A detail page inventing either would be a second answer to
+a question that already had one.
+
+**The key is the permalink, not the name.** Clicking a name already means
+rename on the list and the table, and a card is draggable on the board, so the
+name cannot become a link on three of the five renderers without taking a
+gesture away. The key is the identifier that exists to be cited, so it is what
+opens the task. On the calendar and the timeline nothing claims that click, and
+the name itself is the link — the calendar chip became an `<a>` that is still
+draggable, since an anchor drags natively and the drop handler reads
+`text/arbor-task` rather than the URL the browser also attaches.
+
+**Controls, or values — never disabled controls.** A viewer without `edit` gets
+the values as text. A disabled select still reads as something that would work
+if you tried harder. Eleven custom field types have one obvious control and are
+editable; the rest render as values with a `title` saying why, which is the
+same rule as the table headers that cannot sort (D-065). The server decides
+which are which, so the component cannot disagree with the page it was built
+from.
+
+**Status picks rather than cycles here.** A row has one control's worth of
+space, so one click has to advance. A page has room for the whole set. Both
+emit the same `setField`, so undo, the activity row and the inverse are shared
+and only the gesture differs — and `setTaskStatus` checks the status belongs to
+the set the list resolves, or a task could be moved into another space's status
+and vanish from its own board.
+
+**Assigning cost four lines.** `RelationOp` has been in the operation union
+since Phase 3 and the executor has handled it since; nothing had ever called it
+because no screen could assign anyone. The action builds one operation and
+inherits the activity row and a working undo. That is the operation layer
+paying for itself three phases after it was built.
+
+*In one sentence:* the address is what had to be right, everything under it was
+already built, and the parts that were not — a compiler call, a second status
+rule, a second field-scoping rule — are the parts this page deliberately does
+not have.

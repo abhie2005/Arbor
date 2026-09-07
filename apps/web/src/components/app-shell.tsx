@@ -22,6 +22,11 @@ import { UserSwitcher } from "@/components/user-switcher";
 export interface ShellChrome {
   workspaceName: string;
   spaceName: string;
+  /**
+   * Empty when the list sits straight under its space. The breadcrumb drops
+   * the segment rather than repeating the space, which is what falling back to
+   * the space name produced: "Founders › Founders › Hiring".
+   */
   folderName: string;
   listName: string;
   /**
@@ -58,8 +63,12 @@ export function AppShell({
             <div className="crumb">
               {chrome.spaceName}
               <span>›</span>
-              {chrome.folderName}
-              <span>›</span>
+              {chrome.folderName ? (
+                <>
+                  {chrome.folderName}
+                  <span>›</span>
+                </>
+              ) : null}
               {crumb ?? <strong>{chrome.listName}</strong>}
             </div>
             <div className="header-right">
