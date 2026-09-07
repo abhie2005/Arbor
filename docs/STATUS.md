@@ -196,20 +196,36 @@ step of Phase 7 rather than a detour from it.
 needs "whoever can see this thing", and that is now a join against a table that
 is correct.
 
+### Starting the detail panel
+
+Enough of it is already decided that this is mostly assembly:
+
+- **It is a route** (D-031): `/task/[id]`, so a task can be linked to. Rendering
+  it *beside* a list rather than instead of one is a parallel-route or
+  intercepting-route job in Next; the simplest honest first version is a full
+  page, and a side panel afterwards.
+- **Loading it does not need the compiler.** A view compiles "which rows"; a
+  detail panel already knows which row. What it does need is the permission
+  check the compiler normally does for free — so read the task through a join
+  against `access_index` for the viewer, or it will happily show a task in a
+  private list to someone with no grant. That is the one thing to get right,
+  and it is worth a smoke check shaped like the ones in
+  "permissions → grants become the index".
+- **Cells already exist.** `apps/web/src/server/cells.ts` resolves any field to
+  a displayable value, and `resolveColumns` gives labels and kinds — a detail
+  panel is those two over one row instead of many, so custom fields come free.
+- **Editing already exists.** `useTaskAction` carries the four rules a writing
+  control needs (D-064), and the actions in `server/actions.ts` cover status,
+  priority, name, dates and archive. Undo works through the same stack.
+- **Where every row should link to it:** the name cell in `task-row.tsx`,
+  `board.tsx`, `task-table.tsx`, the calendar chip and the timeline bar. All
+  five currently swallow the click or do nothing with it.
+
+The thing to decide first is the route shape, because it determines whether the
+panel is a page or an overlay, and that is expensive to change later.
+
 Table and Calendar landed 2026-09-05; permissions, sharing and real auth on
 2026-09-06.
-
-**Gantt, when it comes, is the renderer most likely to break the bet.** A bar
-spanning start to due is not a row at a point, and nothing in the compiler
-expresses a range. Worth thinking about before building it: a Gantt row is
-probably still one task row, with the renderer doing the arithmetic — the same
-answer the calendar reached — but dependencies between bars are a genuinely new
-query.
-
-**Then:** real auth and permissions (Phase 5 — the README roadmap puts access
-control ahead of collaboration, because every collaborative feature fans out to
-whoever can see a thing and building that on a dev stub means writing it
-twice).
 
 **Loose ends worth knowing about.**
 
