@@ -118,3 +118,12 @@ export {
   type CommentAuthor,
   type CommentRecord,
 } from "./comments";
+export {
+  fanOut,
+  loadInbox,
+  markAllRead,
+  markRead,
+  unreadCount,
+  type FanOutTarget,
+  type InboxRow,
+} from "./notifications";

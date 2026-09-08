@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 import {
   type AnyPgColumn,
+  bigint,
   bigserial,
   boolean,
   index,
@@ -116,7 +117,19 @@ export const notifications = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    activityId: uuid("activity_id"),
+    /**
+     * The activity row this notification is about.
+     *
+     * `bigint`, because `activity.id` is a `bigserial`. It was declared `uuid`
+     * from 0000 and had no foreign key, so nothing ever rejected a value it
+     * could not hold — the mismatch survived until the first code that
+     * actually wrote to this table went looking for the column to fill.
+     *
+     * Still no FK: activity is append-only and enormous, and a notification
+     * outliving a pruned activity row should lose its link rather than be
+     * deleted with it.
+     */
+    activityId: bigint("activity_id", { mode: "bigint" }),
     kind: text("kind").notNull(),
     taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
     /** Rendered summary, so the inbox needs no joins to display a row. */

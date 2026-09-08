@@ -1,69 +1,14 @@
 # Status — resume here
 
-Last updated 2026-09-07 (browser-verified). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-09-07. Repo: https://github.com/abhie2005/Arbor (`main`).
 
-This file exists so a new session, or a future you, can pick the project up
-without re-deriving anything. Update it whenever you stop mid-stream.
+**`CLAUDE.md` at the repo root is the map** — invariants, where things live,
+commands, gotchas. It loads automatically. This file is only *current state and
+what is next*, so start here when resuming and do not read the tree to orient
+yourself.
 
----
-
-## No open bugs
-
-Two were found and fixed during this pass, both by looking rather than by
-reasoning.
-
-**Writes were never authorized.** Reads have been permission-scoped since ADR 3
-— every view query joins `access_index`, so a task in a list you cannot reach
-never reaches a screen. Writes only ever established *who* was asking. Six
-actions called `requireUser` and then wrote, and `undo` was the worst of them:
-it takes an `Operation[]` straight from the client, so a hand-built batch could
-name any task in the workspace. It survived five phases because it was
-unreachable in practice — the only way to get a task id was to render a row, and
-rendering was scoped. The detail page is what made it reachable, so it had to be
-closed before the page landed (D-080).
-
-**And closing it was not a fix until the sharing actions were closed too.**
-`shareContainerAction` let any signed-in user grant themselves `manage` on any
-container, so the task check was one extra request away from irrelevant: grant,
-then edit legitimately. `check:actions` now performs exactly that sequence —
-reverting the fix renames a task in a private list to "Renamed after granting
-myself access" (D-081).
-
-**A breadcrumb read "Founders › Founders › Hiring".** A list sitting directly
-under a space matched that space as its folder as well, because the join had no
-`kind` test. Invisible until a page existed for a task in a folderless list.
-
----
-
-## Get running in 3 commands
-
-```bash
-colima start                                   # Docker daemon (Colima on this Mac)
-docker start arbor-pg || docker run -d --name arbor-pg \
-  -e POSTGRES_USER=arbor -e POSTGRES_PASSWORD=arbor -e POSTGRES_DB=arbor \
-  -p 5432:5432 postgres:17-alpine
-cd apps/web && npx next dev -p 3100
-```
-
-Then `http://localhost:3100`, which now asks you to sign in: **any seeded user,
-password `arbor-demo-2026`** (the seed prints it). The login screen shows the
-demo credentials in development only. **Port 3000 is usually taken by another project on
-this machine** (`tempo`) — check before assuming a page you are looking at is
-Arbor. First compile is around 6 seconds once `.next` exists; the "~5 minutes"
-noted here previously was a cold cache.
-
-Verify without the browser:
-
-```bash
-npm test                                       # 291 unit tests, no database needed
-npm run db:seed && npm run db:smoke            # 112 checks against real Postgres
-PORT=3100 npm run check:actions                # 65 checks — needs the dev server
-```
-
-`check:actions` is the only one that needs a running server: it POSTs to the
-page with a `Next-Action` header, which is the request a button click makes.
-**Pass `PORT=3100`** — it defaults to 3000, which is another project on this
-machine, and the failure it gives you is a 404 rather than a wrong-app warning.
+**No open bugs.** The archaeology of the ones that are fixed, and what browser
+verification found in each phase, is in `docs/HISTORY.md`.
 
 ---
 
@@ -71,7 +16,7 @@ machine, and the failure it gives you is a 404 rather than a wrong-app warning.
 
 | Area | State |
 |---|---|
-| **Schema** | 43 tables, 9 enums, 116 indexes. Migrated (0000, 0001) and seeded. |
+| **Schema** | 43 tables, 9 enums, 116 indexes. Migrated (0000–0004) and seeded. |
 | **View compiler** | Definition → one parameterized SQL query. Filters, grouping, sorting, group counts, permission scoping. Custom fields resolve through a required field catalog. |
 | **Hierarchy** | Config inheritance, effective privacy, denormalized ancestors, move-legality. |
 | **Ordering** | Fractional indices — one row written per drag. |
@@ -96,82 +41,10 @@ machine, and the failure it gives you is a 404 rather than a wrong-app warning.
 | **Authorization** | Every server action authorizes as well as authenticates. Task writes join `access_index` for the actor; `undo` checks every task its client-supplied batch names; sharing and configuration need an owner or admin; a saved view is the container's `edit`, unless it is personal, in which case only its owner. |
 | **Task detail** | `/t/ENG-402` — a page, keyed by the human key with a uuid fallback. Status, priority, dates, type, assignees, watchers, eleven editable custom-field types and a description. Subtasks are listed here and nowhere else in the UI. A viewer without `edit` gets values, not disabled controls. |
 | **Comments** | Threaded one level, edit and soft-delete your own, `@` mentions stored as nodes carrying a user id. Written as operations, so each has an activity row and ⌘Z undoes it. Mentioning someone without access asks before granting them any. |
+| **Notification fan-out** | Written inside the transaction that caused them, for direct signals only: assigned, mentioned, replied. Never to someone who cannot open the task, and the inbox filters again on read because access can be revoked afterwards. Rule is pure and in core; **no UI yet**. |
 
 **Verified:** 291 unit tests, 112 live-Postgres checks, 65 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
-
-**The permission checks are the ones to read.** They assert the property
-through a compiled view query — a task in a private list not coming back —
-rather than by inspecting the access index, because the index being right is
-not the thing that matters. The seed now computes the index with the real job
-instead of writing "everyone can manage everything" by hand, which is what made
-it possible to have a permission bug the demo could not show.
-
-**The renderer bet, measured twice.** The board took no compiler change, no new
-SQL, and one new server action (`moveTask`, because dragging is a mutation the
-list never needed).
-
-The table is the more interesting measurement, because it is the first renderer
-that needed something the compiler did not have. It runs the list's query
-unchanged — no new SQL shape, no new join, no second query for rows — but it
-needed two things beside it: four more built-in columns in the SELECT list
-(D-061), and a per-page lookup for custom field values, which are one row per
-(task, field) in the EAV table and cannot be projected without a subquery each
-(D-062). Both live in the compiler and the shared read path respectively;
-neither is a query belonging to a renderer, which is the line that matters.
-
-**The calendar settled it.** It is the first view whose shape is not a sequence
-of rows, and it needed no compiler change and no new SQL — a month is the
-list's query with one condition appended, using the `between` operator that was
-already there (D-068). What it did need was `loadView` learning that a renderer
-may *narrow* the query in a way the URL cannot widen back, and a page size
-raised to the compiler's maximum, because a month is a bounded window rather
-than a page someone scrolls.
-
-Five renderers, one query — and the detail page is the first screen that does
-*not* go through the compiler, which is the boundary rather than an exception.
-A view compiles "which rows"; a task page already knows the row. What it could
-not skip was the `access_index` join the compiler had been providing for free
-on every other screen (D-082).
-
-**Browser-verified 2026-09-05**, the first time in this project's history:
-board drag lands where aimed, undo restores both the column and the place in
-it, ⌘Z works from the keyboard, status cycling works, the status deletion
-prompt reports how many tasks would move, and a duplicate status name is
-refused with the input snapping back.
-
-It found three bugs that every automated check had passed — a toast that
-counted operations and called them tasks, a drop handler that read the dragged
-id from React state instead of `dataTransfer`, and refused edits that left the
-rejected value in the input (D-052, D-053). None of them were reachable from
-the server side, which is the whole argument for looking at the screen.
-
-**The table was verified the same way**, and it earned its keep again: a
-malformed `?s=` link reported "Could not reach the database" and told you to
-start Docker; sortable headers were only clickable on the words themselves,
-leaving most of each header cell dead; and putting the column chooser beside
-the filter bar collapsed the bar to content width, stranding its "Show closed"
-toggle mid-row. All three passed every automated check.
-
-**The calendar found two more**, one of them older than it: every date-only due
-date displayed a day early (D-067), which was invisible until a task had to sit
-in a square; and the sidebar's task count was whatever the renderer had drawn,
-so an empty month reported the list as empty (D-069).
-
-**The detail page found one older than the whole feature**, and it is the same
-shape: a list sitting directly under a space matched that space as its folder
-as well, because the join had no `kind` test. It had been in `loadView` since
-the beginning and could not be seen, because the only list the app rendered had
-a real folder. A page for a task in a folderless list is what made "Founders ›
-Founders › Hiring" appear on screen.
-
-Two things worth noting about verifying this pass in a browser. **A synthetic
-drag does not trigger HTML5 drag-and-drop**: the calendar and board drags both
-fail under `left_click_drag`, which is the tool and not the app — the calendar
-drop was confirmed by dispatching real `DragEvent`s and checking Postgres.
-And **the first click after a navigation is still swallowed** while the page
-hydrates, which cost twenty minutes here on a checkbox that looked broken and
-was not.
 
 ---
 
@@ -191,13 +64,34 @@ was not.
 
 ## Where to pick up
 
-**Phase 7 is half done.** The task detail page and comments are built; what
-remains is the fan-out half — notifications, then realtime, then presence.
+**Phase 7 is most of the way through its second half.** The task detail page
+and comments are built, and so is the notification fan-out — the write side.
+What remains of notifications is the part people can see; then realtime, then
+presence.
 
-The pass ran as four commits, each verified on all four gates before the next
-started: the shell extraction, authorization, the detail page, comments.
+The pass ran as commits verified on all four gates before the next started:
+shell extraction, authorization, the detail page, comments, fan-out.
 
-### Next — notifications
+### Next — the inbox
+
+The fan-out is done and has 14 live-Postgres checks behind it. `notifications`
+has rows in it for the first time. **Nothing displays them**, which is the whole
+of the next chunk:
+
+- **`loadInbox`, `unreadCount`, `markRead` and `markAllRead` already exist** in
+  `packages/db/src/notifications.ts`, scoped and tested. The page is a consumer,
+  not new query work.
+- **The sidebar's `Inbox 3` is still a literal `3`** in
+  `components/app-shell.tsx`, marked with a comment. `unreadCount` replaces it.
+- **`/inbox` needs a route.** It is the first screen not scoped to one
+  container, which is already handled in the query — the join is on each row's
+  own list rather than on one known in advance.
+- Clicking a row should mark it read and open `/t/<key>`.
+
+Then the **read-time aggregation over `activity`** for watchers, which is the
+other half of the table's design and has no code yet.
+
+### Background — why notifications are shaped this way
 
 This is the honest next step, and it is where the schema has been waiting.
 `notifications` exists and is empty. The comment on the table says what it is
@@ -299,47 +193,20 @@ the four copies had already drifted apart before it was extracted.
   list, board and calendar pages do not pass one, so hand-editing `?s=` on those
   does nothing.
 
-
-## Environment gotchas on this machine
-
-- **Port 3000 is another project.** Use 3100 for Arbor.
-- **Docker Compose plugin is not installed** — only the Docker CLI. So
-  `npm run docker:up` fails. Fix with `brew install docker-compose`, or keep
-  using the `docker run` line above. The compose file itself is correct.
-- **Colima must be started manually** (`colima start`) and is slow on disk.
-- **`check:actions` defaults to port 3000**, which is `tempo`. Run it as
-  `PORT=3100 npm run check:actions` or it fails with a 404 that looks like a
-  missing route rather than the wrong app.
-- **pnpm and corepack are absent**, which is why this is an npm-workspaces repo
-  (D-004). The root `packageManager` field pins npm — Turborepo 2.10 refuses to
-  resolve the workspace without it.
-- **The Claude-in-Chrome extension** refused to connect for four sessions and
-  then worked on 2026-09-05. `check:actions` exists because of that history and
-  is still worth keeping: it runs without a browser and covers the server half.
-- **Dev-server hydration takes several seconds.** Clicking or typing too soon
-  after a navigation does nothing at all — the event never reaches React, and
-  it looks exactly like a broken handler. Wait for the page to settle before
-  concluding anything from an interaction that did not work.
-- **21st.dev MCP** is configured at local scope in `~/.claude.json` (not in the
-  repo — the key must never be committed). **Its tools require a Claude Code
-  restart to load.** Not yet used; `packages/ui` has the tokens and an empty
-  `ATTRIBUTIONS.md` waiting.
-
 ---
 
-## Read these first
+## Background, when you want it
+
+`CLAUDE.md` lists the source files that matter and what each is for. These are
+the ones it does not cover, because they are reading rather than reference:
 
 | File | Why |
 |---|---|
-| `DECISIONS.md` | 84 entries. Every non-obvious choice, the alternatives rejected, and the trade-off accepted. Written for explaining the project out loud. D-049 is the most interesting one to talk through; D-080 and D-081 are the pair worth reading together, because the first was not a fix until the second landed. |
+| `DECISIONS.md` | 84 entries — every non-obvious choice, its rejected alternatives, and the trade-off accepted. Written to be explained out loud. D-049 is the best one to talk through; D-080 and D-081 are the pair to read together, because the first was not a fix until the second landed. |
+| `docs/HISTORY.md` | What each phase cost, and the bugs that survived every automated check until someone looked at the screen. |
 | `docs/decisions/` | Five ADRs — the structural choices most expensive to reverse. |
 | `docs/design-plan.html` | Interface plan: palette, type, density, screens, keyboard map, AWS topology. Open in a browser. |
 | `docs/work-os-research.html` | The architecture teardown the whole project is built from. |
-| `packages/core/src/views/compile.ts` | The heart of the product. Read this before changing anything about querying. |
-| `packages/core/src/fields.ts` | The field type system. Everything about a custom field is declared here once. |
-| `packages/core/src/views/columns.ts` | What a `ColumnSpec` becomes. Strict on write, lenient on read, and the reason that is not inconsistent. |
-| `packages/db/src/task-access.ts` | The check every write goes through. Two refusals, on purpose: unreachable reads as gone, insufficient says so. |
-| `packages/core/src/richtext.ts` | The document format comments and descriptions share, and why a mention is a node rather than characters. |
 
 ---
 

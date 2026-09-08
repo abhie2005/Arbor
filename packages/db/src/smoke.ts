@@ -69,6 +69,7 @@ import {
   updateStatus,
 } from "./statuses";
 import { loadComments } from "./comments";
+import { loadInbox, markRead, unreadCount } from "./notifications";
 import {
   listAccess,
   requireListAccess,
@@ -1419,6 +1420,258 @@ async function main() {
   );
 
   await pool.query(`DELETE FROM comments WHERE object_id = $1`, [commentTask.id]);
+
+  // --- notifications --------------------------------------------------------
+  console.log("\nnotifications → direct signals only, inside the transaction\n");
+
+  await pool.query(`DELETE FROM notifications`);
+
+  const mentionId = randomUUID();
+  const fanned = await applyOperations(
+    [
+      {
+        kind: "createComment",
+        commentId: mentionId,
+        taskId: commentTask.id!,
+        body: parseRichText("Over to you @Riley Kaur", [{ id: viewer.id!, name: "Riley Kaur" }]),
+        parentId: null,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const notified = await pool.query<{
+    user_id: string;
+    kind: string;
+    activity_id: string | null;
+    payload: Record<string, unknown>;
+  }>(`SELECT user_id, kind, activity_id, payload FROM notifications`);
+
+  report(
+    "a mention writes exactly one row, for the person named",
+    notified.rows.length === 1 &&
+      notified.rows[0]?.user_id === viewer.id &&
+      notified.rows[0]?.kind === "mentioned"
+      ? null
+      : `wrote ${notified.rows.length} rows`,
+  );
+
+  report(
+    "and the executor reports what it wrote",
+    fanned.notified === 1 ? null : `reported ${fanned.notified}`,
+  );
+
+  // The column was declared `uuid` until 0004 and could never have held this.
+  report(
+    "the row points at the activity that caused it",
+    notified.rows[0]?.activity_id != null ? null : "activity_id is null",
+  );
+
+  // The schema asks for a rendered summary so an inbox row needs no joins.
+  const payload = notified.rows[0]!.payload;
+  report(
+    "the payload is rendered at write time, not left to be joined",
+    String(payload.summary).includes("mentioned you") &&
+      String(payload.excerpt).includes("Over to you")
+      ? null
+      : `payload was ${JSON.stringify(payload)}`,
+  );
+
+  await pool.query(`DELETE FROM notifications`);
+  await applyOperations(
+    [
+      {
+        kind: "createComment",
+        commentId: randomUUID(),
+        taskId: commentTask.id!,
+        body: parseRichText("Noting this, @Avery Mills", [{ id: owner.id!, name: "Avery Mills" }]),
+        parentId: null,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+  report(
+    "nobody is notified about their own action",
+    (await one(`SELECT count(*) AS n FROM notifications`)).n === "0"
+      ? null
+      : "the actor notified themselves",
+  );
+
+  // Assigning notifies; watching does not. Fanning out to watchers is the exact
+  // shape the table's design note rules out.
+  await pool.query(`DELETE FROM notifications`);
+  await pool.query(`DELETE FROM task_assignees WHERE task_id = $1 AND user_id = $2`, [
+    commentTask.id,
+    viewer.id,
+  ]);
+  await applyOperations(
+    [
+      { kind: "addRelation", taskId: commentTask.id!, relation: "assignee", targetId: viewer.id! },
+      { kind: "addRelation", taskId: commentTask.id!, relation: "watcher", targetId: outsider.id! },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+  const afterAssign = await pool.query<{ user_id: string; kind: string }>(
+    `SELECT user_id, kind FROM notifications`,
+  );
+  report(
+    "assigning notifies and watching does not",
+    afterAssign.rows.length === 1 &&
+      afterAssign.rows[0]?.user_id === viewer.id &&
+      afterAssign.rows[0]?.kind === "assigned"
+      ? null
+      : `wrote ${JSON.stringify(afterAssign.rows)}`,
+  );
+
+  // A field change is a real event addressed to nobody. Writing a row for it
+  // would be the two-hundred-watcher problem arriving through another door.
+  await pool.query(`DELETE FROM notifications`);
+  await applyOperations(
+    [{ kind: "setField", taskId: commentTask.id!, field: "priority", from: null, to: 2 }],
+    { actorId: owner.id!, connection: pool },
+  );
+  report(
+    "an ambient change writes no notification",
+    (await one(`SELECT count(*) AS n FROM notifications`)).n === "0"
+      ? null
+      : "a field change notified someone",
+  );
+
+  // Never tell someone about a task they cannot open. The mention flow asks
+  // before posting (D-084), but an assignment does not, and the worker will
+  // apply operations with no UI in front of it at all.
+  await pool.query(`DELETE FROM notifications`);
+  await applyOperations(
+    [
+      {
+        kind: "createComment",
+        commentId: randomUUID(),
+        taskId: privateTask.id!,
+        body: parseRichText("Take a look @Sam Petrov", [{ id: outsider.id!, name: "Sam Petrov" }]),
+        parentId: null,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+  report(
+    "someone with no access to the task is never notified about it",
+    (await one(`SELECT count(*) AS n FROM notifications`)).n === "0"
+      ? null
+      : "a private task was announced to someone who cannot open it",
+  );
+
+  await pool.query(`DELETE FROM notifications`);
+  await pool.query(`DELETE FROM comments WHERE object_id = $1`, [commentTask.id]);
+
+  const rootId = randomUUID();
+  await applyOperations(
+    [
+      {
+        kind: "createComment",
+        commentId: rootId,
+        taskId: commentTask.id!,
+        body: parseRichText("What do we think?", []),
+        parentId: null,
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
+  );
+  await applyOperations(
+    [
+      {
+        kind: "createComment",
+        commentId: randomUUID(),
+        taskId: commentTask.id!,
+        body: parseRichText("Ship it", []),
+        parentId: rootId,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+  const replied = await pool.query<{ user_id: string; kind: string }>(
+    `SELECT user_id, kind FROM notifications`,
+  );
+  report(
+    "replying notifies the author of the comment being answered",
+    replied.rows.length === 1 &&
+      replied.rows[0]?.user_id === viewer.id &&
+      replied.rows[0]?.kind === "replied"
+      ? null
+      : `wrote ${JSON.stringify(replied.rows)}`,
+  );
+
+  // The inbox is the first read in the app not scoped to one container, and it
+  // still has to answer only with tasks the viewer can currently open.
+  report(
+    "the inbox returns what was written",
+    (await loadInbox(viewer.id!, {}, pool)).length === 1 ? null : "the inbox disagrees",
+  );
+
+  report(
+    "and the badge agrees with it",
+    (await unreadCount(viewer.id!, pool)) === 1 ? null : "the count and the list disagree",
+  );
+
+  // A notification row records that something happened; it is not a licence to
+  // see it. Access revoked after the write must take it out of the inbox.
+  const savedIndex = await pool.query<Record<string, string>>(
+    `SELECT workspace_id, principal_id, list_id, permission FROM access_index
+     WHERE principal_id = $1 AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+    [viewer.id, commentTask.id],
+  );
+  await pool.query(
+    `DELETE FROM access_index WHERE principal_id = $1
+       AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+    [viewer.id, commentTask.id],
+  );
+  report(
+    "a notification for a task you have lost access to leaves the inbox",
+    (await loadInbox(viewer.id!, {}, pool)).length === 0 &&
+      (await unreadCount(viewer.id!, pool)) === 0
+      ? null
+      : "a revoked task is still announced",
+  );
+  for (const row of savedIndex.rows) {
+    await pool.query(
+      `INSERT INTO access_index (workspace_id, principal_id, list_id, permission)
+       VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+      [row.workspace_id, row.principal_id, row.list_id, row.permission],
+    );
+  }
+
+  const beforeRead = await unreadCount(viewer.id!, pool);
+  await markRead((await loadInbox(viewer.id!, {}, pool))[0]!.id, viewer.id!, pool);
+  report(
+    "marking one read takes it out of the badge",
+    beforeRead === 1 && (await unreadCount(viewer.id!, pool)) === 0
+      ? null
+      : "the badge did not change",
+  );
+
+  // An id is not permission: marking someone else's notification read must do
+  // nothing rather than quietly succeed.
+  await pool.query(`DELETE FROM notifications`);
+  await applyOperations(
+    [
+      {
+        kind: "createComment",
+        commentId: randomUUID(),
+        taskId: commentTask.id!,
+        body: parseRichText("Ping @Riley Kaur", [{ id: viewer.id!, name: "Riley Kaur" }]),
+        parentId: null,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+  await markRead((await loadInbox(viewer.id!, {}, pool))[0]!.id, outsider.id!, pool);
+  report(
+    "marking a notification read that is not yours does nothing",
+    (await unreadCount(viewer.id!, pool)) === 1 ? null : "someone else cleared it",
+  );
+
+  await pool.query(`DELETE FROM notifications`);
+  await pool.query(`DELETE FROM comments WHERE object_id = $1`, [commentTask.id]);
+
 
   await pool.query(`DELETE FROM tasks WHERE name = 'Offer letter template'`);
 

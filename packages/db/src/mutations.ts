@@ -11,6 +11,7 @@ import type { Pool, PoolClient } from "pg";
 
 import { pool } from "./client";
 import { loadField } from "./fields";
+import { fanOut, fanOutTarget, mayNotify } from "./notifications";
 
 /**
  * Applies operations and records them.
@@ -66,6 +67,8 @@ export class MutationRejected extends Error {}
 export interface ApplyResult {
   applied: number;
   skipped: number;
+  /** Notification rows written inside this transaction. */
+  notified: number;
 }
 
 export interface ApplyContext {
@@ -99,15 +102,19 @@ export async function applyOperations(
   // Filter no-ops before opening a transaction: clicking the status a task
   // already has should not write a row or broadcast a delta.
   const meaningful = ops.filter((op) => !isNoop(op));
-  if (meaningful.length === 0) return { applied: 0, skipped: ops.length };
+  if (meaningful.length === 0) return { applied: 0, skipped: ops.length, notified: 0 };
 
-  const result = { applied: meaningful.length, skipped: ops.length - meaningful.length };
+  const result = {
+    applied: meaningful.length,
+    skipped: ops.length - meaningful.length,
+    notified: 0,
+  };
 
   // Joining a caller's transaction: no BEGIN, no COMMIT, no release. Throwing
   // is still correct — the caller's rollback covers these statements too.
   if (context.client) {
     for (const op of meaningful) {
-      await applyOne(context.client, op, context.actorId);
+      result.notified += await applyAndNotify(context.client, op, context.actorId);
     }
     return result;
   }
@@ -118,7 +125,7 @@ export async function applyOperations(
     await client.query("BEGIN");
 
     for (const op of meaningful) {
-      await applyOne(client, op, context.actorId);
+      result.notified += await applyAndNotify(client, op, context.actorId);
     }
 
     await client.query("COMMIT");
@@ -131,7 +138,38 @@ export async function applyOperations(
   }
 }
 
-async function applyOne(client: PoolClient, op: Operation, actorId: string): Promise<void> {
+/**
+ * Applies one operation and tells whoever it was addressed to.
+ *
+ * **Inside the transaction, on purpose.** A comment and the fact that it told
+ * someone about itself either both happened or neither did — a fan-out after
+ * the commit can be lost to a crash, and a lost notification is invisible:
+ * nothing anywhere detects that a message was not sent.
+ *
+ * The usual objection to doing it here is cost, and it does not apply. Only
+ * *directly named* people get a row (the `notifications` table's own rule), so
+ * this is proportional to how many people a comment mentions, not to how many
+ * are watching. `mayNotify` means every other operation pays one comparison.
+ */
+async function applyAndNotify(
+  client: PoolClient,
+  op: Operation,
+  actorId: string,
+): Promise<number> {
+  const activityId = await applyOne(client, op, actorId);
+  if (!mayNotify(op)) return 0;
+
+  const target = await fanOutTarget(client, op.taskId, actorId);
+  if (!target) return 0;
+
+  return fanOut(client, op, target, actorId, activityId);
+}
+
+async function applyOne(
+  client: PoolClient,
+  op: Operation,
+  actorId: string,
+): Promise<bigint | null> {
   switch (op.kind) {
     case "setField": {
       const column = FIELD_COLUMNS[op.field];
@@ -158,7 +196,7 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
       );
 
       const row = requireRow(result.rows[0], op.taskId);
-      await logActivity(client, {
+      return await logActivity(client, {
         op,
         actorId,
         workspaceId: row.workspace_id,
@@ -167,7 +205,6 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         oldValue: op.from,
         newValue: op.to,
       });
-      return;
     }
 
     case "setCustomField": {
@@ -200,7 +237,7 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
       );
 
       const meta = await taskMeta(client, op.taskId);
-      await logActivity(client, {
+      return await logActivity(client, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -209,7 +246,6 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         oldValue: op.from,
         newValue: op.to,
       });
-      return;
     }
 
     case "addRelation":
@@ -233,7 +269,7 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
       }
 
       const meta = await taskMeta(client, op.taskId);
-      await logActivity(client, {
+      return await logActivity(client, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -242,7 +278,6 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         oldValue: op.kind === "removeRelation" ? op.targetId : null,
         newValue: op.kind === "addRelation" ? op.targetId : null,
       });
-      return;
     }
 
     case "createTask": {
@@ -279,7 +314,7 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         [op.taskId, op.listId, v.position],
       );
 
-      await logActivity(client, {
+      return await logActivity(client, {
         op,
         actorId,
         workspaceId: row.workspace_id,
@@ -288,7 +323,6 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         oldValue: null,
         newValue: { name: v.name },
       });
-      return;
     }
 
     case "archiveTask":
@@ -301,7 +335,7 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
       );
 
       const row = requireRow(result.rows[0], op.taskId);
-      await logActivity(client, {
+      return await logActivity(client, {
         op,
         actorId,
         workspaceId: row.workspace_id,
@@ -310,7 +344,6 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         oldValue: null,
         newValue: op.kind === "archiveTask",
       });
-      return;
     }
 
     /**
@@ -358,7 +391,7 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         [op.commentId, meta.workspace_id, op.taskId, op.parentId, actorId, JSON.stringify(body)],
       );
 
-      await logActivity(client, {
+      return await logActivity(client, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -367,7 +400,6 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         oldValue: null,
         newValue: renderPlain(body),
       });
-      return;
     }
 
     case "deleteComment":
@@ -386,7 +418,7 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
 
       if (result.rowCount === 0) throw new MutationRejected("That comment no longer exists");
 
-      await logActivity(client, {
+      return await logActivity(client, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -395,7 +427,6 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         oldValue: null,
         newValue: op.kind === "deleteComment",
       });
-      return;
     }
 
     case "editComment": {
@@ -411,7 +442,7 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
 
       if (result.rowCount === 0) throw new MutationRejected("That comment no longer exists");
 
-      await logActivity(client, {
+      return await logActivity(client, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -420,7 +451,6 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         oldValue: renderPlain(parseStoredDoc(op.from) ?? { type: "doc", content: [] }),
         newValue: renderPlain(body),
       });
-      return;
     }
 
     case "setDescription": {
@@ -439,7 +469,7 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         op.taskId,
       ]);
 
-      await logActivity(client, {
+      return await logActivity(client, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -448,7 +478,6 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         oldValue: op.from === null ? null : renderPlain(op.from),
         newValue: to === null ? null : renderPlain(to),
       });
-      return;
     }
 
     default: {
@@ -488,11 +517,16 @@ interface LogArgs {
   newValue: unknown;
 }
 
-async function logActivity(client: PoolClient, args: LogArgs): Promise<void> {
-  await client.query(
+/**
+ * Returns the id it wrote, so a notification can point at the thing that caused
+ * it — which is what makes "why am I being told this" a question with an answer.
+ */
+async function logActivity(client: PoolClient, args: LogArgs): Promise<bigint> {
+  const result = await client.query<{ id: string }>(
     `INSERT INTO activity
        (workspace_id, actor_id, object_kind, object_id, verb, field, old_value, new_value, list_id)
-     VALUES ($1, $2, 'task', $3, $4, $5, $6, $7, $8)`,
+     VALUES ($1, $2, 'task', $3, $4, $5, $6, $7, $8)
+     RETURNING id`,
     [
       args.workspaceId,
       args.actorId,
@@ -504,4 +538,6 @@ async function logActivity(client: PoolClient, args: LogArgs): Promise<void> {
       args.listId,
     ],
   );
+
+  return BigInt(result.rows[0]!.id);
 }
