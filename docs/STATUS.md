@@ -210,9 +210,13 @@ Most of what it needs already landed:
 - **Mentions are already references.** `mentionedIds(doc)` returns the user ids
   a comment named, and it is called today only to decide whether to ask about
   sharing (D-084). The fan-out is the second caller.
-- **Watchers are real and get added.** Commenting makes you a watcher, and the
-  panel has checkboxes for both watchers and assignees. `task_watchers` was
-  seeded and unread before this pass; it is now the list to fan out to.
+- **Watchers are real and get added** — but they are *not* the write-time
+  fan-out list, and reading them as one would undo the reason the table is
+  designed this way. Watchers are who the **read-time** aggregation over
+  `activity` is for. The rows written at write time go to people named
+  directly: the assignee who was just assigned, the person a comment mentioned,
+  the author of a comment that was replied to. Commenting makes you a watcher,
+  and the panel has checkboxes for both — so both halves now have their input.
 - **`payload` is meant to be rendered, not joined.** The schema says the inbox
   row should need no joins to display, which means writing the summary at
   fan-out time. `renderPlain(doc)` is what produces it.
@@ -221,11 +225,13 @@ Most of what it needs already landed:
   `/inbox` page are the visible half.
 
 **The one thing to decide first** is whether notifications are written inside
-the same transaction as the operation that caused them. Inside is correct and
-makes a comment's write proportional to its watcher count; outside needs
-something to run it, and `apps/worker` does not exist. That is the same shape of
-decision as D-071 (a rebuild per share), and it should be made deliberately
-rather than by whichever is easier to write.
+the same transaction as the operation that caused them. Inside is correct — a
+comment and the fact that it notified someone either both happened or neither
+did — and because only direct signals are written, the cost is proportional to
+the number of people *named*, which is small. Outside needs something to run it,
+and `apps/worker` does not exist. That is the same shape of decision as D-071 (a
+rebuild per share), and it should be made deliberately rather than by whichever
+is easier to write.
 
 ### Then realtime, and presence
 
