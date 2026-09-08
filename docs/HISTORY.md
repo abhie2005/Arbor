@@ -35,6 +35,27 @@ myself access" (D-081).
 under a space matched that space as its folder as well, because the join had no
 `kind` test. Invisible until a page existed for a task in a folderless list.
 
+**The seed decided who the owner was by physical row order.** Re-seeding an
+existing database returns nothing from `onConflictDoNothing`, so it fell back to
+`select().from(users).limit(4)` — with no `ORDER BY` — and destructured the
+result as `[avery, riley, sam, jordan]`. Postgres returns rows in whatever order
+they physically sit in, which changes when they are updated, and `setPassword`
+updates all four on every seed. So one day Sam was the owner and Avery a member,
+and eleven permission checks failed describing symptoms that had nothing to do
+with permissions. It had been latent since the first seed and only surfaced
+after enough re-seeds moved a row. The fix is four lines: bind by email.
+
+The lesson is not about seeds. **A check that fails because its fixture is wrong
+is worse than a check that fails**, because it sends you into the code it was
+testing. This one cost half an hour of reading a query that was correct.
+
+**Two clocks.** The ambient checks fence on `activity.at`, which Postgres
+stamps, and originally took the fence from `new Date()` in the test process.
+Postgres is in a VM whose clock drifts tens of milliseconds either side of the
+host's, so the *previous* section's writes fell inside the window at random and
+the query looked like it was ignoring its own filter. The fence has to come from
+the same clock as the data: `SELECT now()`.
+
 ---
 
 ---

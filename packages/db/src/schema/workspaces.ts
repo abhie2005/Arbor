@@ -101,6 +101,26 @@ export const memberships = pgTable(
     role: memberRole("role").notNull().default("member"),
     invitedBy: uuid("invited_by").references(() => users.id, { onDelete: "set null" }),
     joinedAt: timestamp("joined_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * How far this person has read their inbox's ambient half.
+     *
+     * The direct signals in `notifications` carry `is_read` per row, because
+     * there are few of them and each is addressed to someone. Activity is the
+     * opposite: it is aggregated at read time precisely so that one edit does
+     * not write a row per watcher, and a per-row read flag would put those rows
+     * straight back. So "seen" is one timestamp per member — a mark on the
+     * feed, not a flag on each item.
+     *
+     * It belongs on the membership because it has exactly the membership's key
+     * and lifetime: someone who is not in the workspace has no inbox in it, and
+     * the row is guaranteed to exist for everyone who does, which makes this an
+     * update rather than an upsert.
+     *
+     * Null means never marked, which is read as "the last week" rather than as
+     * "all of history" — a first visit should not open on a wall of everything
+     * that has ever happened.
+     */
+    activitySeenAt: timestamp("activity_seen_at", { withTimezone: true }),
   },
   (t) => [
     primaryKey({ columns: [t.workspaceId, t.userId] }),

@@ -1177,6 +1177,84 @@ report(
 await db.query(`DELETE FROM notifications`);
 await db.query(`DELETE FROM comments WHERE object_id = $1`, [detailTask.id]);
 
+// --- the inbox's other half -------------------------------------------------
+//
+// Ambient activity is assembled at read time from `activity`, so there is no
+// row to inspect and the page *is* the assertion: what a watcher sees, and what
+// the badge deliberately does not count.
+console.log("\nwatched activity → assembled, counted separately\n");
+
+await db.query(
+  `INSERT INTO task_watchers (task_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+  [detailTask.id, averyId],
+);
+await db.query(`UPDATE memberships SET activity_seen_at = NULL WHERE user_id = $1`, [averyId]);
+
+// Riley moves the task Avery is watching. A real action, so the activity row is
+// written by the same path the app writes every other one.
+const reviewStatus = await one(
+  `SELECT s.id FROM statuses s JOIN status_sets ss ON ss.id = s.status_set_id
+   WHERE ss.name = 'Engineering' AND s.name = 'In Review'`,
+);
+await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskStatus!, [detailTask.id, reviewStatus.id], RILEY);
+
+// Matched loosely on purpose. The summary is one sentence over whatever the
+// group holds, so asserting the exact words would be asserting how much other
+// activity this task happened to collect — "changed status" becomes "changed a
+// custom field and status" the moment another check touches the same task.
+const watchedLine = /Riley Kaur[^<]*\bstatus\b/;
+
+const withAmbient = await (await fetch(INBOX_URL, { headers: { Cookie: COOKIE } })).text();
+report(
+  "a change on a task you watch is assembled into the inbox",
+  watchedLine.test(withAmbient) ? null : "the watched change never appeared",
+);
+
+// The badge is a count of things addressed to you. Ambient activity is a feed
+// you visit, and a badge that counted it would be large, ignorable, ignored.
+const listAgain = await (await fetch(`http://localhost:${PORT}/`, { headers: { Cookie: COOKIE } })).text();
+report(
+  "and is not counted by the badge, which is for what names you",
+  !/data-unread/.test(listAgain) ? null : "ambient activity reached the badge",
+);
+
+// One button, both halves: a flag per row for the signals, one timestamp for
+// the feed. The difference is the schema's, not the reader's.
+await callOn(INBOX_URL, INBOX_ACTIONS.markEverythingRead!, []);
+const mark = await one(`SELECT activity_seen_at FROM memberships WHERE user_id = $1`, [averyId]);
+const afterMark = await (await fetch(INBOX_URL, { headers: { Cookie: COOKIE } })).text();
+report(
+  "mark all read moves the feed's mark, not just the unread flags",
+  mark.activity_seen_at !== null && !watchedLine.test(afterMark)
+    ? null
+    : mark.activity_seen_at === null
+      ? "the mark was not written"
+      : "the feed still shows what was marked seen",
+);
+
+// The window is not the mark: "everything" ignores how far you have read, so a
+// cleared feed is still readable rather than gone.
+const everything = await (
+  await fetch(`${INBOX_URL}?all=1`, { headers: { Cookie: COOKIE } })
+).text();
+report(
+  "and everything still shows what was cleared",
+  watchedLine.test(everything) ? null : "clearing the feed hid it for good",
+);
+
+await db.query(`DELETE FROM task_watchers WHERE task_id = $1 AND user_id = $2`, [
+  detailTask.id,
+  averyId,
+]);
+await db.query(`UPDATE memberships SET activity_seen_at = NULL WHERE user_id = $1`, [averyId]);
+// Put the status back. The earlier checks move this same task *to* In Review
+// and assert the operation was not a no-op, so leaving it there makes the next
+// run of this script fail somewhere else entirely.
+await db.query(`UPDATE tasks SET status_id = $2 WHERE id = $1`, [
+  detailTask.id,
+  detailTask.status_id,
+]);
+
 await db.query(`DELETE FROM comments WHERE object_id = ANY($1::uuid[])`, [
   [commentedTask.id, privateTask.id],
 ]);

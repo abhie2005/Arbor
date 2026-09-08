@@ -119,11 +119,15 @@ export {
   type CommentRecord,
 } from "./comments";
 export {
+  activitySeen,
   fanOut,
+  loadAmbient,
   loadInbox,
+  markActivitySeen,
   markAllRead,
   markRead,
   unreadCount,
+  type AmbientRow,
   type FanOutTarget,
   type InboxRow,
 } from "./notifications";

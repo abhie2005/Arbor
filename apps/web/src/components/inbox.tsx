@@ -1,9 +1,9 @@
 "use client";
 
-import type { InboxRow } from "@arbor/db";
 import Link from "next/link";
 import { useState, useTransition } from "react";
 
+import type { InboxEntry } from "@/server/inbox";
 import { markEverythingRead, markNotificationRead } from "@/server/inbox-actions";
 
 import { relative } from "./relative-time";
@@ -16,13 +16,18 @@ import { relative } from "./relative-time";
  * around the sentence — who did what — rather than around the task's fields,
  * and the task is the destination rather than the subject.
  *
- * **Nothing here joins anything.** The summary and the excerpt were rendered
- * when the notification was written, which is what the schema's `payload` is
- * for: the words a notification is about are the words as they were, and one
- * re-derived at read time would quietly change when the comment it describes is
- * edited.
+ * **Two halves, one list** (D-088). A signal was written for you and can be
+ * marked read on its own; an ambient row is a group of changes on something you
+ * watch, and is cleared by the mark that clears the feed. The rows say which
+ * they are with a glyph and by whether they offer the control — nothing else in
+ * here branches on it.
  *
- * Opening a row marks it read as it navigates. The action is fired, not
+ * **Nothing joins anything.** A signal's summary was rendered when it was
+ * written, which is what the schema's `payload` is for; an ambient summary is
+ * composed by a pure function in core over what the query grouped. Neither
+ * needs the task it names to be loaded.
+ *
+ * Opening a signal marks it read as it navigates. The action is fired, not
  * awaited: this is client navigation, so the request outlives the row it came
  * from, and making someone wait for a write before the page they asked for
  * begins loading is a worse trade than a badge that lags by a moment. If it
@@ -34,16 +39,20 @@ const GLYPH: Record<string, string> = {
   assigned: "◎",
   mentioned: "@",
   replied: "↩",
+  ambient: "◇",
 };
 
 export function Inbox({
-  rows,
+  entries,
   unread,
+  watching,
   includeRead,
 }: {
-  rows: InboxRow[];
-  /** The server's count, which is the whole inbox rather than this page of it. */
+  entries: InboxEntry[];
+  /** Unread signals across the whole inbox, not just this page of it. */
   unread: number;
+  /** Watched tasks with something new on them. */
+  watching: number;
   includeRead: boolean;
 }) {
   const [, startTransition] = useTransition();
@@ -51,27 +60,29 @@ export function Inbox({
   const [clearedAll, setClearedAll] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
-  const isRead = (row: InboxRow) => row.isRead || clearedAll || marked.has(row.id);
+  const isUnread = (entry: InboxEntry) =>
+    entry.unread && !clearedAll && !marked.has(entry.key);
 
-  // Counted from the server's number, not from the rows: the list is one page
-  // of the inbox and the badge is all of it, so subtracting what was just
+  // Counted from the server's numbers, not from the rows: the list is one page
+  // of the inbox and the counts are all of it, so subtracting what was just
   // marked is the only way the two agree while a request is in flight.
-  const optimisticUnread = clearedAll
+  const outstanding = clearedAll
     ? 0
-    : Math.max(0, unread - rows.filter((row) => !row.isRead && marked.has(row.id)).length);
+    : Math.max(0, unread - entries.filter((e) => e.unread && marked.has(e.key)).length);
+  const stillWatching = clearedAll ? 0 : watching;
 
-  function mark(ids: string[], call: () => Promise<unknown>) {
-    const fresh = ids.filter((id) => !marked.has(id));
-    if (fresh.length === 0) return;
+  function markOne(entry: InboxEntry) {
+    if (!entry.notificationId || marked.has(entry.key)) return;
+    const id = entry.notificationId;
 
     setFailure(null);
-    setMarked((was) => new Set([...was, ...fresh]));
+    setMarked((was) => new Set([...was, entry.key]));
 
     startTransition(async () => {
       try {
-        await call();
+        await markNotificationRead(id);
       } catch (error) {
-        setMarked((was) => new Set([...was].filter((id) => !fresh.includes(id))));
+        setMarked((was) => new Set([...was].filter((key) => key !== entry.key)));
         setFailure(error instanceof Error ? error.message : "That did not save");
       }
     });
@@ -79,12 +90,12 @@ export function Inbox({
 
   /**
    * Clearing everything is one call and one flag rather than a mark per row:
-   * the server clears the whole inbox, including the rows beyond this page,
-   * and pretending otherwise would leave the badge showing a number the button
-   * has already dealt with.
+   * the server clears the whole inbox — including the rows beyond this page and
+   * the ambient half, which has no per-row state to clear at all — and
+   * pretending otherwise would leave counts the button has already dealt with.
    */
   function markAll() {
-    if (optimisticUnread === 0) return;
+    if (outstanding === 0 && stillWatching === 0) return;
 
     setFailure(null);
     setClearedAll(true);
@@ -104,7 +115,14 @@ export function Inbox({
       <div className="inbox-head">
         <h1>Inbox</h1>
         <span className="inbox-count">
-          {optimisticUnread === 0 ? "all read" : `${optimisticUnread} unread`}
+          {outstanding === 0 && stillWatching === 0
+            ? "all read"
+            : [
+                outstanding > 0 ? `${outstanding} unread` : null,
+                stillWatching > 0 ? `${stillWatching} watching` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
         </span>
 
         <nav className="inbox-filter">
@@ -119,7 +137,7 @@ export function Inbox({
         <button
           type="button"
           className="inbox-clear"
-          disabled={optimisticUnread === 0}
+          disabled={outstanding === 0 && stillWatching === 0}
           onClick={markAll}
         >
           Mark all read
@@ -128,60 +146,76 @@ export function Inbox({
 
       {failure ? <p className="inbox-error">{failure}</p> : null}
 
-      {rows.length === 0 ? (
+      {entries.length === 0 ? (
         <p className="inbox-empty">
           {includeRead ? (
-            "Nothing has been sent to you yet."
+            "Nothing has been sent to you, and nothing has happened on what you watch."
           ) : (
             <>
-              Nothing unread. Being assigned a task, named in a comment or answered lands
-              here — <Link href="/inbox?all=1">everything you have had</Link> is still there.
+              Nothing new. Being assigned a task, named in a comment or answered lands here,
+              and so does anything that happens on a task you watch —{" "}
+              <Link href="/inbox?all=1">everything you have had</Link> is still there.
             </>
           )}
         </p>
       ) : (
         <ul className="inbox-list">
-          {rows.map((row) => (
-            <li key={row.id} className="inbox-item" data-read={isRead(row) || undefined}>
+          {entries.map((entry) => (
+            <li
+              key={entry.key}
+              className="inbox-item"
+              data-read={isUnread(entry) ? undefined : true}
+              data-ambient={entry.source === "ambient" || undefined}
+            >
               <Link
                 className="inbox-open"
-                href={taskHref(row)}
-                onClick={() => mark([row.id], () => markNotificationRead(row.id))}
+                href={taskHref(entry)}
+                onClick={() => markOne(entry)}
               >
                 <span className="inbox-kind" aria-hidden="true">
-                  {GLYPH[row.kind] ?? "•"}
+                  {GLYPH[entry.kind] ?? "•"}
                 </span>
 
                 <span className="inbox-text">
-                  <span className="inbox-summary">{row.summary}</span>
+                  <span className="inbox-summary">{entry.summary}</span>
                   <span className="inbox-task">
-                    {row.taskKey ? <span className="key">{row.taskKey}</span> : null}
-                    {row.taskName}
+                    {entry.taskKey ? <span className="key">{entry.taskKey}</span> : null}
+                    {entry.taskName}
                   </span>
-                  {row.excerpt ? <span className="inbox-excerpt">{row.excerpt}</span> : null}
+                  {entry.excerpt ? <span className="inbox-excerpt">{entry.excerpt}</span> : null}
                 </span>
 
                 <time
                   className="inbox-when"
-                  dateTime={row.createdAt}
-                  title={new Date(row.createdAt).toLocaleString("en-GB")}
+                  dateTime={entry.at}
+                  title={new Date(entry.at).toLocaleString("en-GB")}
                 >
-                  {relative(row.createdAt)}
+                  {relative(entry.at)}
                 </time>
               </Link>
 
               {/* A sibling of the link rather than inside it: a button in an
                   anchor is invalid, and reading something without opening it is
-                  the whole reason this control exists. */}
-              <button
-                type="button"
-                className="inbox-mark"
-                disabled={isRead(row)}
-                title={isRead(row) ? "Read" : "Mark read without opening"}
-                onClick={() => mark([row.id], () => markNotificationRead(row.id))}
-              >
-                {isRead(row) ? "Read" : "Mark read"}
-              </button>
+                  the whole reason this control exists. An aggregate has no row
+                  to mark, so it says what it stands for instead. */}
+              {entry.source === "signal" ? (
+                <button
+                  type="button"
+                  className="inbox-mark"
+                  disabled={!isUnread(entry)}
+                  title={isUnread(entry) ? "Mark read without opening" : "Read"}
+                  onClick={() => markOne(entry)}
+                >
+                  {isUnread(entry) ? "Mark read" : "Read"}
+                </button>
+              ) : (
+                <span
+                  className="inbox-changes"
+                  title="Activity on a task you watch. Cleared by 'Mark all read'."
+                >
+                  {entry.changes} change{entry.changes === 1 ? "" : "s"}
+                </span>
+              )}
             </li>
           ))}
         </ul>
@@ -195,6 +229,6 @@ export function Inbox({
  * the id when there is no key, because `tasks.key` is nullable and a keyless
  * task still has to be reachable from its own notification.
  */
-function taskHref(row: InboxRow): string {
-  return `/t/${encodeURIComponent(row.taskKey ?? row.taskId ?? "")}`;
+function taskHref(entry: InboxEntry): string {
+  return `/t/${encodeURIComponent(entry.taskKey ?? entry.taskId ?? "")}`;
 }

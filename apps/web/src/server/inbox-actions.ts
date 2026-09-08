@@ -1,9 +1,10 @@
 "use server";
 
-import { markAllRead, markRead } from "@arbor/db";
+import { markActivitySeen, markAllRead, markRead } from "@arbor/db";
 import { revalidatePath } from "next/cache";
 
 import { requireUser } from "./auth";
+import { requireWorkspace } from "./workspace";
 
 /**
  * Marking notifications read.
@@ -38,9 +39,21 @@ export async function markNotificationRead(notificationId: string): Promise<void
   revalidatePath("/", "layout");
 }
 
+/**
+ * Clears both halves, because the button says "all".
+ *
+ * The two are cleared by different mechanisms — a flag per row for the signals
+ * written to you, one timestamp for the activity assembled from what you watch
+ * — and that difference is the schema's, not something a person operating this
+ * screen should have to hold. An inbox with one button that empties half of
+ * itself is worse than an inbox with two buttons.
+ */
 export async function markEverythingRead(): Promise<number> {
   const actor = await requireUser();
+  const workspace = await requireWorkspace();
+
   const cleared = await markAllRead(actor.id);
+  await markActivitySeen(actor.id, workspace.id);
 
   revalidatePath("/", "layout");
   return cleared;

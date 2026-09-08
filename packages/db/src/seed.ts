@@ -17,7 +17,7 @@ import {
   positionBetween,
   startOfUtcDay,
 } from "@arbor/core";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 import { rebuildAccessIndex } from "./access";
 import { setPassword } from "./auth";
@@ -61,10 +61,34 @@ async function main() {
   const users =
     insertedUsers.length > 0
       ? insertedUsers
-      : await db.select().from(s.users).limit(people.length);
+      : await db
+          .select()
+          .from(s.users)
+          .where(inArray(s.users.email, people.map((p) => p.email)));
 
-  const [avery, riley, sam, jordan] = users;
-  if (!avery || !riley || !sam || !jordan) throw new Error("seed: expected four users");
+  /**
+   * Bound by address, never by position.
+   *
+   * The re-seed path returns nothing from `onConflictDoNothing`, so it falls
+   * back to selecting the rows that already exist — and a select with no
+   * `ORDER BY` returns them in whatever physical order Postgres has them in,
+   * which changes every time a row is updated. `setPassword` updates all four
+   * on every seed. So `const [avery, riley, sam, jordan] = users` was a coin
+   * toss that made Sam the owner and Avery a member, and the permission checks
+   * then failed on the *seed*, describing symptoms that had nothing to do with
+   * the code they were testing.
+   */
+  const byEmail = new Map(users.map((user) => [user.email, user]));
+  const person = (email: string) => {
+    const user = byEmail.get(email);
+    if (!user) throw new Error(`seed: expected a user for ${email}`);
+    return user;
+  };
+
+  const avery = person("avery@example.com");
+  const riley = person("riley@example.com");
+  const sam = person("sam@example.com");
+  const jordan = person("jordan@example.com");
 
   // Every demo user gets the same password, printed below. A seeded account
   // with no password cannot sign in, and "log in as anyone" is the whole point

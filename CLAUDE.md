@@ -49,8 +49,10 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
    store a mention as the characters "@Name" (D-083).
 7. **Notifications: direct signals only.** Assigned, mentioned, replied write a
    row inside the causing transaction. Everything ambient is aggregated at read
-   time from `activity` — fanning out to watchers is the 200-rows-per-edit
-   mistake the table is shaped to avoid.
+   time from `activity` (`loadAmbient`) — fanning out to watchers is the
+   200-rows-per-edit mistake the table is shaped to avoid, and so is giving a
+   watcher a read flag per event: the ambient half's read state is one mark per
+   membership (D-088).
 8. **Dates**: a date-only value is midnight UTC and read in UTC (D-067).
    `dueHasTime` decides. Never format one without asking.
 
@@ -69,6 +71,7 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Comment reads (writes are operations) | `packages/db/src/comments.ts` |
 | Fan-out + inbox queries | `packages/db/src/notifications.ts` |
 | The inbox screen and its badge | `apps/web/src/server/inbox.ts`, `app/inbox/page.tsx` |
+| What a group of changes reads as (pure) | `packages/core/src/activity.ts` |
 | Schema | `packages/db/src/schema/` |
 | Seed — the demo workspace | `packages/db/src/seed.ts` |
 | Loading a view for any renderer | `apps/web/src/server/views.ts` |
@@ -103,3 +106,11 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
   `docker start arbor-pg` line above.
 - Deleting a `grants` row does **not** update `access_index`. Revoke properly or
   clear both, or the next thing you check sees stale access.
+- **Postgres's clock is not this machine's.** It runs in the Colima VM and
+  drifts tens of milliseconds either way. A check that fences on `activity.at`
+  with `new Date()` lets the previous section's writes through at random — take
+  the fence from `SELECT now()`.
+- **`activity.field` is the SQL column name** (`status_id`), not the operation's
+  (`statusId`) — and for a comment it is the *comment id*, and for a custom
+  field the field id. Read the verb first; anything that reads `field` without
+  asking ends up printing a uuid at somebody.

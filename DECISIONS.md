@@ -115,6 +115,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-085](#d-085) | The shell fetches the badge; nobody hands it one | Frontend |
 | [D-086](#d-086) | A screen may be nowhere in the tree | Frontend |
 | [D-087](#d-087) | Read state is not the workspace, so it is not an operation | Architecture |
+| [D-088](#d-088) | A mark on the feed, not a flag on every event | Architecture |
+| [D-089](#d-089) | One stream, two halves | Frontend |
 
 ---
 
@@ -2504,3 +2506,71 @@ not a sentence to show anyone.
 
 *In one sentence:* the executor exists to keep the record of the work honest,
 and what you have read is not part of the work.
+
+### D-088
+**A mark on the feed, not a flag on every event** · 2026-09-08 · active
+
+The ambient half of the inbox — activity on tasks you watch — has one
+`activity_seen_at` timestamp per membership. It does not have a read flag per
+event.
+
+**Because the alternative undoes the reason the design exists.** The whole point
+of aggregating at read time is that a task with two hundred watchers costs zero
+writes when it changes (the schema's own rule). Giving each watcher a read flag
+on each event puts those two hundred rows straight back, with a different column
+name on them. The direct half can afford a flag per row precisely because it is
+small and addressed: `notifications` only ever holds what named you.
+
+**On `memberships`, not on `users` and not in a table of its own.** It has
+exactly the membership's key and lifetime — someone who is not in the workspace
+has no inbox in it — which makes it an update rather than an upsert, with no
+row that might not exist. `users.preferences` was the tempting no-migration
+option and is wrong: this is state, not a preference, and burying it in a blob
+means nothing can index or reason about it later.
+
+**Null means a week, not all of history.** A first visit has no mark to measure
+from, and opening the inbox on everything that ever happened to twelve watched
+tasks is not a screen anyone reads. The same reasoning caps the window at
+fourteen days: the feed is derived from a log that only grows, so it needs a
+floor that the direct half — where a row stays until it is cleared — does not.
+
+**What it costs.** Read state is all-or-nothing: you cannot dismiss one task's
+activity and keep another's. That is honest for a feed and reads as "caught up
+to here", but it is a real limit, and per-task dismissal would be a table of
+what you have dismissed rather than a flag on what happened.
+
+*In one sentence:* the read side was allowed to write exactly one row per
+person, and that is enough to answer "what is new".
+
+### D-089
+**One stream, two halves** · 2026-09-08 · active
+
+The inbox is a single list sorted by time, holding both the signals written for
+you and the activity assembled from what you watch — not two sections, and not
+two tabs.
+
+**Because the question is "what happened while I was away"**, and it has one
+answer in one order. Two sections make the reader do the merge themselves, and
+they make the ordering meaningless across the boundary: the thing at the top of
+the second list may be older than everything in the first.
+
+**The halves behave differently and the row says so, in two places only.** A
+signal offers "Mark read"; an aggregate says "3 changes" instead, because there
+is no single row to mark (D-088). A signal's glyph is filled, an aggregate's is
+outlined. Everything else — the summary, the task, the time, the click — is the
+same, which is what makes it one list rather than two lists drawn in one column.
+The seam is carried by two fields on one flat type: `source` and
+`notificationId`.
+
+**The badge counts signals only.** A number that also counted every task
+somebody touched would be large, mostly ignorable, and therefore ignored — and
+a badge people ignore is worse than no badge. Being assigned something is a
+demand on you; a task you watch moving is not. So the sidebar counts the first,
+and the inbox's own header names both: "1 unread · 4 watching".
+
+**"Mark all read" clears both**, by two mechanisms that the reader never has to
+know about: a flag per row for the signals, one timestamp for the feed. A button
+that says "all" and empties half of itself is worse than two buttons.
+
+*In one sentence:* the split between the halves is a fact about how they are
+stored, and storage is not a reason to make somebody read two lists.

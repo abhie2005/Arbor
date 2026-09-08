@@ -149,9 +149,10 @@ connections, and API Gateway's WebSocket API bills per message.
       "overlaps this window" is mixed AND and OR.
 - [ ] **7 — Collaboration.** Comments, mentions, the task detail page and the
       inbox are done; every write is authorized, not merely authenticated.
-      Notifications are written for direct signals — assigned, mentioned,
-      replied — inside the transaction that caused them; the read-time
-      aggregation for watchers, realtime deltas and presence are next.
+      Notifications have both halves: direct signals — assigned, mentioned,
+      replied — written inside the transaction that caused them, and activity on
+      what you watch aggregated at read time, so watching something costs no
+      writes. Realtime deltas and presence are next.
 - [ ] **8 — Depth.** Time tracking, goals, dashboards.
 - [ ] **9 — Docs.** CRDT editor, nested pages, backlinks.
 - [ ] **10 — Automations, forms, public API.**

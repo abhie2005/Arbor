@@ -36,6 +36,13 @@
       "when": 1788830470026,
       "tag": "0004_notification_activity_id",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788888053087,
+      "tag": "0005_membership_activity_seen",
+      "breakpoints": true
     }
   ]
 }

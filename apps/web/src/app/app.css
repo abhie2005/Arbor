@@ -2963,6 +2963,30 @@ select.filter-add option {
   opacity: 0;
 }
 
+/* An ambient row is a group of changes rather than a message addressed to
+   someone, so it says how many it stands for where a signal offers a control.
+   Quieter than the summary it sits beside: it is a count, not a verb. */
+.inbox-changes {
+  flex: none;
+  align-self: center;
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The two halves are one list, and the difference between them is one shade.
+   Outlined glyph, unfilled: something happened near you rather than to you. */
+.inbox-item[data-ambient] .inbox-kind {
+  color: var(--text-2);
+}
+
+.inbox-item[data-ambient] .inbox-summary {
+  font-weight: 500;
+}
+
 /* The sidebar badge, when there is something in it. The count next to a list
    is how many tasks; this one is how many are waiting for you. */
 .nav .count[data-unread] {

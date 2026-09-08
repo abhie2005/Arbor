@@ -69,7 +69,14 @@ import {
   updateStatus,
 } from "./statuses";
 import { loadComments } from "./comments";
-import { loadInbox, markRead, unreadCount } from "./notifications";
+import {
+  activitySeen,
+  loadAmbient,
+  loadInbox,
+  markActivitySeen,
+  markRead,
+  unreadCount,
+} from "./notifications";
 import {
   listAccess,
   requireListAccess,
@@ -1672,6 +1679,184 @@ async function main() {
   await pool.query(`DELETE FROM notifications`);
   await pool.query(`DELETE FROM comments WHERE object_id = $1`, [commentTask.id]);
 
+  // --- the read-time half ---------------------------------------------------
+  //
+  // The other side of the same design: nothing is written when a watched task
+  // changes, so everything below is assembled from `activity` at read time. The
+  // checks use `since` as their isolation rather than deleting log rows —
+  // activity is append-only, and a check that truncates the thing it is testing
+  // is testing an empty table.
+  console.log("\nambient activity → assembled for watchers, written for nobody\n");
+
+  await applyOperations(
+    [{ kind: "addRelation", taskId: commentTask.id!, relation: "watcher", targetId: viewer.id! }],
+    { actorId: viewer.id!, connection: pool },
+  ).catch(() => {
+    // Already watching from an earlier check. Not a reason to stop.
+  });
+
+  // **From the database's clock, not the host's.** These checks fence on
+  // `activity.at`, which Postgres stamps with its own `now()` — and Postgres is
+  // in a VM whose clock drifts tens of milliseconds either side of this
+  // process's. A fence taken from `new Date()` therefore lets the *previous*
+  // section's writes through at random, which looks exactly like the query
+  // ignoring its window.
+  const dbNow = async (): Promise<Date> =>
+    (await pool.query<{ now: Date }>(`SELECT now()`)).rows[0]!.now;
+
+  const ambientFrom = await dbNow();
+  const ambient = (since: Date, seenAt: Date | null = null) =>
+    loadAmbient(viewer.id!, ws.id!, { since, seenAt }, pool);
+
+  await applyOperations(
+    [
+      { kind: "setField", taskId: commentTask.id!, field: "priority", from: null, to: 2 },
+      { kind: "setField", taskId: commentTask.id!, field: "points", from: null, to: 5 },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const watched = await ambient(ambientFrom);
+  report(
+    "two changes on a watched task are one row, not two",
+    watched.length === 1 && watched[0]!.changes === 2
+      ? null
+      : `got ${watched.length} row(s), ${watched[0]?.changes} change(s)`,
+  );
+
+  // The summary is the pure function's, over what the query grouped. Asserting
+  // the sentence rather than its parts: the sentence is what a person reads.
+  report(
+    "and it names who did what",
+    watched[0]?.summary === "Avery Mills changed points and priority"
+      ? null
+      : `read "${watched[0]?.summary}"`,
+  );
+
+  const ownFrom = await dbNow();
+  await applyOperations(
+    [{ kind: "setField", taskId: commentTask.id!, field: "priority", from: 2, to: 4 }],
+    { actorId: viewer.id!, connection: pool },
+  );
+  report(
+    "your own change is not news to you",
+    (await ambient(ownFrom)).length === 0 ? null : "the inbox reported the viewer to themselves",
+  );
+
+  // Position is movement, not news: a board drag must not put a task in
+  // everyone's inbox saying that its order changed.
+  const noiseFrom = await dbNow();
+  await applyOperations(
+    [{ kind: "setField", taskId: commentTask.id!, field: "position", from: null, to: "n" }],
+    { actorId: owner.id!, connection: pool },
+  );
+  report(
+    "a reorder is movement rather than news",
+    (await ambient(noiseFrom)).length === 0 ? null : "a drag reached the inbox",
+  );
+
+  // One event, one place. The mention is addressed to the viewer, so it belongs
+  // in the half that was written for them — `activity_id` is how the ambient
+  // query knows to leave it alone.
+  const mentionFrom = await dbNow();
+  await applyOperations(
+    [
+      {
+        kind: "createComment",
+        commentId: randomUUID(),
+        taskId: commentTask.id!,
+        body: parseRichText("Yours now @Riley Kaur", [{ id: viewer.id!, name: "Riley Kaur" }]),
+        parentId: null,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+  report(
+    "something that already notified you directly is not repeated ambiently",
+    (await loadInbox(viewer.id!, {}, pool)).length === 1 && (await ambient(mentionFrom)).length === 0
+      ? null
+      : "the same event arrived twice",
+  );
+  await pool.query(`DELETE FROM notifications`);
+  await pool.query(`DELETE FROM comments WHERE object_id = $1`, [commentTask.id]);
+
+  // Watching is not permission. Same join as every other read, on each row's
+  // own list, so a revoked grant stops the feed immediately.
+  const revokedIndex = await pool.query<Record<string, string>>(
+    `SELECT workspace_id, principal_id, list_id, permission FROM access_index
+     WHERE principal_id = $1 AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+    [viewer.id, commentTask.id],
+  );
+  await pool.query(
+    `DELETE FROM access_index WHERE principal_id = $1
+       AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+    [viewer.id, commentTask.id],
+  );
+  report(
+    "activity on a task you can no longer open leaves the feed",
+    (await ambient(ambientFrom)).length === 0 ? null : "a revoked task is still reported",
+  );
+  for (const row of revokedIndex.rows) {
+    await pool.query(
+      `INSERT INTO access_index (workspace_id, principal_id, list_id, permission)
+       VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+      [row.workspace_id, row.principal_id, row.list_id, row.permission],
+    );
+  }
+
+  // Watching is the input list, and the check has to say so about *this* task
+  // rather than about a person: the seed makes several people watchers, so
+  // "someone else's feed is empty" would be asserting the fixture, not the
+  // query. Stop watching, and the same activity stops arriving.
+  await pool.query(`DELETE FROM task_watchers WHERE task_id = $1 AND user_id = $2`, [
+    commentTask.id,
+    viewer.id,
+  ]);
+  report(
+    "activity reaches the people watching it and nobody else",
+    (await ambient(ambientFrom)).every((row) => row.taskId !== commentTask.id)
+      ? null
+      : "a task nobody is watching was reported",
+  );
+  await pool.query(
+    `INSERT INTO task_watchers (task_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    [commentTask.id, viewer.id],
+  );
+
+  // The mark is one timestamp per membership, and it is what "new" means.
+  const seenBefore = await activitySeen(viewer.id!, ws.id!, pool);
+  report(
+    "the feed starts with no mark on it",
+    seenBefore === null ? null : `already marked at ${seenBefore.toISOString()}`,
+  );
+
+  const stale = await ambient(ambientFrom, await dbNow());
+  report(
+    "a mark ahead of the activity makes it no longer new",
+    stale.length === 1 && stale[0]!.isNew === false
+      ? null
+      : `got ${stale.length} row(s), isNew ${stale[0]?.isNew}`,
+  );
+
+  await markActivitySeen(viewer.id!, ws.id!, pool);
+  const seenAfter = await activitySeen(viewer.id!, ws.id!, pool);
+  report(
+    "marking the feed seen writes one row, not one per event",
+    seenAfter !== null && (await ambient(seenAfter)).length === 0
+      ? null
+      : "the mark did not take",
+  );
+
+  // The mark is per member. Someone else's is untouched, which is the same
+  // scoping rule the per-row read flag follows.
+  report(
+    "and it is one person's mark",
+    (await activitySeen(owner.id!, ws.id!, pool)) === null
+      ? null
+      : "marking one member's feed marked another's",
+  );
+
+  await pool.query(`UPDATE memberships SET activity_seen_at = NULL WHERE workspace_id = $1`, [ws.id]);
 
   await pool.query(`DELETE FROM tasks WHERE name = 'Offer letter template'`);
 

@@ -1,11 +1,12 @@
 import {
+  AMBIENT_NOISE,
   type FanOutContext,
   type NotificationKind,
   type Operation,
   mentionedIds,
-  parseStoredDoc,
   recipientsFor,
   renderPlain,
+  summarizeAmbient,
 } from "@arbor/core";
 import type { Pool, PoolClient } from "pg";
 
@@ -336,4 +337,154 @@ export async function markAllRead(
     [userId],
   );
   return result.rowCount ?? 0;
+}
+
+// --- the read-time half -----------------------------------------------------
+//
+// Everything above is written when it happens, to the few people a change names.
+// Everything below is assembled when someone looks, for the many who are
+// watching. The split is the schema's, and this is the side that was designed
+// first and built last: `notifications` is shaped the way it is *because* this
+// query exists, so that one edit to a task with two hundred watchers costs two
+// hundred reads of an index rather than two hundred writes of a row.
+
+/** One task's worth of ambient activity, already summarised. */
+export interface AmbientRow {
+  taskId: string;
+  taskKey: string | null;
+  taskName: string;
+  /** "Riley Kaur and Jordan Diaz changed status and due date" */
+  summary: string;
+  /** How many activity rows the line stands for. */
+  changes: number;
+  lastAt: string;
+  /** False for a task whose activity the viewer has already marked seen. */
+  isNew: boolean;
+}
+
+/**
+ * What has happened on the tasks someone watches.
+ *
+ * **Four filters, and each one is load-bearing.**
+ *
+ * *Watching* is the input list, not the workspace: the query is bounded by how
+ * many tasks this person watches rather than by how busy the workspace is, so
+ * it stays a handful of index lookups no matter how large `activity` grows.
+ *
+ * *Access* is joined the same way every other read joins it (ADR 3), on each
+ * row's own list — watching a task is not permission to see it, and a watcher
+ * whose access was revoked must stop hearing about it immediately.
+ *
+ * *Your own actions are excluded.* An inbox that tells you what you just did is
+ * noise, and it is the first thing anyone notices.
+ *
+ * *Anything that already sent you a notification is excluded* — that is what
+ * `notifications.activity_id` is for. Being mentioned in a comment on a task you
+ * watch is one event, and it belongs in the half that is addressed to you.
+ */
+export async function loadAmbient(
+  userId: string,
+  workspaceId: string,
+  options: { since: Date; seenAt: Date | null; limit?: number },
+  connection: Connection = pool(),
+): Promise<AmbientRow[]> {
+  const { since, seenAt, limit = 50 } = options;
+
+  const result = await connection.query<{
+    task_id: string;
+    task_key: string | null;
+    task_name: string;
+    total: string;
+    last_at: Date;
+    actors: (string | null)[] | null;
+    changes: { verb: string; field: string | null }[];
+    is_new: boolean;
+  }>(
+    `WITH seen AS (
+       SELECT a.id, a.object_id AS task_id, a.verb, a.field, a.at, u.name AS actor_name
+       FROM activity a
+       JOIN task_watchers w ON w.task_id = a.object_id AND w.user_id = $1
+       JOIN tasks t ON t.id = a.object_id AND t.deleted_at IS NULL
+       JOIN access_index ax
+         ON ax.list_id = t.home_list_id AND ax.principal_id = $1
+       LEFT JOIN users u ON u.id = a.actor_id
+       WHERE a.object_kind = 'task'
+         AND a.workspace_id = $2
+         AND a.at > $3
+         AND (a.actor_id IS NULL OR a.actor_id <> $1)
+         AND a.verb <> ALL($4::text[])
+         AND NOT EXISTS (
+           SELECT 1 FROM notifications n
+           WHERE n.activity_id = a.id AND n.user_id = $1
+         )
+     )
+     SELECT s.task_id, t.key AS task_key, t.name AS task_name,
+            count(*)::text AS total,
+            max(s.at) AS last_at,
+            array_agg(DISTINCT s.actor_name) FILTER (WHERE s.actor_name IS NOT NULL) AS actors,
+            jsonb_agg(DISTINCT jsonb_build_object('verb', s.verb, 'field', s.field)) AS changes,
+            bool_or($5::timestamptz IS NULL OR s.at > $5::timestamptz) AS is_new
+     FROM seen s
+     JOIN tasks t ON t.id = s.task_id
+     GROUP BY s.task_id, t.key, t.name
+     ORDER BY max(s.at) DESC
+     LIMIT $6`,
+    [userId, workspaceId, since, [...AMBIENT_NOISE], seenAt, limit],
+  );
+
+  return result.rows.map((row) => ({
+    taskId: row.task_id,
+    taskKey: row.task_key,
+    taskName: row.task_name,
+    // Summarised in `@arbor/core`, not here: what a group of changes reads as
+    // is a rule worth testing without a database.
+    summary: summarizeAmbient({
+      actors: (row.actors ?? []).filter((name): name is string => name !== null),
+      changes: row.changes ?? [],
+      total: Number(row.total),
+    }),
+    changes: Number(row.total),
+    lastAt: row.last_at.toISOString(),
+    isNew: row.is_new,
+  }));
+}
+
+/**
+ * The mark on the feed, and where it is.
+ *
+ * One timestamp per membership rather than a read flag per event — the whole
+ * point of aggregating at read time is that watching something costs no writes,
+ * and a per-row flag would spend them right back.
+ */
+export async function activitySeen(
+  userId: string,
+  workspaceId: string,
+  connection: Connection = pool(),
+): Promise<Date | null> {
+  const result = await connection.query<{ activity_seen_at: Date | null }>(
+    `SELECT activity_seen_at FROM memberships WHERE user_id = $1 AND workspace_id = $2`,
+    [userId, workspaceId],
+  );
+
+  return result.rows[0]?.activity_seen_at ?? null;
+}
+
+/**
+ * Marks the feed caught up.
+ *
+ * An update rather than an upsert: the row exists for everyone who is in the
+ * workspace, and someone who is not has no inbox in it to mark. A caller who
+ * passes a workspace the user is not a member of updates nothing, which is the
+ * same shape of refusal as marking someone else's notification read.
+ */
+export async function markActivitySeen(
+  userId: string,
+  workspaceId: string,
+  connection: Connection = pool(),
+): Promise<void> {
+  await connection.query(
+    `UPDATE memberships SET activity_seen_at = now()
+     WHERE user_id = $1 AND workspace_id = $2`,
+    [userId, workspaceId],
+  );
 }

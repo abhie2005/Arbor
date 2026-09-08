@@ -43,8 +43,9 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Comments** | Threaded one level, edit and soft-delete your own, `@` mentions stored as nodes carrying a user id. Written as operations, so each has an activity row and ⌘Z undoes it. Mentioning someone without access asks before granting them any. |
 | **Notification fan-out** | Written inside the transaction that caused them, for direct signals only: assigned, mentioned, replied. Never to someone who cannot open the task, and the inbox filters again on read because access can be revoked afterwards. Rule is pure and in core. |
 | **Inbox** | `/inbox` — the first screen not scoped to one container, permission-scoped per row rather than per page. Unread and everything, opening a row marks it read and goes to the task, mark-read without opening, mark all read. The sidebar badge is the real count, fetched by the shell on every screen (D-085). Read state writes outside the operation layer, deliberately (D-087). |
+| **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 291 unit tests, 112 live-Postgres checks, 73 server-action checks,
+**Verified:** 329 unit tests, 137 live-Postgres checks, 77 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 ---
@@ -65,13 +66,13 @@ four packages typechecking clean, and the interactions above driven in Chrome.
 
 ## Where to pick up
 
-**Phase 7 has one piece of notifications left.** The task detail page, comments,
-the fan-out and the inbox are all built. What remains is the *other* half of the
-table's design — the read-time aggregation over `activity` for watchers — and
-then realtime, then presence.
+**Notifications are done, both halves.** The task detail page, comments, the
+write-time fan-out, the inbox and the read-time aggregation over `activity` are
+all built. What remains of Phase 7 is realtime, then presence.
 
 The pass ran as commits verified on all four gates before the next started:
-shell extraction, authorization, the detail page, comments, fan-out, inbox.
+shell extraction, authorization, the detail page, comments, fan-out, inbox,
+ambient activity.
 
 ### Done — the inbox
 
@@ -98,23 +99,63 @@ Three things the page settled, each logged:
   else's id updates nothing rather than being refused — a refusal would confirm
   the id exists.
 
-### Next — the read-time half
+### Done — the read-time half
 
-The **aggregation over `activity`** for watchers, which is the other half of the
-table's design and still has no code. The write-time rows are direct signals
-only; a watcher on a task with two hundred watchers is meant to learn what
-changed by reading `activity` at display time, not by having two hundred rows
-written per edit. The inbox is the screen it lands in, and it now exists.
+`loadAmbient` assembles what happened on the tasks someone watches, grouped into
+one row per task, and the inbox renders it in the same stream as the signals
+(D-089). Nothing is written when a watched task changes: the cost of watching
+stays zero writes, which is the entire reason `notifications` only ever holds
+what named you.
 
-The shape to decide first is whether that reads as a second section on the same
-page or as one merged stream — merged is more useful and needs a sort over two
-sources with different shapes, which is the part worth thinking about before
-writing it.
+Four filters, each load-bearing, and each with a check behind it: *watching* is
+the input list, so the query is bounded by your watch list rather than by how
+busy the workspace is; *access* is joined on each row's own list, so a revoked
+grant stops the feed immediately; *your own actions* are excluded; and anything
+that already wrote you a notification is excluded, which is what
+`notifications.activity_id` was for.
+
+Two things it settled:
+
+- **Read state is one mark per membership** (D-088), because a flag per event
+  per watcher is the write the whole design exists to avoid. Null means the last
+  week, and the window is capped at fourteen days — a feed derived from a log
+  that only grows needs a floor that a table of rows does not.
+- **One stream, not two sections** (D-089). The halves differ in exactly two
+  places on the row: an aggregate says "3 changes" where a signal offers "Mark
+  read", and its glyph is outlined rather than filled. The badge still counts
+  signals only — a number that counted ambient activity too would be large,
+  ignorable, and therefore ignored.
+
+The sentence a group of changes reads as is a pure function in
+`packages/core/src/activity.ts` with 16 tests, for the same reason `recipientsFor`
+is: it is small, easy to get subtly wrong, and invisible when it is.
+
+### Next — realtime, then presence
+
+Neither is started, and the transport is undecided — that is the first question,
+not an implementation detail:
+
+- **`revalidatePath` only**, which is what happens today. Correct and not live.
+- **SSE from a Next route handler** over Postgres `LISTEN/NOTIFY`. No new
+  deployable, no Redis. Broadcasting a "task X changed" nudge that triggers
+  `router.refresh()` is far cheaper than sending deltas and fits server
+  components; deltas are what a CRDT editor needs and Docs are Phase 9.
+- **`apps/realtime` as a real WebSocket service** with Redis pub/sub. It is
+  named in the README and does not exist as a directory. Presence needs this or
+  SSE; it cannot be done with revalidation.
+
+**Every fan-out needs "whoever can see this thing"**, and that is now a join
+against a table that is correct and that writes are checked against too — which
+is why access control went before collaboration.
+
+The inbox is also what makes the case for it concrete: everything on that
+screen is as fresh as the last render, so a mention that arrives while you are
+looking at it is invisible until something else causes a revalidation.
 
 ### Background — why notifications are shaped this way
 
-Both halves of the write side are built now; this is the reasoning they were
-built from, kept because the read-time half still has to follow it. The comment
+Both halves are built now; this is the reasoning they were built from, kept
+because it is what any change to either of them has to stay true to. The comment
 on the table says what it is for: **write-time fan-out for direct signals
 only** — assigned, mentioned, replied — with ambient activity aggregated at read
 time from `activity`, because a task with 200 watchers would otherwise write 200
@@ -146,28 +187,22 @@ trace anywhere — nothing detects the silence. The usual objection is cost, and
 it does not apply, because only *directly named* people get a row. Outside would
 need something to run it, and `apps/worker` does not exist.
 
-### Then realtime, and presence
-
-Neither is started, and the transport is undecided — that is the first question,
-not an implementation detail:
-
-- **`revalidatePath` only**, which is what happens today. Correct and not live.
-- **SSE from a Next route handler** over Postgres `LISTEN/NOTIFY`. No new
-  deployable, no Redis. Broadcasting a "task X changed" nudge that triggers
-  `router.refresh()` is far cheaper than sending deltas and fits server
-  components; deltas are what a CRDT editor needs and Docs are Phase 9.
-- **`apps/realtime` as a real WebSocket service** with Redis pub/sub. It is
-  named in the README and does not exist as a directory. Presence needs this or
-  SSE; it cannot be done with revalidation.
-
-**Every fan-out needs "whoever can see this thing"**, and that is now a join
-against a table that is correct and that writes are checked against too — which
-is why access control went before collaboration.
-
 ### Known gaps in what was just built
 
-- **The inbox shows only what the fan-out wrote.** Watchers still learn nothing
-  from it — that is the read-time aggregation above, and it is the next chunk.
+- **Ambient read state is all-or-nothing** (D-088). "Mark all read" moves the
+  mark; there is no way to dismiss one watched task's activity and keep
+  another's. Per-task dismissal would be a table of what you have dismissed
+  rather than a flag on what happened, and it is not written.
+- **Opening an ambient row does not clear it.** It has no row to mark, so it
+  stays until the feed is marked seen. Honest, and the first thing anyone will
+  ask about.
+- **The ambient window is fourteen days and does not page.** Activity older than
+  that is not reachable from this screen at all — the task's own history would
+  be the place for it, and no screen reads `activity` yet.
+- **The two halves disagree about workspaces.** `loadInbox` is scoped to a
+  person and not to a workspace; the ambient half has to name one, because its
+  mark lives on the membership. With one workspace this is invisible. With two
+  it is a bug, and the fix is to scope the direct half too.
 - **`cleared_at` is a column nothing sets.** `loadInbox` honours it, so
   dismissing a notification without reading it is a control away, not a schema
   change. Held because "clear" and "mark read" both need to exist before either
