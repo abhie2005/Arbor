@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { Live } from "@/components/live";
 import { UndoButton, UndoProvider } from "@/components/undo";
 import { UserSwitcher } from "@/components/user-switcher";
 import { inboxBadge } from "@/server/inbox";
@@ -77,6 +78,10 @@ export function AppShell({
 
   return (
     <UndoProvider>
+      {/* Mounted in the shell so every screen is live, rather than each page
+          remembering to be — the same reason the badge is fetched here. */}
+      <Live viewerId={chrome.viewer.id} />
+
       <div className="shell">
         <Sidebar chrome={chrome} />
 

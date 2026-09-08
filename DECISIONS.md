@@ -117,6 +117,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-087](#d-087) | Read state is not the workspace, so it is not an operation | Architecture |
 | [D-088](#d-088) | A mark on the feed, not a flag on every event | Architecture |
 | [D-089](#d-089) | One stream, two halves | Frontend |
+| [D-090](#d-090) | A nudge over Postgres, not a delta over Redis | Architecture |
 
 ---
 
@@ -2574,3 +2575,56 @@ that says "all" and empties half of itself is worse than two buttons.
 
 *In one sentence:* the split between the halves is a fact about how they are
 stored, and storage is not a reason to make somebody read two lists.
+
+### D-090
+**A nudge over Postgres, not a delta over Redis** · 2026-09-08 · active
+
+Live updates are Server-Sent Events from a Next route handler, carrying
+`{workspace, list, actor}` and nothing else. The browser answers by calling
+`router.refresh()`.
+
+**Three transports were on the table** (the README names the third). Doing
+nothing but `revalidatePath` is what shipped until now: correct, and not live.
+A real `apps/realtime` with Redis pub/sub is a second deployable, a second
+dependency and a second place for auth to be wrong — bought before anything
+needed it. SSE over `LISTEN`/`NOTIFY` needs neither, and the traffic is
+one-directional: the server says something changed, the browser says nothing
+back. `EventSource` reconnects on its own, which is the entire body of code a
+WebSocket would have made us write. A socket becomes worth it when the browser
+has something to send, and that is presence.
+
+**Announced inside the transaction, and that is the whole trick.** `NOTIFY` is
+transactional — Postgres delivers at commit and discards on rollback. So a nudge
+cannot describe a change that did not happen, and this needs no after-commit
+hook, no outbox table and no worker: the three things that make "publish after
+write" hard everywhere else. It sits in `logActivity` for the reason that
+function exists, that every operation already passes through it, so a new
+operation cannot forget to broadcast any more than it can forget to log.
+
+**The payload is deliberately identical for every operation in a batch.**
+Postgres collapses duplicate notifications inside one transaction, so a bulk
+edit of two hundred tasks in one list delivers one nudge rather than two
+hundred, and nothing here deduplicates.
+
+**A nudge, not a delta**, because the screens are server components. Re-running
+the page *is* the update; sending the change itself would mean a second
+description of every mutation, in a second shape, kept in step with the first by
+hand. Deltas are what a CRDT editor needs, and Docs are Phase 9.
+
+**Every nudge is checked against the viewer's access before it leaves.** The
+channel carries every change in the process, because the transport has no idea
+who is listening; the route handler does. Without that check the stream would
+tell anyone with a session that *something* changed in a list they cannot open,
+which is the existence leak the refusals are careful not to be (D-080). One
+indexed lookup per nudge per viewer, uncached on purpose: a cache would have a
+window in which a revoked person still hears about a list.
+
+**What it cost to get right was not the transport.** The stream worked on the
+first try; the screen still did not change, because a row holding
+`useState(task.name)` had stopped listening to the server the moment it mounted
+(`use-server-value.ts`). Live updates are what made that visible — every check
+in the repo passed while the screen showed a stale name.
+
+*In one sentence:* the database everything already talks to has a transactional
+pub/sub in it, and using it made "live" a route handler and a hook rather than a
+service.

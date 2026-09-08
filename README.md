@@ -152,7 +152,8 @@ connections, and API Gateway's WebSocket API bills per message.
       Notifications have both halves: direct signals — assigned, mentioned,
       replied — written inside the transaction that caused them, and activity on
       what you watch aggregated at read time, so watching something costs no
-      writes. Realtime deltas and presence are next.
+      writes. Screens are live over SSE and Postgres `LISTEN`/`NOTIFY`, with no
+      second service and no Redis. Presence is next.
 - [ ] **8 — Depth.** Time tracking, goals, dashboards.
 - [ ] **9 — Docs.** CRDT editor, nested pages, backlinks.
 - [ ] **10 — Automations, forms, public API.**

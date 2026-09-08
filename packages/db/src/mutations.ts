@@ -11,6 +11,7 @@ import type { Pool, PoolClient } from "pg";
 
 import { pool } from "./client";
 import { loadField } from "./fields";
+import { announceChange } from "./live";
 import { fanOut, fanOutTarget, mayNotify } from "./notifications";
 
 /**
@@ -520,6 +521,12 @@ interface LogArgs {
 /**
  * Returns the id it wrote, so a notification can point at the thing that caused
  * it — which is what makes "why am I being told this" a question with an answer.
+ *
+ * **It also announces the change**, on the same connection and inside the same
+ * transaction. Here rather than in `applyOperations` for the reason this
+ * function exists at all: every operation already passes through it, so a new
+ * operation cannot forget to broadcast any more than it can forget to log
+ * (D-090). `NOTIFY` is transactional, so a rolled-back batch announces nothing.
  */
 async function logActivity(client: PoolClient, args: LogArgs): Promise<bigint> {
   const result = await client.query<{ id: string }>(
@@ -538,6 +545,14 @@ async function logActivity(client: PoolClient, args: LogArgs): Promise<bigint> {
       args.listId,
     ],
   );
+
+  // Identical for every operation in this batch that touched the same list, so
+  // Postgres collapses a bulk edit into one delivery on its own.
+  await announceChange(client, {
+    w: args.workspaceId,
+    l: args.listId,
+    a: args.actorId,
+  });
 
   return BigInt(result.rows[0]!.id);
 }

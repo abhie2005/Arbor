@@ -56,6 +56,28 @@ host's, so the *previous* section's writes fell inside the window at random and
 the query looked like it was ignoring its own filter. The fence has to come from
 the same clock as the data: `SELECT now()`.
 
+**A row stopped listening to the server the moment it mounted.** `const [name,
+setName] = useState(task.name)` reads as "start from the server's value" and
+means "take it once and never look again". It was invisible for six phases,
+because the only thing that ever changed a name was the person looking at it,
+and their optimistic value was already right. Live updates made it visible in a
+minute: a rename by somebody else re-rendered the row with the new name and the
+screen kept the old one.
+
+Everything passed while that was true — 329 unit tests, 140 live-Postgres
+checks, 81 action checks, four packages typechecking. The nudge arrived, the
+handler ran, the RSC payload came back with the new name in it, and the row
+showed the old one. **A refresh is only half of an update**, and no check in the
+repo can see the other half. `use-server-value.ts` is the fix, in the three
+controls that held an editable copy.
+
+It also cost a wrong diagnosis first: `router.refresh()` from an `EventSource`
+handler was wrapped in `startTransition` on the theory that a refresh outside
+React's event system is discarded. It is not — removing the transition again,
+after the real fix, worked identically. Changing two things and declaring the
+first one the cause is how a false explanation ends up in a comment where
+someone believes it later.
+
 ---
 
 ---

@@ -77,6 +77,7 @@ import {
   markRead,
   unreadCount,
 } from "./notifications";
+import { type Change, subscribeToChanges } from "./live";
 import {
   listAccess,
   requireListAccess,
@@ -1022,6 +1023,83 @@ async function main() {
   // Cleared first and inserted plainly, with no ON CONFLICT: a check whose
   // fixture can silently not be created reports "nobody can see it" and looks
   // exactly like a permission bug, which is how this cost twenty minutes.
+  // --- live changes ---------------------------------------------------------
+  //
+  // The transport is Postgres's own: `NOTIFY` inside the transaction that made
+  // the change, so the announcement is bound to the commit. That is the whole
+  // reason this needs no outbox and no worker, and it is the first thing to
+  // assert — followed immediately by the case that proves it, a batch that
+  // rolls back and announces nothing.
+  console.log("\nlive changes → announced on commit, and only on commit\n");
+
+  const heard: Change[] = [];
+  const stopListening = await subscribeToChanges((change) => void heard.push(change));
+
+  /** Delivery is asynchronous; give it a moment before believing the silence. */
+  const settle = (ms = 400) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const liveTask = await one(`SELECT id, home_list_id FROM tasks WHERE key = 'ENG-398'`);
+
+  heard.length = 0;
+  await applyOperations(
+    [{ kind: "setField", taskId: liveTask.id!, field: "points", from: null, to: 8 }],
+    { actorId: owner.id!, connection: pool },
+  );
+  await settle();
+
+  report(
+    "a committed change announces itself, with the list and the actor",
+    heard.length === 1 && heard[0]!.l === liveTask.home_list_id && heard[0]!.a === owner.id
+      ? null
+      : `heard ${JSON.stringify(heard)}`,
+  );
+
+  // Two operations, one list, one transaction. Postgres collapses notifications
+  // that are identical inside a transaction, which is why the payload carries
+  // no per-operation detail: a bulk edit of two hundred tasks in one list is
+  // one delivery rather than two hundred, without anything deduplicating here.
+  heard.length = 0;
+  await applyOperations(
+    [
+      { kind: "setField", taskId: liveTask.id!, field: "points", from: 8, to: 13 },
+      { kind: "setField", taskId: liveTask.id!, field: "priority", from: null, to: 3 },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+  await settle();
+
+  report(
+    "a batch touching one list is one nudge, not one per operation",
+    heard.length === 1 ? null : `heard ${heard.length}`,
+  );
+
+  // The property the design rests on. A change that did not happen must not be
+  // announced — and because `NOTIFY` is transactional, nothing here has to
+  // arrange that.
+  heard.length = 0;
+  const rolledBack = await pool.connect();
+  try {
+    await rolledBack.query("BEGIN");
+    await applyOperations(
+      [{ kind: "setField", taskId: liveTask.id!, field: "points", from: 13, to: 99 }],
+      { actorId: owner.id!, client: rolledBack },
+    );
+    await rolledBack.query("ROLLBACK");
+  } finally {
+    rolledBack.release();
+  }
+  await settle();
+
+  report(
+    "a rolled-back change announces nothing",
+    heard.length === 0 &&
+    Number((await one(`SELECT points FROM tasks WHERE id = $1`, [liveTask.id])).points) !== 99
+      ? null
+      : `heard ${heard.length} nudge(s) for a change that did not happen`,
+  );
+
+  stopListening();
+
   await pool.query(`DELETE FROM tasks WHERE name = 'Offer letter template'`);
   const privateTask = await one(
     `INSERT INTO tasks (workspace_id, home_list_id, space_id, name, position, created_by)

@@ -16,6 +16,7 @@ import {
 } from "@/server/actions";
 
 import { Comments } from "./comments";
+import { useServerValue } from "./use-server-value";
 import { useTaskAction } from "./use-task-action";
 import type { CommentRecord } from "@arbor/db";
 import type { DetailField, Person, Subtask } from "@/server/task";
@@ -66,7 +67,11 @@ const PRIORITIES = [
 ];
 
 export function TaskDetail({ task, viewerId }: { task: TaskDetailData; viewerId: string }) {
-  const [name, setName] = useState(task.name);
+  // The title is a live input, so "being edited" is "focused" here rather than
+  // a mode: a rename arriving from somebody else must not take the caret out of
+  // a sentence someone is halfway through (D-090).
+  const [titleFocused, setTitleFocused] = useState(false);
+  const [name, setName] = useServerValue(task.name, titleFocused);
   const { run, pending, failure } = useTaskAction();
   const act = (action: () => Promise<Operation[]>, revert?: () => void) => run(action, revert);
 
@@ -83,7 +88,9 @@ export function TaskDetail({ task, viewerId }: { task: TaskDetailData; viewerId:
             className="detail-title"
             value={name}
             onChange={(event) => setName(event.target.value)}
+            onFocus={() => setTitleFocused(true)}
             onBlur={() => {
+              setTitleFocused(false);
               if (name.trim() && name !== task.name) {
                 act(() => renameTask(task.id, name), () => setName(task.name));
               }

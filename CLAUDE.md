@@ -55,6 +55,10 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
    membership (D-088).
 8. **Dates**: a date-only value is midnight UTC and read in UTC (D-067).
    `dueHasTime` decides. Never format one without asking.
+9. **A control that shows a server value must follow it.** `useState(props.x)`
+   takes the value once and never looks again, which no test in this repo can
+   see — every check passed while a live rename left the old name on screen.
+   Use `useServerValue` (D-090).
 
 ## Where things are
 
@@ -72,6 +76,9 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Fan-out + inbox queries | `packages/db/src/notifications.ts` |
 | The inbox screen and its badge | `apps/web/src/server/inbox.ts`, `app/inbox/page.tsx` |
 | What a group of changes reads as (pure) | `packages/core/src/activity.ts` |
+| Live changes: publish and subscribe | `packages/db/src/live.ts` |
+| The stream, and who may hear a nudge | `apps/web/src/app/api/live/route.ts` |
+| An editable value that follows the server | `apps/web/src/components/use-server-value.ts` |
 | Schema | `packages/db/src/schema/` |
 | Seed — the demo workspace | `packages/db/src/seed.ts` |
 | Loading a view for any renderer | `apps/web/src/server/views.ts` |
@@ -106,6 +113,9 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
   `docker start arbor-pg` line above.
 - Deleting a `grants` row does **not** update `access_index`. Revoke properly or
   clear both, or the next thing you check sees stale access.
+- **A dev-server 503 on `/api/live` or an `?_rsc=` request** is Next compiling,
+  not a bug in the stream. It resolves on the next attempt; check twice before
+  chasing it.
 - **Postgres's clock is not this machine's.** It runs in the Colima VM and
   drifts tens of milliseconds either way. A check that fences on `activity.at`
   with `new Date()` lets the previous section's writes through at random — take

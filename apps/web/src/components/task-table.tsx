@@ -15,6 +15,7 @@ import { useState } from "react";
 import type { Cell } from "@/server/cells";
 import { archiveTask, cycleStatus, renameTask, setPriority } from "@/server/actions";
 
+import { useServerValue } from "./use-server-value";
 import { useTaskAction } from "./use-task-action";
 
 /**
@@ -159,7 +160,8 @@ function ariaSort(
 
 function TableRow({ row, columns }: { row: TableRowData; columns: ResolvedColumn[] }) {
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(row.name);
+  // Follows the server unless the cell is being typed into (D-090).
+  const [name, setName] = useServerValue(row.name, editing);
   const { run, pending, failure } = useTaskAction();
   const act = (action: () => Promise<Operation[]>) => run(action, () => setName(row.name));
 

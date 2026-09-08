@@ -43,9 +43,10 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Comments** | Threaded one level, edit and soft-delete your own, `@` mentions stored as nodes carrying a user id. Written as operations, so each has an activity row and ⌘Z undoes it. Mentioning someone without access asks before granting them any. |
 | **Notification fan-out** | Written inside the transaction that caused them, for direct signals only: assigned, mentioned, replied. Never to someone who cannot open the task, and the inbox filters again on read because access can be revoked afterwards. Rule is pure and in core. |
 | **Inbox** | `/inbox` — the first screen not scoped to one container, permission-scoped per row rather than per page. Unread and everything, opening a row marks it read and goes to the task, mark-read without opening, mark all read. The sidebar badge is the real count, fetched by the shell on every screen (D-085). Read state writes outside the operation layer, deliberately (D-087). |
+| **Live updates** | Every screen holds an `EventSource` to `/api/live`. A change announces itself with `pg_notify` inside the transaction that made it, so a rollback announces nothing; the route handler checks each nudge against the viewer's access before it leaves, and the browser answers with `router.refresh()` (D-090). A nudge carries the workspace, list and actor — never what changed. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 329 unit tests, 137 live-Postgres checks, 77 server-action checks,
+**Verified:** 329 unit tests, 140 live-Postgres checks, 81 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 ---
@@ -66,13 +67,14 @@ four packages typechecking clean, and the interactions above driven in Chrome.
 
 ## Where to pick up
 
-**Notifications are done, both halves.** The task detail page, comments, the
-write-time fan-out, the inbox and the read-time aggregation over `activity` are
-all built. What remains of Phase 7 is realtime, then presence.
+**Phase 7 has presence left.** The task detail page, comments, both halves of
+notifications and live updates are built. Presence — who else is looking at this
+— is the last piece, and it is the first thing that needs the browser to send
+something rather than only receive.
 
 The pass ran as commits verified on all four gates before the next started:
 shell extraction, authorization, the detail page, comments, fan-out, inbox,
-ambient activity.
+ambient activity, live updates.
 
 ### Done — the inbox
 
@@ -130,27 +132,39 @@ The sentence a group of changes reads as is a pure function in
 `packages/core/src/activity.ts` with 16 tests, for the same reason `recipientsFor`
 is: it is small, easy to get subtly wrong, and invisible when it is.
 
-### Next — realtime, then presence
+### Done — live updates
 
-Neither is started, and the transport is undecided — that is the first question,
-not an implementation detail:
+`/api/live` is the first route handler in the app. Every screen holds an
+`EventSource` open to it, and a change announces itself with `pg_notify` from
+inside the transaction that made it (D-090):
 
-- **`revalidatePath` only**, which is what happens today. Correct and not live.
-- **SSE from a Next route handler** over Postgres `LISTEN/NOTIFY`. No new
-  deployable, no Redis. Broadcasting a "task X changed" nudge that triggers
-  `router.refresh()` is far cheaper than sending deltas and fits server
-  components; deltas are what a CRDT editor needs and Docs are Phase 9.
-- **`apps/realtime` as a real WebSocket service** with Redis pub/sub. It is
-  named in the README and does not exist as a directory. Presence needs this or
-  SSE; it cannot be done with revalidation.
+- **Transactional by construction.** `NOTIFY` is delivered at commit and
+  discarded on rollback, so a nudge cannot describe a change that did not
+  happen — no outbox, no after-commit hook, no worker. It lives in
+  `logActivity`, so a new operation cannot forget to broadcast any more than it
+  can forget to log.
+- **One connection per process, not per tab.** A `LISTEN` occupies its
+  connection, so `live.ts` holds a single dedicated client and fans out to every
+  subscriber in the process.
+- **Filtered per viewer at the route.** The channel carries every change; the
+  handler checks each one against `access_index` for that viewer before writing
+  it to the stream. Uncached, so a revoked grant stops the stream immediately.
+- **A nudge, not a delta.** `{workspace, list, actor}`. The browser answers with
+  `router.refresh()`, which is the whole update, because the screens are server
+  components.
 
-**Every fan-out needs "whoever can see this thing"**, and that is now a join
-against a table that is correct and that writes are checked against too — which
-is why access control went before collaboration.
+### Next — presence
 
-The inbox is also what makes the case for it concrete: everything on that
-screen is as fresh as the last render, so a mention that arrives while you are
-looking at it is invisible until something else causes a revalidation.
+Nobody is started on it, and it is the first thing that needs the browser to
+*send* something — which is the case a WebSocket has to make for itself
+(D-090). The question to settle first is where "who is looking at this" lives:
+a table that heartbeats and is swept, or memory in a process that does not
+exist yet. Neither is obviously right, and the second needs `apps/realtime`.
+
+The other loose end live updates left is a **refresh storm on a busy list**:
+every nudge for a list you can see refreshes your page, whether or not anything
+on your screen changed. The nudge carries enough to be smarter — a page could
+ignore lists it is not rendering — and today none of them do.
 
 ### Background — why notifications are shaped this way
 
@@ -189,6 +203,12 @@ need something to run it, and `apps/worker` does not exist.
 
 ### Known gaps in what was just built
 
+- **Every nudge refreshes, whether or not it mattered.** A change to any list
+  you can reach re-renders whatever page you are on. Correct and wasteful; the
+  nudge names the list, so a page that knows which lists it is showing could
+  ignore the rest.
+- **Presence is not built**, and the stream is one-directional — the browser
+  cannot say "I am here" over an `EventSource`.
 - **Ambient read state is all-or-nothing** (D-088). "Mark all read" moves the
   mark; there is no way to dismiss one watched task's activity and keep
   another's. Per-task dismissal would be a table of what you have dismissed

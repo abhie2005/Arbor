@@ -1,5 +1,6 @@
 export * from "./schema";
 export {
+  connectionString,
   createDatabase,
   createPool,
   db,
@@ -8,6 +9,12 @@ export {
   type Database,
   type DatabaseOptions,
 } from "./client";
+export {
+  LIVE_CHANNEL,
+  announceChange,
+  subscribeToChanges,
+  type Change,
+} from "./live";
 export {
   AuthError,
   SESSION_DAYS,

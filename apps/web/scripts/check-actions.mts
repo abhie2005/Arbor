@@ -1255,6 +1255,100 @@ await db.query(`UPDATE tasks SET status_id = $2 WHERE id = $1`, [
   detailTask.status_id,
 ]);
 
+// --- the live stream --------------------------------------------------------
+//
+// The first route handler in the app, and the only place a change meets a
+// viewer before it leaves the server. So the check that matters is not "does a
+// nudge arrive" — it is that the *same* change reaches one stream and not the
+// other. A stream that told anyone with a session that something changed in a
+// list they cannot open would be an existence oracle with a keep-alive (D-090).
+console.log("\nlive stream → the same change, two viewers, one of them told\n");
+
+async function openStream(cookie: string) {
+  const controller = new AbortController();
+  const response = await fetch(`http://localhost:${PORT}/api/live`, {
+    headers: { Cookie: cookie },
+    signal: controller.signal,
+  });
+
+  const text: string[] = [];
+  if (response.body) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    void (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text.push(decoder.decode(value, { stream: true }));
+        }
+      } catch {
+        // Aborted by close(), which is how these end.
+      }
+    })();
+  }
+
+  return {
+    status: response.status,
+    heard: () => text.join(""),
+    close: () => controller.abort(),
+  };
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const anonymous = await fetch(`http://localhost:${PORT}/api/live`);
+report(
+  "the stream refuses a request with no session",
+  anonymous.status === 401 ? null : `got ${anonymous.status}`,
+);
+await anonymous.body?.cancel();
+
+// Sam has no grant on Hiring; Avery owns the workspace and can see everything.
+await revokeHiring(samUserId);
+
+const averyStream = await openStream(COOKIE);
+const samStream = await openStream(SAM);
+await pause(300);
+
+report(
+  "a signed-in viewer gets a stream that opens",
+  averyStream.status === 200 && /event: ready/.test(averyStream.heard())
+    ? null
+    : `status ${averyStream.status}, heard "${averyStream.heard().slice(0, 80)}"`,
+);
+
+// One change, in the private list, made by someone who can reach it.
+await callOn(
+  DETAIL_URL,
+  DETAIL_ACTIONS.postComment!,
+  [privateTask.id, "Checking the wire.", null, false],
+  RILEY,
+);
+await pause(900);
+
+const hiringList = (
+  await one(`SELECT home_list_id FROM tasks WHERE id = $1`, [privateTask.id])
+).home_list_id;
+
+report(
+  "it reaches the viewer who can open the list",
+  averyStream.heard().includes(`"l":"${hiringList}"`)
+    ? null
+    : `heard "${averyStream.heard().slice(0, 200)}"`,
+);
+
+report(
+  "and never reaches the one who cannot",
+  !/data: \{"w"/.test(samStream.heard())
+    ? null
+    : `a private list leaked through the stream: "${samStream.heard().slice(0, 200)}"`,
+);
+
+averyStream.close();
+samStream.close();
+await db.query(`DELETE FROM comments WHERE object_id = $1`, [privateTask.id]);
+
 await db.query(`DELETE FROM comments WHERE object_id = ANY($1::uuid[])`, [
   [commentedTask.id, privateTask.id],
 ]);

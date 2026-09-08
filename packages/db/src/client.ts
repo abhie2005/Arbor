@@ -25,20 +25,32 @@ export interface DatabaseOptions {
  * only the connection string changes.
  */
 export function createPool(options: DatabaseOptions = {}): Pool {
-  const connectionString = options.connectionString ?? process.env.DATABASE_URL;
+  return new Pool({
+    connectionString: connectionString(options),
+    max: options.max ?? 10,
+    ssl: options.ssl ? { rejectUnauthorized: false } : undefined,
+  });
+}
 
-  if (!connectionString) {
+/**
+ * Where the database is, and the one error message that says so.
+ *
+ * Exported because the pool is not the only thing that connects: a `LISTEN`
+ * holds a connection open forever and must not take one from the pool
+ * (`live.ts`), and a second copy of this lookup would be a second place for the
+ * error to be less helpful than this one.
+ */
+export function connectionString(options: DatabaseOptions = {}): string {
+  const value = options.connectionString ?? process.env.DATABASE_URL;
+
+  if (!value) {
     throw new Error(
       `DATABASE_URL is not set, and no .env file was found searching upward from ${envSearchOrigin()}. ` +
         "Run `cp .env.example .env` at the repository root.",
     );
   }
 
-  return new Pool({
-    connectionString,
-    max: options.max ?? 10,
-    ssl: options.ssl ? { rejectUnauthorized: false } : undefined,
-  });
+  return value;
 }
 
 export function createDatabase(options: DatabaseOptions = {}) {

@@ -5,6 +5,7 @@ import { useState } from "react";
 
 import { archiveTask, cycleStatus, renameTask, setPriority } from "@/server/actions";
 
+import { useServerValue } from "./use-server-value";
 import { useTaskAction } from "./use-task-action";
 
 export interface TaskRowData {
@@ -26,8 +27,10 @@ export function TaskRow({ task }: { task: TaskRowData }) {
   const [editing, setEditing] = useState(false);
   // Optimistic name: the row shows the new value on keystroke and reconciles
   // when the server responds, rather than waiting for a round trip. The server
-  // is authoritative, so a refused rename drops back to what it still holds.
-  const [name, setName] = useState(task.name);
+  // is authoritative — for a refused rename, and for one that arrives from
+  // somebody else while this row is on screen (D-090). Held while editing, so a
+  // live update does not overwrite what is being typed.
+  const [name, setName] = useServerValue(task.name, editing);
   const { run, pending, failure } = useTaskAction();
   const act = (action: () => Promise<Operation[]>) => run(action, () => setName(task.name));
 
