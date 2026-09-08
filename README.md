@@ -147,9 +147,11 @@ connections, and API Gateway's WebSocket API bills per message.
       compiler that already served List and Board. The timeline is the one that
       made the compiler learn something: nested filter clauses, because
       "overlaps this window" is mixed AND and OR.
-- [ ] **7 — Collaboration.** Comments, mentions and the task detail page are
-      done; every write is authorized, not merely authenticated. Notifications,
-      realtime deltas and presence are next.
+- [ ] **7 — Collaboration.** Comments, mentions, the task detail page and the
+      inbox are done; every write is authorized, not merely authenticated.
+      Notifications are written for direct signals — assigned, mentioned,
+      replied — inside the transaction that caused them; the read-time
+      aggregation for watchers, realtime deltas and presence are next.
 - [ ] **8 — Depth.** Time tracking, goals, dashboards.
 - [ ] **9 — Docs.** CRDT editor, nested pages, backlinks.
 - [ ] **10 — Automations, forms, public API.**

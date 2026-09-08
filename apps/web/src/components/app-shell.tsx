@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { UndoButton, UndoProvider } from "@/components/undo";
 import { UserSwitcher } from "@/components/user-switcher";
+import { inboxBadge } from "@/server/inbox";
 
 /**
  * The chrome every screen sits inside.
@@ -19,8 +20,15 @@ import { UserSwitcher } from "@/components/user-switcher";
  * failure state wants none of it.
  */
 
-export interface ShellChrome {
-  workspaceName: string;
+/**
+ * Where the screen is in the tree, when it is anywhere in it.
+ *
+ * One object rather than five sibling fields because they are only ever true
+ * together (D-086). A screen looking at a list knows all of them; the inbox
+ * knows none, and "a folder name with no list" is not a state anything should
+ * be able to express.
+ */
+export interface ShellLocation {
   spaceName: string;
   /**
    * Empty when the list sits straight under its space. The breadcrumb drops
@@ -34,6 +42,17 @@ export interface ShellChrome {
    * not report the list as empty (D-069).
    */
   listTaskCount: number;
+}
+
+export interface ShellChrome {
+  workspaceName: string;
+  /**
+   * Absent on a screen that is not looking at one list. The inbox is the first
+   * — "what is mine, anywhere" has no container to name.
+   */
+  location?: ShellLocation;
+  /** Which top-level entry is the current screen, when the screen is one of them. */
+  active?: "inbox";
   viewer: { id: string; name: string };
   /** Empty outside development, which is what hides the switcher (D-034). */
   users: { id: string; name: string }[];
@@ -42,7 +61,8 @@ export interface ShellChrome {
 /**
  * `crumb` overrides the breadcrumb's last segment. A renderer is looking at a
  * list, so the list is the leaf; a task detail page is one level deeper and
- * says so.
+ * says so. A screen with no location has nothing else in the trail, so its
+ * crumb is the whole of it.
  */
 export function AppShell({
   chrome,
@@ -53,6 +73,8 @@ export function AppShell({
   crumb?: ReactNode;
   children: ReactNode;
 }) {
+  const { location } = chrome;
+
   return (
     <UndoProvider>
       <div className="shell">
@@ -61,15 +83,21 @@ export function AppShell({
         <main className="main">
           <header className="header">
             <div className="crumb">
-              {chrome.spaceName}
-              <span>›</span>
-              {chrome.folderName ? (
+              {location ? (
                 <>
-                  {chrome.folderName}
+                  {location.spaceName}
                   <span>›</span>
+                  {location.folderName ? (
+                    <>
+                      {location.folderName}
+                      <span>›</span>
+                    </>
+                  ) : null}
+                  {crumb ?? <strong>{location.listName}</strong>}
                 </>
-              ) : null}
-              {crumb ?? <strong>{chrome.listName}</strong>}
+              ) : (
+                crumb
+              )}
             </div>
             <div className="header-right">
               <a className="settings-link" href="/settings/statuses" title="Workspace settings">
@@ -87,7 +115,20 @@ export function AppShell({
   );
 }
 
-function Sidebar({ chrome }: { chrome: ShellChrome }) {
+/**
+ * The sidebar counts the inbox itself rather than being handed the number
+ * (D-085).
+ *
+ * The badge belongs to the chrome, not to any one screen, and there are seven
+ * screens: threading it through `chromeFrom` would mean seven call sites that
+ * all have to remember to fetch it, which is the same drift this file was
+ * extracted to end. `inboxBadge` is request-cached, so the inbox page asking
+ * for the same number costs one query, not two.
+ */
+async function Sidebar({ chrome }: { chrome: ShellChrome }) {
+  const unread = await inboxBadge(chrome.viewer.id);
+  const { location } = chrome;
+
   return (
     <aside className="sidebar">
       <div className="ws">
@@ -102,27 +143,48 @@ function Sidebar({ chrome }: { chrome: ShellChrome }) {
         <a className="nav" href="#">
           <span className="ic">✦</span>My Work
         </a>
-        {/* The count is a placeholder until notifications land — see STATUS. */}
-        <a className="nav" href="#">
-          <span className="ic">⧉</span>Inbox<span className="count">3</span>
+        <a
+          className="nav"
+          href="/inbox"
+          aria-current={chrome.active === "inbox" ? "page" : undefined}
+        >
+          <span className="ic">⧉</span>Inbox
+          {/* No badge at zero: an empty inbox should look empty, and a `0`
+              sitting where a count goes reads as a number worth checking. */}
+          {unread ? <span className="count" data-unread>{unread}</span> : null}
         </a>
       </nav>
 
-      <nav className="nav-group">
-        <div className="nav-label">Spaces</div>
-        <a className="nav" href="#">
-          <span className="ic">▾</span>
-          {chrome.spaceName}
-        </a>
-        <a className="nav depth-1" href="#" aria-current="page">
-          <span className="ic">▤</span>
-          {chrome.listName}
-          <span className="count">{chrome.listTaskCount}</span>
-        </a>
-        <a className="nav depth-1" href="#">
-          <span className="ic">▤</span>Backlog
-        </a>
-      </nav>
+      {location ? (
+        <nav className="nav-group">
+          <div className="nav-label">Spaces</div>
+          <a className="nav" href="#">
+            <span className="ic">▾</span>
+            {location.spaceName}
+          </a>
+          <a
+            className="nav depth-1"
+            href="#"
+            aria-current={chrome.active ? undefined : "page"}
+          >
+            <span className="ic">▤</span>
+            {location.listName}
+            <span className="count">{location.listTaskCount}</span>
+          </a>
+          <a className="nav depth-1" href="#">
+            <span className="ic">▤</span>Backlog
+          </a>
+        </nav>
+      ) : (
+        // A screen with no location has no Spaces group to sit in, and would
+        // otherwise be a dead end: every other entry up there is a placeholder.
+        // Settings solves it the same way.
+        <nav className="nav-group">
+          <a className="nav" href="/">
+            <span className="ic">←</span>Back to work
+          </a>
+        </nav>
+      )}
     </aside>
   );
 }
@@ -200,10 +262,12 @@ export function chromeFrom(
 ): ShellChrome {
   return {
     workspaceName: data.workspaceName,
-    spaceName: data.spaceName,
-    folderName: data.folderName,
-    listName: data.listName,
-    listTaskCount: data.listTaskCount,
+    location: {
+      spaceName: data.spaceName,
+      folderName: data.folderName,
+      listName: data.listName,
+      listTaskCount: data.listTaskCount,
+    },
     viewer,
     users,
   };

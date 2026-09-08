@@ -112,6 +112,9 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-082](#d-082) | A task is a page, and the key is what opens it | Frontend |
 | [D-083](#d-083) | A comment is an operation, and its body is a document | Architecture |
 | [D-084](#d-084) | A mention may grant access, but never quietly | Auth |
+| [D-085](#d-085) | The shell fetches the badge; nobody hands it one | Frontend |
+| [D-086](#d-086) | A screen may be nowhere in the tree | Frontend |
+| [D-087](#d-087) | Read state is not the workspace, so it is not an operation | Architecture |
 
 ---
 
@@ -2425,3 +2428,79 @@ success.
 *In one sentence:* the behaviour people expect from a mention is worth having,
 and the only version worth shipping is the one where nobody is surprised by what
 it did.
+
+### D-085
+**The shell fetches the badge; nobody hands it one** · 2026-09-07 · active
+
+The sidebar calls `unreadCount` for itself inside `AppShell`, rather than
+receiving the number through `ShellChrome` from whichever page is rendering.
+
+**Why not a prop.** There are seven screens and one `chromeFrom`, and a count
+threaded through it is seven call sites that each have to remember to fetch it.
+That is precisely the drift D-079 extracted this file to end: the four sidebars
+it replaced had already diverged, and the divergence nobody noticed was the
+quiet one. A badge that is right on four screens and stale on three is worse
+than no badge, because it is only wrong where nobody is looking.
+
+**The cost is one indexed count per page render**, and it is cheap for the same
+reason the fan-out is: the query is scoped by `user_id` and joins the index
+every other read joins. `inboxBadge` wraps it in React's `cache`, so the inbox
+page — the one screen that wants the number twice, once for the sidebar and once
+for its own header — pays for it once.
+
+**It returns null rather than throwing.** This runs inside the chrome of every
+screen, and every page already has a considered answer for an unreachable
+database (D-042). A count that cannot be taken must not be the thing that turns
+a working page into a stack trace.
+
+*In one sentence:* the badge belongs to the chrome, so the chrome is what knows
+how to get it.
+
+### D-086
+**A screen may be nowhere in the tree** · 2026-09-07 · active
+
+`ShellChrome.location` is optional, and holds the space, folder, list and task
+count together in one object rather than as four sibling fields.
+
+The inbox is the first screen that is not looking at one container — "what is
+mine, anywhere" has no list to name — and the shell assumed there was always
+one. Two ways to say so: make each field optional, or group them. Grouped,
+because they are only ever true together, and "a folder name with no list" is
+not a state worth being able to express. The breadcrumb and the Spaces group
+both key off the same absence, so a screen with no location cannot end up with
+half a trail.
+
+A screen with no location also has no way back — every other entry in that
+sidebar is still a placeholder — so it gets the "Back to work" entry settings
+already uses. The two container-less screens now say the same thing in the same
+place, which is the whole point of there being one shell.
+
+*In one sentence:* the type says which screens are in the tree, so the shell
+cannot render a breadcrumb to a list that is not there.
+
+### D-087
+**Read state is not the workspace, so it is not an operation** · 2026-09-07 · active
+
+`markRead` and `markAllRead` write directly, not through `applyOperations`.
+
+**The invariant they appear to break.** Every mutation is an operation (D-049),
+which is what makes the activity log complete and undo free. A second writer is
+the one that forgets to log (D-083), so an exception needs an argument rather
+than a convenience.
+
+**The argument.** The rule covers the workspace — the shared thing people are
+looking at. Read state is one person's view of it: nobody else can observe it,
+"Avery marked a notification read" is noise in a log meant to answer what
+happened to the *work*, and ⌘Z restoring a bold row is not a feature anyone
+wants. Sessions already write outside the executor for the same reason, and
+nobody has ever wanted to undo a sign-in.
+
+**Authorization by scoping rather than by refusal.** Both queries carry
+`AND user_id = $1`, so someone else's id updates zero rows instead of being
+refused. That is deliberate: an inbox that answers "that is not yours" has
+confirmed the id exists, which is the leak D-080 is about. The action still
+validates the id's shape first, because `invalid input syntax for type uuid` is
+not a sentence to show anyone.
+
+*In one sentence:* the executor exists to keep the record of the work honest,
+and what you have read is not part of the work.

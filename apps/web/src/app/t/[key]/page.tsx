@@ -73,10 +73,12 @@ export default async function TaskPage({ params }: { params: Promise<{ key: stri
 
   const chrome: ShellChrome = {
     workspaceName: task.workspaceName,
-    spaceName: task.spaceName,
-    folderName: task.folderName,
-    listName: task.listName,
-    listTaskCount: task.listTaskCount,
+    location: {
+      spaceName: task.spaceName,
+      folderName: task.folderName,
+      listName: task.listName,
+      listTaskCount: task.listTaskCount,
+    },
     viewer,
     users,
   };

@@ -1063,6 +1063,120 @@ report(
     : `stored ${JSON.stringify(describedTask.description).slice(0, 140)}`,
 );
 
+// --- the inbox --------------------------------------------------------------
+//
+// The screen the fan-out was written for, and the first one not scoped to a
+// container. Two properties matter here. The container scoping used to give the
+// second one for free: a notification row is a record that something happened,
+// not a licence to see it — so it appears in one person's inbox and in nobody
+// else's, and an id someone else holds does not clear it.
+//
+// Nothing below inserts a fixture. The rows come from Riley naming Avery in a
+// real comment, because the fan-out runs inside that transaction and a hand-
+// written row would not prove it does.
+console.log("\ninbox → what is mine, anywhere\n");
+
+await db.query(`DELETE FROM notifications`);
+
+const averyId = (await one(`SELECT id FROM users WHERE email = 'avery@example.com'`)).id;
+
+await callOn(
+  DETAIL_URL,
+  DETAIL_ACTIONS.postComment!,
+  [detailTask.id, "Can you take this one, @Avery Mills?", null, false],
+  RILEY,
+);
+
+const notified = await one(
+  `SELECT id, kind, is_read FROM notifications WHERE user_id = $1`,
+  [averyId],
+);
+report(
+  "a mention posted by someone else puts a row in the mentioned person's inbox",
+  notified?.kind === "mentioned" ? null : `wrote ${notified?.kind ?? "nothing"}`,
+);
+
+await warm("/inbox");
+const INBOX_URL = `http://localhost:${PORT}/inbox`;
+const INBOX_ACTIONS = actionIds("app/inbox/page");
+
+const inboxAsAvery = await (await fetch(INBOX_URL, { headers: { Cookie: COOKIE } })).text();
+report(
+  "the inbox renders it, from the payload rather than a join",
+  inboxAsAvery.includes("Riley Kaur mentioned you") && inboxAsAvery.includes("ENG-415")
+    ? null
+    : "the page did not show the notification",
+);
+
+// The badge is in the shell of every screen, so it is checked on a page that is
+// not the inbox — that is where it would go stale.
+const listAsAvery = await (await fetch(`http://localhost:${PORT}/`, { headers: { Cookie: COOKIE } })).text();
+report(
+  "and the sidebar badge counts it on every other screen",
+  /data-unread="true">1</.test(listAsAvery) ? null : "the badge is not the real count",
+);
+
+const inboxAsSam = await (await fetch(INBOX_URL, { headers: { Cookie: SAM } })).text();
+report(
+  "someone else's inbox does not contain it",
+  !inboxAsSam.includes("mentioned you") ? null : "a notification leaked into another inbox",
+);
+
+await callOn(INBOX_URL, INBOX_ACTIONS.markNotificationRead!, [notified.id]);
+report(
+  "opening a row marks it read",
+  (await one(`SELECT is_read FROM notifications WHERE id = $1`, [notified.id])).is_read === true
+    ? null
+    : "the row is still unread",
+);
+
+// An id is not permission — the same rule the detail page needed (D-080), and
+// here it is enforced by the query's own scoping rather than by a refusal.
+await db.query(`UPDATE notifications SET is_read = false, read_at = NULL WHERE id = $1`, [
+  notified.id,
+]);
+await callOn(INBOX_URL, INBOX_ACTIONS.markNotificationRead!, [notified.id], SAM);
+report(
+  "an id belonging to someone else clears nothing",
+  (await one(`SELECT is_read FROM notifications WHERE id = $1`, [notified.id])).is_read === false
+    ? null
+    : "someone else marked it read",
+);
+
+const malformed = await callOn(INBOX_URL, INBOX_ACTIONS.markNotificationRead!, ["not-a-uuid"]);
+report(
+  "a malformed id comes back as a sentence rather than a Postgres error",
+  /no longer exists/.test(malformed.text) && !/invalid input syntax/.test(malformed.text)
+    ? null
+    : `got ${malformed.text.slice(0, 160)}`,
+);
+
+// Two rows, so "all" means more than "the one".
+await callOn(
+  DETAIL_URL,
+  DETAIL_ACTIONS.postComment!,
+  [detailTask.id, "And this too, @Avery Mills", null, false],
+  RILEY,
+);
+const beforeClearing = await one(
+  `SELECT count(*) AS n FROM notifications WHERE user_id = $1 AND is_read = false`,
+  [averyId],
+);
+await callOn(INBOX_URL, INBOX_ACTIONS.markEverythingRead!, []);
+const afterClearing = await one(
+  `SELECT count(*) AS n FROM notifications WHERE user_id = $1 AND is_read = false`,
+  [averyId],
+);
+report(
+  "mark all read clears the whole inbox, not the page of it that was rendered",
+  beforeClearing.n === "2" && afterClearing.n === "0"
+    ? null
+    : `${beforeClearing.n} unread before, ${afterClearing.n} after`,
+);
+
+await db.query(`DELETE FROM notifications`);
+await db.query(`DELETE FROM comments WHERE object_id = $1`, [detailTask.id]);
+
 await db.query(`DELETE FROM comments WHERE object_id = ANY($1::uuid[])`, [
   [commentedTask.id, privateTask.id],
 ]);

@@ -68,6 +68,7 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Authorization checks | `packages/db/src/task-access.ts` |
 | Comment reads (writes are operations) | `packages/db/src/comments.ts` |
 | Fan-out + inbox queries | `packages/db/src/notifications.ts` |
+| The inbox screen and its badge | `apps/web/src/server/inbox.ts`, `app/inbox/page.tsx` |
 | Schema | `packages/db/src/schema/` |
 | Seed — the demo workspace | `packages/db/src/seed.ts` |
 | Loading a view for any renderer | `apps/web/src/server/views.ts` |

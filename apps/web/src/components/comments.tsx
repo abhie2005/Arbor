@@ -6,6 +6,7 @@ import { useRef, useState } from "react";
 
 import { type CommentResult, deleteComment, editComment, postComment } from "@/server/comment-actions";
 
+import { relative } from "./relative-time";
 import { useTaskAction } from "./use-task-action";
 
 /**
@@ -484,15 +485,4 @@ function names(list: string[]): string {
   if (list.length === 1) return list[0]!;
   if (list.length === 2) return `${list[0]} and ${list[1]}`;
   return `${list.slice(0, -1).join(", ")} and ${list.at(-1)}`;
-}
-
-/** Coarse on purpose: a comment thread does not need seconds. */
-function relative(iso: string): string {
-  const then = new Date(iso).getTime();
-  const minutes = Math.round((Date.now() - then) / 60_000);
-
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  if (minutes < 60 * 24) return `${Math.round(minutes / 60)}h ago`;
-  return new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }

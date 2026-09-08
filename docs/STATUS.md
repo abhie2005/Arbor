@@ -41,9 +41,10 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Authorization** | Every server action authorizes as well as authenticates. Task writes join `access_index` for the actor; `undo` checks every task its client-supplied batch names; sharing and configuration need an owner or admin; a saved view is the container's `edit`, unless it is personal, in which case only its owner. |
 | **Task detail** | `/t/ENG-402` — a page, keyed by the human key with a uuid fallback. Status, priority, dates, type, assignees, watchers, eleven editable custom-field types and a description. Subtasks are listed here and nowhere else in the UI. A viewer without `edit` gets values, not disabled controls. |
 | **Comments** | Threaded one level, edit and soft-delete your own, `@` mentions stored as nodes carrying a user id. Written as operations, so each has an activity row and ⌘Z undoes it. Mentioning someone without access asks before granting them any. |
-| **Notification fan-out** | Written inside the transaction that caused them, for direct signals only: assigned, mentioned, replied. Never to someone who cannot open the task, and the inbox filters again on read because access can be revoked afterwards. Rule is pure and in core; **no UI yet**. |
+| **Notification fan-out** | Written inside the transaction that caused them, for direct signals only: assigned, mentioned, replied. Never to someone who cannot open the task, and the inbox filters again on read because access can be revoked afterwards. Rule is pure and in core. |
+| **Inbox** | `/inbox` — the first screen not scoped to one container, permission-scoped per row rather than per page. Unread and everything, opening a row marks it read and goes to the task, mark-read without opening, mark all read. The sidebar badge is the real count, fetched by the shell on every screen (D-085). Read state writes outside the operation layer, deliberately (D-087). |
 
-**Verified:** 291 unit tests, 112 live-Postgres checks, 65 server-action checks,
+**Verified:** 291 unit tests, 112 live-Postgres checks, 73 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 ---
@@ -64,42 +65,62 @@ four packages typechecking clean, and the interactions above driven in Chrome.
 
 ## Where to pick up
 
-**Phase 7 is most of the way through its second half.** The task detail page
-and comments are built, and so is the notification fan-out — the write side.
-What remains of notifications is the part people can see; then realtime, then
-presence.
+**Phase 7 has one piece of notifications left.** The task detail page, comments,
+the fan-out and the inbox are all built. What remains is the *other* half of the
+table's design — the read-time aggregation over `activity` for watchers — and
+then realtime, then presence.
 
 The pass ran as commits verified on all four gates before the next started:
-shell extraction, authorization, the detail page, comments, fan-out.
+shell extraction, authorization, the detail page, comments, fan-out, inbox.
 
-### Next — the inbox
+### Done — the inbox
 
-The fan-out is done and has 14 live-Postgres checks behind it. `notifications`
-has rows in it for the first time. **Nothing displays them**, which is the whole
-of the next chunk:
+`/inbox` displays what the fan-out writes. It was a consumer of queries that
+already existed rather than new query work: `loadInbox`, `unreadCount`,
+`markRead` and `markAllRead` were already in `packages/db/src/notifications.ts`,
+scoped and covered by `db:smoke`. What was added is the web layer —
+`server/inbox.ts`, `server/inbox-actions.ts`, `components/inbox.tsx`,
+`app/inbox/page.tsx` — and eight action checks that drive it.
 
-- **`loadInbox`, `unreadCount`, `markRead` and `markAllRead` already exist** in
-  `packages/db/src/notifications.ts`, scoped and tested. The page is a consumer,
-  not new query work.
-- **The sidebar's `Inbox 3` is still a literal `3`** in
-  `components/app-shell.tsx`, marked with a comment. `unreadCount` replaces it.
-- **`/inbox` needs a route.** It is the first screen not scoped to one
-  container, which is already handled in the query — the join is on each row's
-  own list rather than on one known in advance.
-- Clicking a row should mark it read and open `/t/<key>`.
+Three things the page settled, each logged:
 
-Then the **read-time aggregation over `activity`** for watchers, which is the
-other half of the table's design and has no code yet.
+- **The badge is the shell's, not a prop** (D-085). Seven screens would
+  otherwise each have to remember to fetch a count, which is the drift the
+  shell was extracted to end. `inboxBadge` is request-cached, so the inbox page
+  wanting the same number costs one query, and it returns null rather than
+  throwing so a missing database cannot take down every screen's chrome.
+- **`ShellChrome.location` is optional** (D-086). This is the first screen not
+  looking at one list, and the shell assumed there was always one. Grouped
+  rather than four optional fields, so "a folder with no list" cannot be said.
+- **Marking read does not go through `applyOperations`** (D-087). Read state is
+  one person's view, not the workspace: it does not belong in the activity log
+  and undoing it is meaningless. Both queries scope by `user_id`, so someone
+  else's id updates nothing rather than being refused — a refusal would confirm
+  the id exists.
+
+### Next — the read-time half
+
+The **aggregation over `activity`** for watchers, which is the other half of the
+table's design and still has no code. The write-time rows are direct signals
+only; a watcher on a task with two hundred watchers is meant to learn what
+changed by reading `activity` at display time, not by having two hundred rows
+written per edit. The inbox is the screen it lands in, and it now exists.
+
+The shape to decide first is whether that reads as a second section on the same
+page or as one merged stream — merged is more useful and needs a sort over two
+sources with different shapes, which is the part worth thinking about before
+writing it.
 
 ### Background — why notifications are shaped this way
 
-This is the honest next step, and it is where the schema has been waiting.
-`notifications` exists and is empty. The comment on the table says what it is
-for: **write-time fan-out for direct signals only** — assigned, mentioned,
-replied — with ambient activity aggregated at read time from `activity`,
-because a task with 200 watchers would otherwise write 200 rows per edit.
+Both halves of the write side are built now; this is the reasoning they were
+built from, kept because the read-time half still has to follow it. The comment
+on the table says what it is for: **write-time fan-out for direct signals
+only** — assigned, mentioned, replied — with ambient activity aggregated at read
+time from `activity`, because a task with 200 watchers would otherwise write 200
+rows per edit.
 
-Most of what it needs already landed:
+What each piece contributes:
 
 - **Mentions are already references.** `mentionedIds(doc)` returns the user ids
   a comment named, and it is called today only to decide whether to ask about
@@ -114,18 +135,16 @@ Most of what it needs already landed:
 - **`payload` is meant to be rendered, not joined.** The schema says the inbox
   row should need no joins to display, which means writing the summary at
   fan-out time. `renderPlain(doc)` is what produces it.
-- **The sidebar's `Inbox 3` is hardcoded.** It is a literal `3` in
-  `components/app-shell.tsx`, marked with a comment. That badge and an
-  `/inbox` page are the visible half.
+- **The badge and `/inbox` are the visible half**, and both exist. The literal
+  `3` in `components/app-shell.tsx` is now `unreadCount`, fetched by the shell
+  itself (D-085).
 
-**The one thing to decide first** is whether notifications are written inside
-the same transaction as the operation that caused them. Inside is correct — a
-comment and the fact that it notified someone either both happened or neither
-did — and because only direct signals are written, the cost is proportional to
-the number of people *named*, which is small. Outside needs something to run it,
-and `apps/worker` does not exist. That is the same shape of decision as D-071 (a
-rebuild per share), and it should be made deliberately rather than by whichever
-is easier to write.
+**Written inside the transaction that caused them**, decided before the fan-out
+was written and unchanged since: a comment and the fact that it notified someone
+either both happened or neither did, and a fan-out lost to a crash leaves no
+trace anywhere — nothing detects the silence. The usual objection is cost, and
+it does not apply, because only *directly named* people get a row. Outside would
+need something to run it, and `apps/worker` does not exist.
 
 ### Then realtime, and presence
 
@@ -146,6 +165,21 @@ against a table that is correct and that writes are checked against too — whic
 is why access control went before collaboration.
 
 ### Known gaps in what was just built
+
+- **The inbox shows only what the fan-out wrote.** Watchers still learn nothing
+  from it — that is the read-time aggregation above, and it is the next chunk.
+- **`cleared_at` is a column nothing sets.** `loadInbox` honours it, so
+  dismissing a notification without reading it is a control away, not a schema
+  change. Held because "clear" and "mark read" both need to exist before either
+  is worth designing.
+- **The inbox is capped at 100 rows and does not page.** A queue, not an
+  archive — but a busy month is more than a hundred signals, so the cap is a
+  decision with a shelf life.
+- **The badge is only as fresh as the last render.** `revalidatePath` updates it
+  on every write that goes through an action, which means someone else's mention
+  arrives when the page next renders. Live is what realtime is for.
+- **`Home` and `My Work` in the sidebar are still placeholders.** The inbox is
+  the first of those three entries to point anywhere.
 
 - **Reactions and comment resolve/assign are not built.** `comment_reactions`
   exists; `resolvedAt` and `assignedTo` are columns nothing sets. Resolve/assign
@@ -253,10 +287,11 @@ the ones it does not cover, because they are reading rather than reference:
   admin (D-081). That is wrong, and wrong in the safe direction. The fix is for
   `resolveAccess` to emit container permissions alongside its list rows, which
   changes the pure rule and its 30 tests — worth doing deliberately.
-- **Notifications inside the transaction, or outside it?** Inside is correct and
-  makes a comment's write proportional to its watcher count. Outside needs
-  something to run it, and there is no worker. Same shape as D-071; decide it
-  before writing the fan-out, not after.
+- ~~**Notifications inside the transaction, or outside it?**~~ Inside, decided
+  before the fan-out was written: only directly named people get a row, so the
+  cost is proportional to who was named rather than to who is watching. What is
+  still open is where the **read-time** half renders — a second section on the
+  inbox, or one merged stream sorted across two sources with different shapes.
 - **⌘Z removes a comment you just posted.** A deliberate consequence of comments
   being operations (D-083), and the honest one. If it turns out to surprise
   people badly enough to matter, the fix is a stack that knows which entries are
