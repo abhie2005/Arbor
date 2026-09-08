@@ -4,9 +4,20 @@ import {
   FIELD_TYPE_META,
   type FieldPlacement,
   type Permission,
+  type RichDoc,
   type StatusGroup,
+  parseStoredDoc,
+  renderPlain,
 } from "@arbor/core";
-import { fieldsAvailableOn, listTaskTypes, pool, resolveStatusSetFor, taskAccess } from "@arbor/db";
+import {
+  type CommentRecord,
+  fieldsAvailableOn,
+  listTaskTypes,
+  loadComments,
+  pool,
+  resolveStatusSetFor,
+  taskAccess,
+} from "@arbor/db";
 
 import type { StatusRow } from "./views";
 
@@ -91,6 +102,12 @@ export interface TaskDetail {
   watcherIds: string[];
   fields: DetailField[];
   subtasks: Subtask[];
+
+  /** Null when there is none, or when what is stored will not parse (D-083). */
+  description: RichDoc | null;
+  /** The same, as text, so the textarea has something to start from. */
+  descriptionText: string;
+  comments: CommentRecord[];
 }
 
 /**
@@ -154,6 +171,7 @@ interface TaskRow {
   start_has_time: boolean;
   task_type_id: string | null;
   parent_task_id: string | null;
+  description: unknown;
   created_at: Date | null;
   updated_at: Date | null;
   completed_at: Date | null;
@@ -186,7 +204,7 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
   const result = await connection.query<TaskRow>(
     `SELECT t.id, t.key, t.name, t.status_id, t.priority,
             t.due_at, t.due_has_time, t.start_at, t.start_has_time,
-            t.task_type_id, t.parent_task_id,
+            t.task_type_id, t.parent_task_id, t.description,
             t.created_at, t.updated_at, t.completed_at, t.archived_at,
             cu.name AS created_by_name,
             w.id AS workspace_id, w.name AS workspace_name,
@@ -208,8 +226,18 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
   const row = result.rows[0];
   if (!row) return null;
 
-  const [statusSet, placements, taskTypes, people, relations, values, subtasks, parent, listCount] =
-    await Promise.all([
+  const [
+    statusSet,
+    placements,
+    taskTypes,
+    people,
+    relations,
+    values,
+    subtasks,
+    parent,
+    listCount,
+    comments,
+  ] = await Promise.all([
       resolveStatusSetFor(row.workspace_id, row.home_list_id, connection),
       fieldsAvailableOn(row.workspace_id, row.home_list_id, row.task_type_id, connection),
       listTaskTypes(row.workspace_id, connection),
@@ -256,7 +284,12 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
          WHERE home_list_id = $1 AND deleted_at IS NULL AND archived_at IS NULL`,
         [row.home_list_id],
       ),
+      loadComments(taskId, connection),
     ]);
+
+  // Stored JSON is untrusted input even from our own table (D-018): it was
+  // written by a client, and possibly by an older version of this code.
+  const description = parseStoredDoc(row.description);
 
   const byField = new Map(values.rows.map((v) => [v.field_id, v]));
 
@@ -324,6 +357,9 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
     assigneeIds: relations.rows.filter((r) => r.kind === "assignee").map((r) => r.user_id),
     watcherIds: relations.rows.filter((r) => r.kind === "watcher").map((r) => r.user_id),
     fields,
+    description,
+    descriptionText: description ? renderPlain(description) : "",
+    comments,
     subtasks: subtasks.rows.map((s) => ({
       id: s.id,
       key: s.key,

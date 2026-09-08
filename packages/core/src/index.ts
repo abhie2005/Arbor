@@ -3,6 +3,7 @@ export * from "./dates";
 export * from "./hierarchy";
 export * from "./access";
 export * from "./passwords";
+export * from "./richtext";
 export * from "./fields";
 export * from "./statuses";
 export * from "./views/types";

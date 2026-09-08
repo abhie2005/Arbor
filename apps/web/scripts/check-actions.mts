@@ -524,6 +524,27 @@ const { token: samToken } = await signIn("sam@example.com", "arbor-demo-2026");
 const SAM = `arbor_session=${samToken}`;
 const samUserId = (await one(`SELECT id FROM users WHERE email = 'sam@example.com'`)).id;
 
+/**
+ * Takes a grant away the way a revocation does.
+ *
+ * Deleting the `grants` row alone leaves `access_index` holding what that grant
+ * used to imply — the index is derived, and nothing recomputes it just because
+ * its input vanished. A fixture that clears only the grant leaves the next
+ * check looking at someone who still has access, which is how the consent check
+ * first passed for the wrong reason.
+ */
+async function revokeHiring(userId: string) {
+  const hiring = await one(`SELECT id FROM containers WHERE name = 'Hiring'`);
+  await db.query(`DELETE FROM grants WHERE container_id = $1 AND principal_id = $2`, [
+    hiring.id,
+    userId,
+  ]);
+  await db.query(`DELETE FROM access_index WHERE list_id = $1 AND principal_id = $2`, [
+    hiring.id,
+    userId,
+  ]);
+}
+
 await warm("/settings/sharing");
 const SHARING_URL = `http://localhost:${PORT}/settings/sharing`;
 const SHARING_ACTIONS = actionIds("app/settings/sharing/page");
@@ -859,6 +880,194 @@ report(
     ? null
     : "an assignee was written to a task the caller cannot reach",
 );
+
+// --- comments ---------------------------------------------------------------
+//
+// The mention-consent flow is the reason this section exists. It is a
+// *permission change reached through a comment box*, which is the kind of thing
+// that has to be impossible by accident — so what is asserted is that the first
+// call writes nothing at all, and that the second grants on the list rather
+// than the space.
+console.log("\ncomments → posting, mentions and consent\n");
+
+const commentedTask = await one(`SELECT id FROM tasks WHERE key = 'ENG-390'`);
+await db.query(`DELETE FROM comments WHERE object_id = $1`, [commentedTask.id]);
+
+const posted = await callOn(DETAIL_URL, DETAIL_ACTIONS.postComment!, [
+  commentedTask.id,
+  "Looks right to me, @Riley Kaur",
+  null,
+  false,
+]);
+const storedComment = await one(
+  `SELECT body, author_id FROM comments WHERE object_id = $1`,
+  [commentedTask.id],
+);
+report(
+  "a comment posted from the panel reaches the table",
+  storedComment?.author_id ? null : `nothing was written: ${posted.text.slice(0, 140)}`,
+);
+
+// The mention is a node with an id, which is why the format is a tree at all.
+report(
+  "and its mention is a reference rather than the characters that were typed",
+  JSON.stringify(storedComment.body).includes(`"type":"mention"`)
+    ? null
+    : `stored ${JSON.stringify(storedComment.body).slice(0, 140)}`,
+);
+
+// Commenting is joining a conversation, which is a clearer opt-in than
+// anything the system could infer.
+const nowWatching = await one(
+  `SELECT 1 FROM task_watchers w JOIN users u ON u.id = w.user_id
+   WHERE w.task_id = $1 AND u.email = 'avery@example.com'`,
+  [commentedTask.id],
+);
+report("commenting makes you a watcher", nowWatching ? null : "the author is not watching");
+
+// The consent flow. Sam has no grant on the private list, so mentioning him
+// there must refuse and write nothing — not the comment, and not the grant.
+await revokeHiring(samUserId);
+await db.query(`DELETE FROM comments WHERE object_id = $1`, [privateTask.id]);
+
+const blocked = await callOn(DETAIL_URL, DETAIL_ACTIONS.postComment!, [
+  privateTask.id,
+  "Take a look, @Sam Petrov",
+  null,
+  false,
+]);
+const nothingPosted = await one(`SELECT 1 FROM comments WHERE object_id = $1`, [privateTask.id]);
+const nothingGranted = await one(
+  `SELECT 1 FROM grants g JOIN containers c ON c.id = g.container_id
+   WHERE c.name = 'Hiring' AND g.principal_id = $1`,
+  [samUserId],
+);
+report(
+  "mentioning someone who cannot see the task writes nothing and asks",
+  /needsConsent/.test(blocked.text) && !nothingPosted && !nothingGranted
+    ? null
+    : nothingGranted
+      ? "a grant was written without consent"
+      : `no consent was asked for: ${blocked.text.slice(0, 160)}`,
+);
+
+// The same call with consent. The grant must land on the list, not the space —
+// mentioning someone on one task should not open every other list in it.
+await callOn(DETAIL_URL, DETAIL_ACTIONS.postComment!, [
+  privateTask.id,
+  "Take a look, @Sam Petrov",
+  null,
+  true,
+]);
+const grantedOn = await one(
+  `SELECT c.name, c.kind FROM grants g JOIN containers c ON c.id = g.container_id
+   WHERE g.principal_id = $1`,
+  [samUserId],
+);
+report(
+  "consenting grants view on the list, not on the space above it",
+  grantedOn?.name === "Hiring" && grantedOn.kind === "list"
+    ? null
+    : `granted on ${grantedOn?.name} (${grantedOn?.kind})`,
+);
+
+const spaceStillClosed = await one(
+  `SELECT is_private FROM containers WHERE name = 'Founders'`,
+);
+report(
+  "and leaves the private space private",
+  spaceStillClosed.is_private === true ? null : "the space was opened",
+);
+
+// Riley can reach the private list but is not an admin, so consent cannot help.
+const { token: rileyToken } = await signIn("riley@example.com", "arbor-demo-2026");
+const RILEY = `arbor_session=${rileyToken}`;
+await revokeHiring(samUserId);
+
+const cannotShare = await callOn(
+  DETAIL_URL,
+  DETAIL_ACTIONS.postComment!,
+  [privateTask.id, "Adding @Sam Petrov", null, true],
+  RILEY,
+);
+const rileyGranted = await one(
+  `SELECT 1 FROM grants g JOIN containers c ON c.id = g.container_id
+   WHERE c.name = 'Hiring' AND g.principal_id = $1`,
+  [samUserId],
+);
+report(
+  "a member is told they cannot share rather than being asked to",
+  /"canShare":false/.test(cannotShare.text)
+    ? null
+    : `expected canShare:false, got ${cannotShare.text.slice(0, 160)}`,
+);
+report(
+  "and no grant is written on their behalf",
+  !rileyGranted ? null : "a non-admin granted access through a comment box",
+);
+
+// Editing is the author's, not an editor's: Riley has edit on this list and
+// still may not rewrite what Avery said.
+const averyComment = await one(
+  `SELECT id FROM comments WHERE object_id = $1 ORDER BY created_at LIMIT 1`,
+  [privateTask.id],
+);
+const refusedEdit = await callOn(
+  DETAIL_URL,
+  DETAIL_ACTIONS.editComment!,
+  [averyComment.id, "Something else entirely"],
+  RILEY,
+);
+const unedited = await one(`SELECT body FROM comments WHERE id = $1`, [averyComment.id]);
+report(
+  "someone with edit on the list cannot rewrite another person's comment",
+  /Only the author/.test(refusedEdit.text) &&
+    !JSON.stringify(unedited.body).includes("Something else entirely")
+    ? null
+    : "a comment was rewritten by someone who did not write it",
+);
+
+// A comment is an operation, so its inverse deletes it — soft, so the reply
+// under a deleted comment keeps its anchor.
+const deletable = await callOn(DETAIL_URL, DETAIL_ACTIONS.postComment!, [
+  commentedTask.id,
+  "Temporary",
+  null,
+  false,
+]);
+const newId = deletable.text.match(/"kind":"deleteComment","commentId":"([0-9a-f-]{36})"/);
+report(
+  "posting returns an inverse that deletes it",
+  newId ? null : `no inverse came back: ${deletable.text.slice(0, 160)}`,
+);
+
+await callOn("http://localhost:" + PORT + "/", PAGE_ACTIONS.undo!, [
+  [{ kind: "deleteComment", commentId: newId![1], taskId: commentedTask.id }],
+]);
+const softDeleted = await one(`SELECT deleted_at FROM comments WHERE id = $1`, [newId![1]]);
+report(
+  "and undoing it soft-deletes rather than removing the row",
+  softDeleted?.deleted_at !== null ? null : "the comment is still live",
+);
+
+const description = await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskDescription!, [
+  commentedTask.id,
+  "What it does.\n\nAnd why.",
+]);
+const describedTask = await one(`SELECT description FROM tasks WHERE id = $1`, [commentedTask.id]);
+report(
+  "a description is stored as the same document a comment is",
+  JSON.stringify(describedTask.description).includes('"type":"paragraph"') &&
+    description.status === 200
+    ? null
+    : `stored ${JSON.stringify(describedTask.description).slice(0, 140)}`,
+);
+
+await db.query(`DELETE FROM comments WHERE object_id = ANY($1::uuid[])`, [
+  [commentedTask.id, privateTask.id],
+]);
+await db.query(`UPDATE tasks SET description = NULL WHERE id = $1`, [commentedTask.id]);
+await revokeHiring(samUserId);
 
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);

@@ -110,6 +110,8 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-080](#d-080) | Authenticating is not authorizing, and every write does both | Auth |
 | [D-081](#d-081) | Configuration is administered; a view is authorized as two things | Auth |
 | [D-082](#d-082) | A task is a page, and the key is what opens it | Frontend |
+| [D-083](#d-083) | A comment is an operation, and its body is a document | Architecture |
+| [D-084](#d-084) | A mention may grant access, but never quietly | Auth |
 
 ---
 
@@ -2314,3 +2316,112 @@ paying for itself three phases after it was built.
 already built, and the parts that were not — a compiler call, a second status
 rule, a second field-scoping rule — are the parts this page deliberately does
 not have.
+
+### D-083
+**A comment is an operation, and its body is a document** · 2026-09-07 · active
+
+`createComment`, `deleteComment`, `restoreComment`, `editComment` and
+`setDescription` joined the `Operation` union. Bodies are a block tree —
+paragraphs of text and mention nodes — stored in `jsonb`.
+
+**Why an operation and not a comment service.** A service with its own INSERT
+would have been shorter and would have made `applyOperations` no longer the
+only thing that writes. That property is what has kept the activity log
+complete by construction for five phases, and undo working without any feature
+doing anything for it. The second writer is always the one that forgets to log.
+Building comments the short way would have made the argument for the operation
+layer retrospectively false.
+
+**The cost, which is real: ⌘Z removes a comment you just posted.** That
+surprises people the first time. It is also true — it *was* the last thing you
+did — and the alternative was an undo stack that silently skips a whole class
+of action, which is worse because nothing announces it.
+
+**The description came along for the same reason.** It was going to be a direct
+`UPDATE` in the web app, which would have been the second writer arriving
+through the back door in the same commit that argued against one. It is a
+`setDescription` operation instead, so it has an activity row and an inverse.
+
+**Why the body is a tree and not a string.** A comment box is a textarea and a
+string round-trips through `jsonb` perfectly well. The reason not to is
+mentions: a mention is a *reference to a person*, and stored as the characters
+"@Riley Kaur" the reference is gone. Renaming Riley rewrites history, two Rileys
+are indistinguishable, and notification fan-out — the next pass — has to
+re-parse prose to find out who was named. A node with an id costs nothing today
+and cannot be retrofitted later without a migration over every comment ever
+written. That is the whole argument for choosing the format before anything
+needed it.
+
+**The label is stored beside the id, duplicating the name on purpose.** It is
+what the comment said at the time. Re-resolving every mention through the
+current user table at render would rewrite what people wrote whenever someone
+changes their name, and a mention of a departed user would come back blank.
+
+**A textarea, still.** `parseRichText` turns typed text plus the list of people
+who could be meant into the tree, and `renderPlain` turns it back. No editor, no
+contenteditable, no dependency. The picker inserts the *full name* rather than a
+token only the client understands, so what is typed is exactly what the server
+parses. When Phase 9 brings a collaborative editor for Docs, it adopts this
+shape rather than replacing it — one format to migrate, not two.
+
+**Longest-name matching, and ambiguity left unresolved.** Names contain spaces,
+so "@Riley Kaur" has to beat "@Riley". Two people with the same name resolve to
+neither: picking one would notify the wrong person with nothing on screen saying
+so, and a mention that visibly did not resolve is better than one that silently
+resolved wrong.
+
+**Stored JSON is untrusted input, including our own.** `parseStoredDoc`
+validates on read and returns null rather than throwing, so one malformed row
+renders as an unreadable comment instead of taking the page down. Same rule as a
+view definition going through the compiler rather than being trusted for having
+come from the database (D-018).
+
+**Deleting is soft and the tombstone stays when it has replies.** A deleted
+comment that answered nothing is dropped; one with replies under it remains as
+"This comment was deleted", because removing it would leave a conversation whose
+first half is missing. One level of replies, enforced in the executor: a thread
+that nests forever is a rendering problem with no natural bottom.
+
+**Editing is the author's alone.** Someone with `edit` on the list may change
+this task in every way the panel offers and still may not rewrite what another
+person said — a comment records that a person said a thing, and an edit by
+anyone else makes the record false. Checked *as well as* list access, not
+instead of it: an author who has lost access to the list has lost it.
+
+*In one sentence:* the parts of a comment that are expensive to change later —
+that it is an operation, and that its body is a reference-carrying tree — were
+both decided before the first one was written.
+
+### D-084
+**A mention may grant access, but never quietly** · 2026-09-07 · active
+
+Mentioning someone who cannot see the task refuses the post, names them, and
+says exactly what posting again would grant. Only then does it grant.
+
+**The three ways this could have gone, and why this one.** A picker scoped to
+people who already have access is safest and silently unhelpful — on a private
+list it shows a short list and never explains who is missing. Silent auto-share
+is what most tools do and makes a comment box a permission-granting control,
+which is a large thing to hide behind an "@". This is the third: the same
+outcome as auto-share, with the moment made visible.
+
+**Three problems it removes, not one.** The grant lands on the **list** rather
+than the space, so mentioning someone on one task does not open every other list
+in a private space. It requires the author to hold `manage` (D-081) — a member
+who cannot share is told so rather than being handed the power by a side effect.
+And the index rebuild that every grant triggers (D-071) happens on an explicit
+confirmation rather than inside the transaction of every comment that happens to
+name a new person.
+
+**The text is kept while the question is on screen.** Being asked a question is
+not a reason to retype a paragraph.
+
+**What is asserted, and why that shape.** `check:actions` posts the mention
+without consent and then checks that *neither* the comment nor the grant was
+written — an assertion about what did not happen, because "the comment posted
+and also silently shared a private list" would otherwise look exactly like
+success.
+
+*In one sentence:* the behaviour people expect from a mention is worth having,
+and the only version worth shipping is the one where nobody is surprised by what
+it did.

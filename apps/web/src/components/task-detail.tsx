@@ -9,12 +9,15 @@ import {
   setCustomFieldValue,
   setPriority,
   setTaskDate,
+  setTaskDescription,
   setTaskRelation,
   setTaskStatus,
   setTaskType,
 } from "@/server/actions";
 
+import { Comments } from "./comments";
 import { useTaskAction } from "./use-task-action";
+import type { CommentRecord } from "@arbor/db";
 import type { DetailField, Person, Subtask } from "@/server/task";
 
 /**
@@ -50,6 +53,8 @@ export interface TaskDetailData {
   watcherIds: string[];
   fields: DetailField[];
   subtasks: Subtask[];
+  descriptionText: string;
+  comments: CommentRecord[];
 }
 
 const PRIORITIES = [
@@ -60,7 +65,7 @@ const PRIORITIES = [
   { value: 4, label: "Low" },
 ];
 
-export function TaskDetail({ task }: { task: TaskDetailData }) {
+export function TaskDetail({ task, viewerId }: { task: TaskDetailData; viewerId: string }) {
   const [name, setName] = useState(task.name);
   const { run, pending, failure } = useTaskAction();
   const act = (action: () => Promise<Operation[]>, revert?: () => void) => run(action, revert);
@@ -119,6 +124,13 @@ export function TaskDetail({ task }: { task: TaskDetailData }) {
           You can see this task but not change it. Everything below is read-only.
         </p>
       ) : null}
+
+      <DescriptionBox
+        taskId={task.id}
+        initial={task.descriptionText}
+        canEdit={task.canEdit}
+        act={act}
+      />
 
       <dl className="detail-fields">
         <Row label="Status">
@@ -231,6 +243,14 @@ export function TaskDetail({ task }: { task: TaskDetailData }) {
         ))}
       </dl>
 
+      <Comments
+        taskId={task.id}
+        comments={task.comments}
+        people={task.people}
+        canComment={task.canEdit}
+        viewerId={viewerId}
+      />
+
       {task.subtasks.length > 0 ? (
         <section className="detail-section">
           <h2>Subtasks</h2>
@@ -248,6 +268,53 @@ export function TaskDetail({ task }: { task: TaskDetailData }) {
         </section>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The description.
+ *
+ * The same document format as a comment, typed into the same kind of box, so a
+ * mention works here too and Phase 9's collaborative editor replaces one shape
+ * rather than two (D-083). Saved on blur rather than on every keystroke: a
+ * description is a paragraph someone is composing, and an operation per
+ * character would be an activity log nobody could read.
+ */
+function DescriptionBox({
+  taskId,
+  initial,
+  canEdit,
+  act,
+}: {
+  taskId: string;
+  initial: string;
+  canEdit: boolean;
+  act: (action: () => Promise<Operation[]>, revert?: () => void) => void;
+}) {
+  const [text, setText] = useState(initial);
+
+  if (!canEdit) {
+    return initial ? (
+      <div className="detail-description detail-description-static">
+        {initial.split("\n\n").map((paragraph, index) => (
+          // eslint-disable-next-line react/no-array-index-key -- paragraphs have no id
+          <p key={index}>{paragraph}</p>
+        ))}
+      </div>
+    ) : null;
+  }
+
+  return (
+    <textarea
+      className="detail-description"
+      rows={3}
+      value={text}
+      placeholder="Add a description. Type @ and a name to mention someone."
+      onChange={(event) => setText(event.target.value)}
+      onBlur={() => {
+        if (text !== initial) act(() => setTaskDescription(taskId, text), () => setText(initial));
+      }}
+    />
   );
 }
 

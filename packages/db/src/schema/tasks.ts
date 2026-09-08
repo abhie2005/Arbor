@@ -5,6 +5,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
   primaryKey,
@@ -73,6 +74,13 @@ export const tasks = pgTable(
     /** Human-readable key, e.g. ENG-402. Prefix from the space, counter per workspace. */
     key: text("key"),
     name: text("name").notNull(),
+    /**
+     * The description, as a portable block document — the same format comments
+     * use (D-083). Phase 9 replaces the *editing* of this with the collaborative
+     * one below; it does not replace the format, which is why there is one and
+     * not two to migrate.
+     */
+    description: jsonb("description").$type<unknown>(),
     /** Yjs document holding the rich-text description. Same editor as Docs. */
     descriptionDocId: uuid("description_doc_id"),
 

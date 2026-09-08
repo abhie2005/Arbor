@@ -2483,3 +2483,264 @@ select.filter-add option {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
+
+/* --- description and comments (D-083) ------------------------------------- */
+
+.detail-description {
+  font: inherit;
+  font-size: var(--text-body);
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: var(--space-3);
+  width: 100%;
+  resize: vertical;
+}
+
+.detail-description-static {
+  background: none;
+  border-color: transparent;
+  padding: 0;
+}
+
+.detail-description-static p {
+  margin: 0 0 var(--space-3);
+  color: var(--text-2);
+}
+
+.comments h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.comment-count {
+  color: var(--text-3);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.comments-empty {
+  margin: 0 0 var(--space-4);
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.comment-list,
+.comment-replies {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.comment-list > li {
+  padding-bottom: var(--space-4);
+}
+
+/* Replies are indented and marked with a rule rather than a box: one level of
+   nesting is a shape people read instantly, and a second border would compete
+   with the comment's own. */
+.comment-replies {
+  margin-left: var(--space-5);
+  border-left: 1px solid var(--line);
+  padding-left: var(--space-4);
+}
+
+.comment {
+  padding: var(--space-3) 0;
+}
+
+.comment[data-pending] {
+  opacity: 0.6;
+}
+
+.comment header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+.comment-author {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.comment-edited {
+  font-style: italic;
+}
+
+.comment-tools {
+  margin-left: auto;
+  display: flex;
+  gap: var(--space-3);
+  opacity: 0;
+}
+
+.comment:hover .comment-tools,
+.comment:focus-within .comment-tools {
+  opacity: 1;
+}
+
+.comment-tools button,
+.comment-reply-open {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-3);
+  font: inherit;
+  font-size: var(--text-meta);
+  cursor: pointer;
+}
+
+.comment-tools button:hover,
+.comment-reply-open:hover {
+  color: var(--accent);
+}
+
+.comment-body {
+  margin-top: var(--space-2);
+  font-size: var(--text-body);
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.comment-body p {
+  margin: 0 0 var(--space-2);
+}
+
+.comment-deleted,
+.comment-unreadable {
+  color: var(--text-3);
+  font-size: var(--text-meta);
+  font-style: italic;
+}
+
+/* A mention is a reference, so it draws as one rather than as prose. */
+.mention {
+  color: var(--accent);
+  background: var(--accent-dim);
+  border-radius: var(--radius-chip);
+  padding: 0 3px;
+}
+
+.comment-reply-open {
+  margin-left: var(--space-5);
+}
+
+.comment-reply-box {
+  margin-left: var(--space-5);
+  padding-left: var(--space-4);
+  border-left: 1px solid var(--line);
+}
+
+.composer {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-width: 640px;
+}
+
+.composer textarea {
+  font: inherit;
+  font-size: var(--text-body);
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: var(--space-3);
+  resize: vertical;
+}
+
+.composer textarea:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.composer-actions {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.composer-actions button {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-control);
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+}
+
+.composer-actions button:first-child {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.composer-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The permission question a mention can raise (D-084). Warning, not danger:
+   nothing is wrong, something is about to be granted. */
+.composer-consent {
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-panel);
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+
+.composer-consent p {
+  margin: 0;
+}
+
+.composer-input {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.mention-picker {
+  position: absolute;
+  z-index: 20;
+  top: 100%;
+  left: 0;
+  margin: 2px 0 0;
+  padding: var(--space-2) 0;
+  list-style: none;
+  min-width: 200px;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-menu);
+}
+
+.mention-picker button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  background: none;
+  border: none;
+  padding: var(--space-2) var(--space-4);
+  cursor: pointer;
+}
+
+.mention-picker button[data-highlighted],
+.mention-picker button:hover {
+  background: var(--selected);
+  color: var(--text);
+}

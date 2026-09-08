@@ -13,9 +13,13 @@ import {
   DEFAULT_VIEW_DEFINITION,
   compileViewQuery,
   invertBatch,
+  mentionedIds,
+  parseRichText,
+  parseStoredDoc,
+  renderPlain,
   type Operation,
 } from "@arbor/core";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { Pool } from "pg";
 
@@ -64,6 +68,7 @@ import {
   statusUsage,
   updateStatus,
 } from "./statuses";
+import { loadComments } from "./comments";
 import {
   listAccess,
   requireListAccess,
@@ -101,7 +106,8 @@ async function check(
 }
 
 async function main() {
-  const one = async (sql: string) => (await pool.query(sql)).rows[0] as Record<string, string>;
+  const one = async (sql: string, params: unknown[] = []) =>
+    (await pool.query(sql, params)).rows[0] as Record<string, string>;
 
   const ws = await one("SELECT id FROM workspaces WHERE slug='northwind'");
   if (!ws) throw new Error("No demo workspace. Run `npm run db:seed` first.");
@@ -1205,6 +1211,214 @@ async function main() {
     "creating in a private list is refused for someone with no grant",
     await expectRejection(() => requireListAccess(hiring.id!, outsider.id!, "edit", pool)),
   );
+
+  // --- comments -------------------------------------------------------------
+  console.log("\ncomments → operations, not a comment service\n");
+
+  // Written through applyOperations like everything else (D-083), so the
+  // activity row and the inverse are the executor's job rather than a service's.
+  const commentTask = await one(`SELECT id FROM tasks WHERE key = 'ENG-398'`);
+  await pool.query(`DELETE FROM comments WHERE object_id = $1`, [commentTask.id]);
+  const firstId = randomUUID();
+
+  await applyOperations(
+    [
+      {
+        kind: "createComment",
+        commentId: firstId,
+        taskId: commentTask.id!,
+        body: parseRichText("Ping @Riley Kaur", [{ id: viewer.id!, name: "Riley Kaur" }]),
+        parentId: null,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const written = await one(
+    `SELECT body, author_id, object_kind, object_id FROM comments WHERE id = $1`,
+    [firstId],
+  );
+  report(
+    "a comment reaches the table with its author and its subject",
+    written?.author_id === owner.id &&
+      written.object_kind === "task" &&
+      written.object_id === commentTask.id
+      ? null
+      : "the row is missing or points somewhere else",
+  );
+
+  // The mention is a node carrying an id, not the characters "@Riley Kaur" —
+  // which is the entire reason the stored format is a tree.
+  const storedBody = parseStoredDoc(written.body);
+  report(
+    "a mention is stored as a reference, not as prose",
+    storedBody && mentionedIds(storedBody).includes(viewer.id!)
+      ? null
+      : `stored ${JSON.stringify(written.body).slice(0, 120)}`,
+  );
+
+  const commentActivity = await one(
+    `SELECT verb, field FROM activity WHERE object_id = $1 ORDER BY at DESC LIMIT 1`,
+    [commentTask.id],
+  );
+  report(
+    "and an activity row nobody had to remember to write",
+    commentActivity?.verb === "comment.added" && commentActivity.field === firstId
+      ? null
+      : `logged ${commentActivity?.verb}`,
+  );
+
+  const replyId = randomUUID();
+  await applyOperations(
+    [
+      {
+        kind: "createComment",
+        commentId: replyId,
+        taskId: commentTask.id!,
+        body: parseRichText("Agreed", []),
+        parentId: firstId,
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  // One level (D-083): a thread without a bottom is a rendering problem with
+  // no natural end.
+  report(
+    "a reply to a reply is refused",
+    await expectRejection(() =>
+      applyOperations(
+        [
+          {
+            kind: "createComment",
+            commentId: randomUUID(),
+            taskId: commentTask.id!,
+            body: parseRichText("And again", []),
+            parentId: replyId,
+          },
+        ],
+        { actorId: viewer.id!, connection: pool },
+      ),
+    ),
+  );
+
+  // Grafting a thread onto another task's comment would put it in two places.
+  report(
+    "a reply on a different task from its parent is refused",
+    await expectRejection(() =>
+      applyOperations(
+        [
+          {
+            kind: "createComment",
+            commentId: randomUUID(),
+            taskId: privateTask.id!,
+            body: parseRichText("Elsewhere", []),
+            parentId: firstId,
+          },
+        ],
+        { actorId: owner.id!, connection: pool },
+      ),
+    ),
+  );
+
+  const threaded = await loadComments(commentTask.id!, pool);
+  report(
+    "comments load threaded one level deep",
+    threaded.length === 1 && threaded[0]?.replies.length === 1
+      ? null
+      : `got ${threaded.length} roots`,
+  );
+
+  await applyOperations([{ kind: "deleteComment", commentId: firstId, taskId: commentTask.id! }], {
+    actorId: owner.id!,
+    connection: pool,
+  });
+
+  const afterCommentDelete = await loadComments(commentTask.id!, pool);
+  report(
+    "a deleted comment with replies stays as a tombstone",
+    afterCommentDelete.length === 1 &&
+      afterCommentDelete[0]?.deletedAt !== null &&
+      afterCommentDelete[0]?.body === null &&
+      afterCommentDelete[0]?.replies.length === 1
+      ? null
+      : "the thread lost its anchor",
+  );
+
+  await applyOperations([{ kind: "restoreComment", commentId: firstId, taskId: commentTask.id! }], {
+    actorId: owner.id!,
+    connection: pool,
+  });
+  const afterRestore = await loadComments(commentTask.id!, pool);
+  report(
+    "and undoing the delete brings the words back",
+    afterRestore[0]?.body !== null && afterRestore[0]?.deletedAt === null
+      ? null
+      : "the restored comment has no body",
+  );
+
+  // A deleted comment with nothing under it has nothing to hold up.
+  const loneId = randomUUID();
+  await applyOperations(
+    [
+      {
+        kind: "createComment",
+        commentId: loneId,
+        taskId: commentTask.id!,
+        body: parseRichText("Never mind", []),
+        parentId: null,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+  await applyOperations([{ kind: "deleteComment", commentId: loneId, taskId: commentTask.id! }], {
+    actorId: owner.id!,
+    connection: pool,
+  });
+  report(
+    "a deleted comment with no replies is not shown at all",
+    (await loadComments(commentTask.id!, pool)).every((c) => c.id !== loneId)
+      ? null
+      : "a tombstone was left with nothing under it",
+  );
+
+  // The operation names both the comment and the task; writing to a comment
+  // whose task is not the authorized one would make D-080 mean nothing.
+  report(
+    "an operation naming the wrong task for a comment is refused",
+    await expectRejection(() =>
+      applyOperations(
+        [{ kind: "deleteComment", commentId: replyId, taskId: privateTask.id! }],
+        { actorId: owner.id!, connection: pool },
+      ),
+    ),
+  );
+
+  const descriptionDoc = parseRichText("What it does.\n\nAnd why.", []);
+  await applyOperations(
+    [{ kind: "setDescription", taskId: commentTask.id!, from: null, to: descriptionDoc }],
+    { actorId: owner.id!, connection: pool },
+  );
+  const described = await one(`SELECT description FROM tasks WHERE id = $1`, [commentTask.id]);
+  report(
+    "a description is the same document a comment is",
+    renderPlain(parseStoredDoc(described.description)!) === "What it does.\n\nAnd why."
+      ? null
+      : `stored ${JSON.stringify(described.description).slice(0, 120)}`,
+  );
+
+  // Empty stores NULL, so "has a description" is a question the column answers.
+  await applyOperations(
+    [{ kind: "setDescription", taskId: commentTask.id!, from: descriptionDoc, to: null }],
+    { actorId: owner.id!, connection: pool },
+  );
+  const cleared = await one(`SELECT description FROM tasks WHERE id = $1`, [commentTask.id]);
+  report(
+    "and clearing it stores null rather than an empty document",
+    cleared.description === null ? null : `stored ${JSON.stringify(cleared.description)}`,
+  );
+
+  await pool.query(`DELETE FROM comments WHERE object_id = $1`, [commentTask.id]);
 
   await pool.query(`DELETE FROM tasks WHERE name = 'Offer letter template'`);
 

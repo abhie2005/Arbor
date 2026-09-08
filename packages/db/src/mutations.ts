@@ -4,6 +4,8 @@ import {
   fieldValueColumn,
   isNoop,
   parseFieldValue,
+  parseStoredDoc,
+  renderPlain,
 } from "@arbor/core";
 import type { Pool, PoolClient } from "pg";
 
@@ -307,6 +309,144 @@ async function applyOne(client: PoolClient, op: Operation, actorId: string): Pro
         field: "archived_at",
         oldValue: null,
         newValue: op.kind === "archiveTask",
+      });
+      return;
+    }
+
+    /**
+     * Comments go through here for the same reason everything else does: this
+     * stays the only thing that writes, so the activity row and the inverse
+     * come from the same place rather than from a comment service that has to
+     * remember (D-083).
+     *
+     * `objectKind`/`objectId` on the row name the *comment's* subject; the
+     * activity row names the **task**, because "what happened to this task" is
+     * the question the feed answers and a comment appearing is one of the
+     * answers.
+     */
+    case "createComment": {
+      const meta = await taskMeta(client, op.taskId);
+      const body = parseStoredDoc(op.body);
+      if (!body) throw new MutationRejected("That comment body is not a valid document");
+
+      // A reply must be on the same task, or a thread could be grafted onto
+      // another task's comment and appear in two places at once.
+      if (op.parentId) {
+        const parent = await client.query<{ object_id: string }>(
+          `SELECT object_id FROM comments WHERE id = $1 AND deleted_at IS NULL`,
+          [op.parentId],
+        );
+        if (!parent.rows[0]) throw new MutationRejected("That comment no longer exists");
+        if (parent.rows[0].object_id !== op.taskId) {
+          throw new MutationRejected("A reply must be on the same task as the comment it answers");
+        }
+
+        // One level (D-083): replying to a reply attaches to its parent rather
+        // than nesting, so a thread has a bottom.
+        const grandparent = await client.query<{ parent_id: string | null }>(
+          `SELECT parent_id FROM comments WHERE id = $1`,
+          [op.parentId],
+        );
+        if (grandparent.rows[0]?.parent_id) {
+          throw new MutationRejected("Replies do not nest further than one level");
+        }
+      }
+
+      await client.query(
+        `INSERT INTO comments (id, workspace_id, object_kind, object_id, parent_id, author_id, body)
+         VALUES ($1, $2, 'task', $3, $4, $5, $6)`,
+        [op.commentId, meta.workspace_id, op.taskId, op.parentId, actorId, JSON.stringify(body)],
+      );
+
+      await logActivity(client, {
+        op,
+        actorId,
+        workspaceId: meta.workspace_id,
+        listId: meta.home_list_id,
+        field: op.commentId,
+        oldValue: null,
+        newValue: renderPlain(body),
+      });
+      return;
+    }
+
+    case "deleteComment":
+    case "restoreComment": {
+      const meta = await taskMeta(client, op.taskId);
+
+      // Scoped to the task the operation names, not just to the comment id: an
+      // operation arriving from a client carries both, and writing to a comment
+      // whose task is not the one that was authorized would make the check in
+      // D-080 mean nothing.
+      const result = await client.query(
+        `UPDATE comments SET deleted_at = $1, updated_at = now()
+         WHERE id = $2 AND object_kind = 'task' AND object_id = $3`,
+        [op.kind === "deleteComment" ? new Date() : null, op.commentId, op.taskId],
+      );
+
+      if (result.rowCount === 0) throw new MutationRejected("That comment no longer exists");
+
+      await logActivity(client, {
+        op,
+        actorId,
+        workspaceId: meta.workspace_id,
+        listId: meta.home_list_id,
+        field: op.commentId,
+        oldValue: null,
+        newValue: op.kind === "deleteComment",
+      });
+      return;
+    }
+
+    case "editComment": {
+      const meta = await taskMeta(client, op.taskId);
+      const body = parseStoredDoc(op.to);
+      if (!body) throw new MutationRejected("That comment body is not a valid document");
+
+      const result = await client.query(
+        `UPDATE comments SET body = $1, updated_at = now()
+         WHERE id = $2 AND object_kind = 'task' AND object_id = $3 AND deleted_at IS NULL`,
+        [JSON.stringify(body), op.commentId, op.taskId],
+      );
+
+      if (result.rowCount === 0) throw new MutationRejected("That comment no longer exists");
+
+      await logActivity(client, {
+        op,
+        actorId,
+        workspaceId: meta.workspace_id,
+        listId: meta.home_list_id,
+        field: op.commentId,
+        oldValue: renderPlain(parseStoredDoc(op.from) ?? { type: "doc", content: [] }),
+        newValue: renderPlain(body),
+      });
+      return;
+    }
+
+    case "setDescription": {
+      const meta = await taskMeta(client, op.taskId);
+
+      // An empty document is stored as NULL rather than as `{"content":[]}`,
+      // so "has a description" is a question the column answers on its own.
+      const to = op.to === null ? null : parseStoredDoc(op.to);
+      if (op.to !== null && to === null) {
+        throw new MutationRejected("That description is not a valid document");
+      }
+      const stored = to === null || to.content.length === 0 ? null : JSON.stringify(to);
+
+      await client.query(`UPDATE tasks SET description = $1, updated_at = now() WHERE id = $2`, [
+        stored,
+        op.taskId,
+      ]);
+
+      await logActivity(client, {
+        op,
+        actorId,
+        workspaceId: meta.workspace_id,
+        listId: meta.home_list_id,
+        field: "description",
+        oldValue: op.from === null ? null : renderPlain(op.from),
+        newValue: to === null ? null : renderPlain(to),
       });
       return;
     }

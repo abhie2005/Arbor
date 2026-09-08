@@ -111,3 +111,10 @@ export {
   type TaskAccess,
   type ViewAccess,
 } from "./task-access";
+export {
+  commentCounts,
+  commentOwnership,
+  loadComments,
+  type CommentAuthor,
+  type CommentRecord,
+} from "./comments";

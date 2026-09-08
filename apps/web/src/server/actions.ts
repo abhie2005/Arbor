@@ -2,7 +2,14 @@
 
 import { randomUUID } from "node:crypto";
 
-import { type Operation, invertBatch, positionBetween, startOfUtcDay } from "@arbor/core";
+import {
+  type Operation,
+  invertBatch,
+  parseRichText,
+  parseStoredDoc,
+  positionBetween,
+  startOfUtcDay,
+} from "@arbor/core";
 import {
   applyOperations,
   pool,
@@ -355,6 +362,43 @@ export async function setTaskDate(
 
   revalidatePath("/");
   revalidatePath("/calendar");
+
+  return [{ ...op, from: to, to: from }];
+}
+
+/**
+ * Writes a task's description.
+ *
+ * The same block document a comment is, parsed from the same textarea by the
+ * same function (D-083), so a mention works in a description without a second
+ * parser and Phase 9's editor has one format to adopt rather than two.
+ *
+ * It goes through `applyOperations` like everything else. A direct UPDATE here
+ * would have been shorter and would have made this the second thing in the
+ * system that writes — which is the precise reason comments were made
+ * operations rather than a comment service.
+ */
+export async function setTaskDescription(taskId: string, text: string): Promise<Operation[]> {
+  const actor = await requireUser();
+  await requireTaskAccess(taskId, actor.id, "edit");
+
+  const people = await pool().query<{ id: string; name: string }>(
+    `SELECT id, name FROM users WHERE deactivated_at IS NULL`,
+  );
+
+  const parsed = parseRichText(text, people.rows);
+  const to = parsed.content.length === 0 ? null : parsed;
+
+  const current = await pool().query<{ description: unknown }>(
+    `SELECT description FROM tasks WHERE id = $1`,
+    [taskId],
+  );
+
+  const from = parseStoredDoc(current.rows[0]?.description);
+
+  const op: Operation = { kind: "setDescription", taskId, from, to };
+  await applyOperations([op], { actorId: actor.id });
+  revalidatePath("/", "layout");
 
   return [{ ...op, from: to, to: from }];
 }

@@ -17,6 +17,8 @@
  * turns an operation into SQL and an activity row.
  */
 
+import { type RichDoc, renderPlain } from "./richtext";
+
 export type TaskField =
   | "name"
   | "statusId"
@@ -72,12 +74,74 @@ export interface ArchiveOp {
   taskId: string;
 }
 
+/**
+ * A comment, as an operation.
+ *
+ * **Comments could have been written directly and were not.** A comment service
+ * inserting a row and logging its own activity would work, and it would make
+ * `applyOperations` no longer the only thing that writes — which is the
+ * property keeping the activity log complete by construction, and the reason
+ * undo needed no per-feature work for five phases. The second writer is always
+ * the one that forgets to log.
+ *
+ * The consequence is that ⌘Z removes a comment you just posted. That is a
+ * surprise the first time and the honest one: it *was* the last thing you did.
+ *
+ * `taskId` is on every one of these even though `commentId` identifies the row,
+ * because it is what authorization is scoped to — `undo` takes operations from
+ * the client and maps them to task ids to check (D-080). An operation whose
+ * target could not be checked would be a hole in that.
+ */
+export interface CreateCommentOp {
+  kind: "createComment";
+  commentId: string;
+  taskId: string;
+  body: RichDoc;
+  /** Null for a top-level comment; a comment id for a reply. */
+  parentId: string | null;
+}
+
+/** Soft, like archiving a task, and for the same reason: it inverts (D-015). */
+export interface CommentLifecycleOp {
+  kind: "deleteComment" | "restoreComment";
+  commentId: string;
+  taskId: string;
+}
+
+/**
+ * A task's description.
+ *
+ * Not a `setField`: that map is closed to scalar columns on `tasks` and this is
+ * a document that has to be validated as a tree before it is written. Its own
+ * operation rather than a direct UPDATE, because a direct UPDATE would be the
+ * second thing in the system that writes — the exact thing comments were made
+ * operations to avoid (D-083).
+ */
+export interface SetDescriptionOp {
+  kind: "setDescription";
+  taskId: string;
+  from: RichDoc | null;
+  to: RichDoc | null;
+}
+
+export interface EditCommentOp {
+  kind: "editComment";
+  commentId: string;
+  taskId: string;
+  from: RichDoc;
+  to: RichDoc;
+}
+
 export type Operation =
   | SetFieldOp
   | SetCustomFieldOp
   | RelationOp
   | CreateTaskOp
-  | ArchiveOp;
+  | ArchiveOp
+  | CreateCommentOp
+  | CommentLifecycleOp
+  | EditCommentOp
+  | SetDescriptionOp;
 
 export class MutationError extends Error {}
 
@@ -109,6 +173,23 @@ export function invert(op: Operation): Operation {
 
     case "restoreTask":
       return { kind: "archiveTask", taskId: op.taskId };
+
+    // Deleting rather than hard-removing, so undoing an undo restores the
+    // comment rather than losing what someone wrote.
+    case "createComment":
+      return { kind: "deleteComment", commentId: op.commentId, taskId: op.taskId };
+
+    case "deleteComment":
+      return { kind: "restoreComment", commentId: op.commentId, taskId: op.taskId };
+
+    case "restoreComment":
+      return { kind: "deleteComment", commentId: op.commentId, taskId: op.taskId };
+
+    case "editComment":
+      return { ...op, from: op.to, to: op.from };
+
+    case "setDescription":
+      return { ...op, from: op.to, to: op.from };
 
     default: {
       const exhaustive: never = op;
@@ -145,6 +226,16 @@ export function activityVerb(op: Operation): string {
       return "task.archived";
     case "restoreTask":
       return "task.restored";
+    case "createComment":
+      return "comment.added";
+    case "deleteComment":
+      return "comment.deleted";
+    case "restoreComment":
+      return "comment.restored";
+    case "editComment":
+      return "comment.edited";
+    case "setDescription":
+      return "task.description_changed";
     default: {
       const exhaustive: never = op;
       throw new MutationError(`No verb for operation: ${JSON.stringify(exhaustive)}`);
@@ -169,6 +260,16 @@ export function describe(op: Operation): string {
       return "Archived task";
     case "restoreTask":
       return "Restored task";
+    case "createComment":
+      return "Posted a comment";
+    case "deleteComment":
+      return "Deleted a comment";
+    case "restoreComment":
+      return "Restored a comment";
+    case "editComment":
+      return "Edited a comment";
+    case "setDescription":
+      return "Changed the description";
     default: {
       const exhaustive: never = op;
       throw new MutationError(`No description for: ${JSON.stringify(exhaustive)}`);
@@ -227,7 +328,20 @@ export function isNoop(op: Operation): boolean {
   if (op.kind === "setField" || op.kind === "setCustomField") {
     return sameValue(op.from, op.to);
   }
+  // A document is a tree, so identity comparison would call every edit a
+  // change — including the one where someone opened the box and closed it.
+  if (op.kind === "editComment") {
+    return renderPlain(op.from) === renderPlain(op.to);
+  }
+  if (op.kind === "setDescription") {
+    return plainOrEmpty(op.from) === plainOrEmpty(op.to);
+  }
   return false;
+}
+
+/** An absent description and an empty one are the same description. */
+function plainOrEmpty(doc: RichDoc | null): string {
+  return doc === null ? "" : renderPlain(doc).trim();
 }
 
 function sameValue(a: unknown, b: unknown): boolean {

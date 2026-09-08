@@ -350,6 +350,8 @@ async function main() {
 
   const positions = initialPositions(seedTasks.length);
   const now = Date.now();
+  /** So later sections can reach a task by key rather than by index. */
+  const taskByKey: Record<string, { id: string }> = {};
 
   for (const [i, t] of seedTasks.entries()) {
     const statusRow = status[t.status];
@@ -391,6 +393,7 @@ async function main() {
       })
       .returning();
     if (!task) throw new Error(`seed: task ${t.key} insert failed`);
+    if (t.key) taskByKey[t.key] = task;
 
     // Home-list membership is a row in task_lists too, so every query path is
     // exercised by the seed rather than only the denormalized column.
@@ -587,6 +590,94 @@ async function main() {
       },
     },
   ]);
+
+  // --- a conversation -------------------------------------------------------
+  // Two comments and a reply on the task the demo opens on, one of them naming
+  // someone. An empty comment section demonstrates the same nothing an empty
+  // private list did: the format, the threading and the mention node all have
+  // to be visible on a fresh seed or nobody looking at the demo learns they
+  // exist.
+  const sso = taskByKey["ENG-402"];
+  if (sso) {
+    const [first] = await db
+      .insert(s.comments)
+      .values({
+        workspaceId: workspace.id,
+        objectKind: "task",
+        objectId: sso.id,
+        authorId: riley.id,
+        body: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "The redirect loop only happens when the IdP sends a relay state we did not set. " },
+                { type: "mention", userId: jordan.id, label: jordan.name },
+                { type: "text", text: " has the HAR file." },
+              ],
+            },
+          ],
+        },
+      })
+      .returning();
+
+    if (first) {
+      await db.insert(s.comments).values({
+        workspaceId: workspace.id,
+        objectKind: "task",
+        objectId: sso.id,
+        parentId: first.id,
+        authorId: jordan.id,
+        body: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "Attached. It reproduces on the second sign-in, never the first." }],
+            },
+          ],
+        },
+      });
+    }
+
+    await db.insert(s.comments).values({
+      workspaceId: workspace.id,
+      objectKind: "task",
+      objectId: sso.id,
+      authorId: avery.id,
+      body: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Let us get this out before the release freeze." }],
+          },
+        ],
+      },
+    });
+
+    await db
+      .update(s.tasks)
+      .set({
+        description: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "Signing in through the identity provider bounces between the callback and the login page until the browser gives up." },
+              ],
+            },
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "Only reproducible with an account that has signed in before." }],
+            },
+          ],
+        },
+      })
+      .where(eq(s.tasks.id, sso.id));
+  }
 
   // --- a private space ------------------------------------------------------
   // One container nobody reaches by default, so the demo exercises the half of

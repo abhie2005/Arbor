@@ -92,7 +92,7 @@ export default async function TaskPage({ params }: { params: Promise<{ key: stri
         </>
       }
     >
-      <TaskDetail task={task} />
+      <TaskDetail task={task} viewerId={viewer.id} />
 
       <FooterNote>
         {task.archivedAt ? "archived · " : null}

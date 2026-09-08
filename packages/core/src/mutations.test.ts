@@ -262,3 +262,53 @@ describe("describeBatch counts tasks, not operations", () => {
     ).toBe("2 changes");
   });
 });
+
+describe("comment operations", () => {
+  const body = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "hi" }] }] };
+
+  it("inverts a post into a delete", () => {
+    expect(invert({ kind: "createComment", commentId: "c1", taskId: "t1", body, parentId: null })).toEqual({
+      kind: "deleteComment",
+      commentId: "c1",
+      taskId: "t1",
+    });
+  });
+
+  // Soft, so undoing an undo brings the comment back rather than losing what
+  // someone wrote — the same reason archiveTask does not invert to a delete.
+  it("inverts a delete into a restore, and back again", () => {
+    const deleted = invert({ kind: "deleteComment", commentId: "c1", taskId: "t1" });
+    expect(deleted).toEqual({ kind: "restoreComment", commentId: "c1", taskId: "t1" });
+    expect(invert(deleted)).toEqual({ kind: "deleteComment", commentId: "c1", taskId: "t1" });
+  });
+
+  it("inverts an edit by swapping the documents", () => {
+    const after = { type: "doc" as const, content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "bye" }] }] };
+    expect(invert({ kind: "editComment", commentId: "c1", taskId: "t1", from: body, to: after })).toEqual({
+      kind: "editComment",
+      commentId: "c1",
+      taskId: "t1",
+      from: after,
+      to: body,
+    });
+  });
+
+  it("treats an edit that changes nothing as a no-op", () => {
+    const same = JSON.parse(JSON.stringify(body)) as typeof body;
+    expect(isNoop({ kind: "editComment", commentId: "c1", taskId: "t1", from: body, to: same })).toBe(true);
+  });
+
+  it("carries a task id, because that is what authorization is scoped to", () => {
+    const ops = [
+      { kind: "createComment" as const, commentId: "c1", taskId: "t1", body, parentId: null },
+      { kind: "deleteComment" as const, commentId: "c2", taskId: "t2" },
+    ];
+    expect(ops.map((op) => op.taskId)).toEqual(["t1", "t2"]);
+  });
+
+  it("names each one in the activity log", () => {
+    expect(activityVerb({ kind: "createComment", commentId: "c1", taskId: "t1", body, parentId: null })).toBe("comment.added");
+    expect(activityVerb({ kind: "deleteComment", commentId: "c1", taskId: "t1" })).toBe("comment.deleted");
+    expect(activityVerb({ kind: "restoreComment", commentId: "c1", taskId: "t1" })).toBe("comment.restored");
+  });
+});
