@@ -7,8 +7,10 @@ and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 > permission index, mutation layer, and the configuration engines all work and
 > are tested against a real Postgres. Five renderers — List, Board, Table,
 > Calendar and Timeline — read through the same compiler, with a filter bar,
-> sortable columns and working undo. Sign-in, private containers and sharing
-> are real. Most of the product is still unbuilt.
+> sortable columns and working undo. Every row opens a task detail page with
+> comments, mentions and threaded replies. Sign-in, private containers and
+> sharing are real, and every write is permission-checked. Most of the product
+> is still unbuilt.
 > **[docs/STATUS.md](docs/STATUS.md) is the current state and where to pick up.**
 
 ---
@@ -34,10 +36,10 @@ demo password.
 Verify the stack end to end:
 
 ```bash
-npm test               # 260 unit tests, no database needed
-npm run db:smoke       # 90 checks against real Postgres: compiled queries,
+npm test               # 291 unit tests, no database needed
+npm run db:smoke       # 112 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
-npm run check:actions  # 31 checks that POST what a button click posts, then
+npm run check:actions  # 65 checks that POST what a button click posts, then
                        # assert against Postgres — needs `npm run dev` running
 ```
 
@@ -60,7 +62,7 @@ without writing code.
 | **Views** | A view is a saved query plus a renderer. Every view type serializes to the same definition, so a board is just `grouping.field = "status"`, a table is the same query showing the definition's own `columns`, and a timeline is that query scoped to what overlaps a window. Five renderers, no view-specific SQL. |
 | **Statuses** | User-named statuses that each belong to a fixed group (`not_started`, `active`, `done`, `closed`). Everything else — filters, reporting, burndown — keys off the group, never the name. |
 | **Fields** | Custom fields defined on any container, optionally scoped to a task type, stored in a typed EAV table so filtering and sorting stay on an index. Twenty types, each declaring its own storage column, legal operators, and config schema — the filter bar builds its menus from the same declaration the query compiler validates against. |
-| **Permissions** | Grants are the source of truth; a materialized access index is what queries actually join against, so permission checks cost one join instead of one per level of nesting. The rule that flattens one into the other is a pure function, tested without a database. |
+| **Permissions** | Grants are the source of truth; a materialized access index is what queries actually join against, so permission checks cost one join instead of one per level of nesting. The rule that flattens one into the other is a pure function, tested without a database. Reads and writes both go through it. |
 
 The [architecture teardown](docs/) covers the reasoning in full.
 
@@ -91,9 +93,10 @@ is an API worth a typed client. The AWS topology below is designed and
 documented; no Terraform is written.
 
 `packages/core` holds the things hardest to get right — the view compiler, the
-field type system, status resolution, and ordering. It has no database handle
-and no request object, which is why its 241 tests need no fixtures and why it is
-the easiest part of the codebase for a stranger to contribute to.
+field type system, status resolution, ordering, and the document format
+comments and descriptions are stored in. It has no database handle and no
+request object, which is why its tests need no fixtures and why it is the
+easiest part of the codebase for a stranger to contribute to.
 
 ---
 
@@ -144,7 +147,9 @@ connections, and API Gateway's WebSocket API bills per message.
       compiler that already served List and Board. The timeline is the one that
       made the compiler learn something: nested filter clauses, because
       "overlaps this window" is mixed AND and OR.
-- [ ] **7 — Collaboration.** Comments, notifications, realtime deltas, presence.
+- [ ] **7 — Collaboration.** Comments, mentions and the task detail page are
+      done; every write is authorized, not merely authenticated. Notifications,
+      realtime deltas and presence are next.
 - [ ] **8 — Depth.** Time tracking, goals, dashboards.
 - [ ] **9 — Docs.** CRDT editor, nested pages, backlinks.
 - [ ] **10 — Automations, forms, public API.**
