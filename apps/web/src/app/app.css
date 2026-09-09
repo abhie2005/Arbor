@@ -2995,3 +2995,91 @@ select.filter-add option {
   border-radius: var(--radius-chip);
   padding: 0 4px;
 }
+
+/* --- history (the activity log's first reader) -----------------------------
+   A log, so it reads as lines rather than as cards: one row per thing that
+   happened, the sentence first and the timestamp out of the way on the right. */
+
+.history h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.history-count {
+  color: var(--text-3);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.history-empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.history-entry {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.history-entry:last-child {
+  border-bottom: none;
+}
+
+.history-who {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.history-values {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+/* Tight against the phrase before it, so it reads as punctuation rather than
+   as another item in the row. */
+.history-colon {
+  margin-left: calc(var(--space-2) * -1);
+  color: var(--text-3);
+}
+
+/* The old value recedes and the new one does not — the row is about what it
+   became, and the arrow is what makes the pair readable at a glance. */
+.history-from {
+  color: var(--text-3);
+  text-decoration: line-through;
+  text-decoration-color: var(--line-strong);
+}
+
+.history-arrow {
+  color: var(--text-3);
+}
+
+.history-to {
+  color: var(--text);
+}
+
+.history-when {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+  white-space: nowrap;
+}

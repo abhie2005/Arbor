@@ -43,10 +43,11 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Comments** | Threaded one level, edit and soft-delete your own, `@` mentions stored as nodes carrying a user id. Written as operations, so each has an activity row and ⌘Z undoes it. Mentioning someone without access asks before granting them any. |
 | **Notification fan-out** | Written inside the transaction that caused them, for direct signals only: assigned, mentioned, replied. Never to someone who cannot open the task, and the inbox filters again on read because access can be revoked afterwards. Rule is pure and in core. |
 | **Inbox** | `/inbox` — the first screen not scoped to one container, permission-scoped per row rather than per page. Unread and everything, opening a row marks it read and goes to the task, mark-read without opening, mark all read. The sidebar badge is the real count, fetched by the shell on every screen (D-085). Read state writes outside the operation layer, deliberately (D-087). |
+| **History** | The activity log's first reader. Every operation has written a row since Phase 2 and no screen read one; the detail page now shows what happened to a task, newest first, with ids resolved to names from what the page already loads (D-091). Scoped by the same `access_index` join as every other read. |
 | **Live updates** | Every screen holds an `EventSource` to `/api/live`. A change announces itself with `pg_notify` inside the transaction that made it, so a rollback announces nothing; the route handler checks each nudge against the viewer's access before it leaves, and the browser answers with `router.refresh()` (D-090). A nudge carries the workspace, list and actor — never what changed. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 329 unit tests, 140 live-Postgres checks, 81 server-action checks,
+**Verified:** 329 unit tests, 143 live-Postgres checks, 83 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 ---
@@ -252,9 +253,9 @@ need something to run it, and `apps/worker` does not exist.
   over a mounted list; that needs the five renderers moved into one route group
   first (D-082). The address is the part that was expensive to get wrong, and it
   is right.
-- **Activity is not shown anywhere.** Every operation writes a row and no screen
-  reads one. A history section on the detail page is a small piece of work and
-  the obvious companion to comments.
+- ~~**Activity is not shown anywhere.**~~ The detail page reads it now (D-091).
+  What is still unread is activity on anything that is **not** a task —
+  `container.shared` and the configuration verbs are written and have no screen.
 - **No comment counts on rows or cards.** `commentCounts` exists in
   `packages/db/src/comments.ts` and nothing calls it — it was written for the
   badge that has not been added.

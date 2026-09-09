@@ -118,6 +118,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-088](#d-088) | A mark on the feed, not a flag on every event | Architecture |
 | [D-089](#d-089) | One stream, two halves | Frontend |
 | [D-090](#d-090) | A nudge over Postgres, not a delta over Redis | Architecture |
+| [D-091](#d-091) | The log stores ids; the page owes the words | Frontend |
 
 ---
 
@@ -2628,3 +2629,44 @@ in the repo passed while the screen showed a stale name.
 *In one sentence:* the database everything already talks to has a transactional
 pub/sub in it, and using it made "live" a route handler and a hook rather than a
 service.
+
+### D-091
+**The log stores ids; the page owes the words** · 2026-09-08 · active
+
+The task history renders "changed status: Todo → In Progress" by resolving the
+ids in an `activity` row against the statuses, task types and people the detail
+page has already loaded. It does not store resolved values, and it does not join
+to get them.
+
+**Not stored resolved**, unlike a notification's `payload`. The two look alike
+and are not: a notification is a message that was *sent*, so it has to keep the
+words as they were — re-deriving its summary would silently change it when the
+comment it describes is edited (D-088's neighbour). A history entry is a record
+of what an operation *did*, and an operation names things by id. Storing
+"Todo → In Progress" in the log would make renaming a status rewrite history.
+
+**Not joined either.** The page already loads every status, because the picker
+needs them; every task type, because the picker needs them; and every person,
+for the assignee checkboxes. So the words are on the screen already, and asking
+Postgres to join four tables per history row would buy nothing.
+
+**Where a value cannot be named, the entry says nothing.** A custom field's id
+resolves to a field this page has no catalogue for; a description change stores
+a document. In both cases the phrase — "changed a custom field", "rewrote the
+description" — already says what happened, and printing the raw value would put
+a uuid in front of somebody, which is worse than a line with no detail.
+
+**One vocabulary with the inbox.** The phrase comes from `summarizeChanges` over
+a single change, the same pure function the ambient inbox uses over a group. A
+verb cannot read one way in an inbox and another way in a history, and adding an
+operation gives it a phrase in both at once.
+
+**Reordering is the one thing left out.** `position` is where a task sits among
+its siblings rather than a property of the task; it changes when anything near
+it moves, and a board drag writes one next to the status change that actually
+happened. Two "changed position" lines between every real entry is how a history
+stops being read.
+
+*In one sentence:* the log is a record of operations and the screen is a
+sentence for a person, and the translation belongs where the vocabulary already
+is.

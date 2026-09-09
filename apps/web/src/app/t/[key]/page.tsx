@@ -2,6 +2,7 @@ import { AppShell, FooterNote, type ShellChrome } from "@/components/app-shell";
 import { TaskDetail } from "@/components/task-detail";
 import { getCurrentUser, listSwitchableUsers } from "@/server/auth";
 import { loadTask } from "@/server/task";
+import { loadTaskHistory } from "@arbor/db";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +72,12 @@ export default async function TaskPage({ params }: { params: Promise<{ key: stri
 
   const users = await listSwitchableUsers();
 
+  // Loaded after the task rather than inside `loadTask`: the history is scoped
+  // by the same `access_index` join on its own, so it does not depend on the
+  // caller having checked, and a task page that fails to render its log is
+  // better than one that fails to render at all.
+  const history = await loadTaskHistory(task.id, viewer.id);
+
   const chrome: ShellChrome = {
     workspaceName: task.workspaceName,
     location: {
@@ -94,7 +101,7 @@ export default async function TaskPage({ params }: { params: Promise<{ key: stri
         </>
       }
     >
-      <TaskDetail task={task} viewerId={viewer.id} />
+      <TaskDetail task={task} history={history} viewerId={viewer.id} />
 
       <FooterNote>
         {task.archivedAt ? "archived · " : null}

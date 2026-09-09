@@ -16,9 +16,10 @@ import {
 } from "@/server/actions";
 
 import { Comments } from "./comments";
+import { TaskHistory } from "./task-history";
 import { useServerValue } from "./use-server-value";
 import { useTaskAction } from "./use-task-action";
-import type { CommentRecord } from "@arbor/db";
+import type { CommentRecord, HistoryEntry } from "@arbor/db";
 import type { DetailField, Person, Subtask } from "@/server/task";
 
 /**
@@ -66,7 +67,15 @@ const PRIORITIES = [
   { value: 4, label: "Low" },
 ];
 
-export function TaskDetail({ task, viewerId }: { task: TaskDetailData; viewerId: string }) {
+export function TaskDetail({
+  task,
+  history,
+  viewerId,
+}: {
+  task: TaskDetailData;
+  history: HistoryEntry[];
+  viewerId: string;
+}) {
   // The title is a live input, so "being edited" is "focused" here rather than
   // a mode: a rename arriving from somebody else must not take the caret out of
   // a sentence someone is halfway through (D-090).
@@ -256,6 +265,17 @@ export function TaskDetail({ task, viewerId }: { task: TaskDetailData; viewerId:
         people={task.people}
         canComment={task.canEdit}
         viewerId={viewerId}
+      />
+
+      {/* Below the conversation, because a comment is what people came to read
+          and the log is what they come back for. */}
+      <TaskHistory
+        entries={history}
+        lookups={{
+          statuses: task.statuses,
+          taskTypes: task.taskTypes,
+          people: task.people,
+        }}
       />
 
       {task.subtasks.length > 0 ? (

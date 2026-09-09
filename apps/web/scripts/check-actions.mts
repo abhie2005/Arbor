@@ -1255,6 +1255,40 @@ await db.query(`UPDATE tasks SET status_id = $2 WHERE id = $1`, [
   detailTask.status_id,
 ]);
 
+// --- history on the page ----------------------------------------------------
+//
+// The log has been written to since Phase 2 and this is the first screen that
+// reads it. What matters through the action boundary is that an action taken
+// now is on the page a moment later, in words rather than in ids.
+console.log("\ntask history → what an action leaves behind\n");
+
+const historyStatus = await one(
+  `SELECT s.id, s.name FROM statuses s JOIN status_sets ss ON ss.id = s.status_set_id
+   WHERE ss.name = 'Engineering' AND s.name = 'Done'`,
+);
+const beforeHistory = await one(`SELECT status_id FROM tasks WHERE id = $1`, [detailTask.id]);
+
+await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskStatus!, [detailTask.id, historyStatus.id]);
+const detailPage = await (await fetch(DETAIL_URL, { headers: { Cookie: COOKIE } })).text();
+
+report(
+  "an action shows up in the task's history, named and attributed",
+  /Avery Mills[^<]*<\/span>\s*<span class="history-what">changed status/.test(detailPage) ||
+    (detailPage.includes("history-what") && detailPage.includes("changed status"))
+    ? null
+    : "the history did not show the change",
+);
+
+// Ids are what the log stores; names are what the page owes the reader.
+report(
+  "and reads the ids back as the words on the page",
+  detailPage.includes(`>${historyStatus.name}<`) && !detailPage.includes(`>${historyStatus.id}<`)
+    ? null
+    : "a raw id reached the screen",
+);
+
+await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskStatus!, [detailTask.id, beforeHistory.status_id]);
+
 // --- the live stream --------------------------------------------------------
 //
 // The first route handler in the app, and the only place a change meets a

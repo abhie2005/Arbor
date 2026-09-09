@@ -29,6 +29,7 @@ export {
   type SessionUser,
 } from "./auth";
 export { loadContainerTree } from "./containers";
+export { loadTaskHistory, type HistoryEntry } from "./history";
 export {
   grantAccess,
   listGrants,

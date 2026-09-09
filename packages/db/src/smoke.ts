@@ -77,6 +77,7 @@ import {
   markRead,
   unreadCount,
 } from "./notifications";
+import { loadTaskHistory } from "./history";
 import { type Change, subscribeToChanges } from "./live";
 import {
   listAccess,
@@ -1023,6 +1024,91 @@ async function main() {
   // Cleared first and inserted plainly, with no ON CONFLICT: a check whose
   // fixture can silently not be created reports "nobody can see it" and looks
   // exactly like a permission bug, which is how this cost twenty minutes.
+  // --- history --------------------------------------------------------------
+  //
+  // `activity` has been written to since Phase 2 and this is its first reader,
+  // so what is checked is that the log actually answers the question a history
+  // asks — newest first, with the values the operation carried — and that it
+  // refuses someone who cannot open the task, on its own rather than because a
+  // caller remembered to ask.
+  console.log("\nhistory → the log, read back\n");
+
+  const historyTask = await one(`SELECT id, status_id FROM tasks WHERE key = 'ENG-390'`);
+  const otherStatus = await one(
+    `SELECT s.id FROM statuses s JOIN status_sets ss ON ss.id = s.status_set_id
+     WHERE ss.name = 'Engineering' AND s.id <> $1 LIMIT 1`,
+    [historyTask.status_id],
+  );
+
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: historyTask.id!,
+        field: "statusId",
+        from: historyTask.status_id!,
+        to: otherStatus.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const history = await loadTaskHistory(historyTask.id!, viewer.id!, 60, pool);
+  const latest = history[0];
+
+  report(
+    "the newest thing that happened is first",
+    latest?.verb === "task.status_id_changed" && latest?.actorName === "Avery Mills"
+      ? null
+      : `read ${JSON.stringify(latest)}`,
+  );
+
+  // The log records what the operation carried, which is what makes an entry
+  // able to say "Todo → In Review" without the reader storing a second copy.
+  report(
+    "and carries the values the operation moved between",
+    latest?.from === historyTask.status_id && latest?.to === otherStatus.id
+      ? null
+      : `from ${String(latest?.from)} to ${String(latest?.to)}`,
+  );
+
+  const savedHistoryIndex = await pool.query<Record<string, string>>(
+    `SELECT workspace_id, principal_id, list_id, permission FROM access_index
+     WHERE principal_id = $1 AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+    [outsider.id, historyTask.id],
+  );
+  await pool.query(
+    `DELETE FROM access_index WHERE principal_id = $1
+       AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+    [outsider.id, historyTask.id],
+  );
+  report(
+    "a viewer who cannot open the task reads no history for it",
+    (await loadTaskHistory(historyTask.id!, outsider.id!, 60, pool)).length === 0
+      ? null
+      : "the log leaked a task the viewer cannot reach",
+  );
+  for (const row of savedHistoryIndex.rows) {
+    await pool.query(
+      `INSERT INTO access_index (workspace_id, principal_id, list_id, permission)
+       VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
+      [row.workspace_id, row.principal_id, row.list_id, row.permission],
+    );
+  }
+
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: historyTask.id!,
+        field: "statusId",
+        from: otherStatus.id!,
+        to: historyTask.status_id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
   // --- live changes ---------------------------------------------------------
   //
   // The transport is Postgres's own: `NOTIFY` inside the transaction that made

@@ -76,6 +76,7 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Fan-out + inbox queries | `packages/db/src/notifications.ts` |
 | The inbox screen and its badge | `apps/web/src/server/inbox.ts`, `app/inbox/page.tsx` |
 | What a group of changes reads as (pure) | `packages/core/src/activity.ts` |
+| Reading the activity log | `packages/db/src/history.ts` |
 | Live changes: publish and subscribe | `packages/db/src/live.ts` |
 | The stream, and who may hear a nudge | `apps/web/src/app/api/live/route.ts` |
 | An editable value that follows the server | `apps/web/src/components/use-server-value.ts` |
