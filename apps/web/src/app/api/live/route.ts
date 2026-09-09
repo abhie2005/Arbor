@@ -1,7 +1,7 @@
 import { type Change, pool, runningEntryFor, subscribeToChanges, taskAccess } from "@arbor/db";
 
 import { getCurrentUser } from "@/server/auth";
-import { arrive, watching } from "@/server/presence";
+import { arrive, askWhoIsThere, watching } from "@/server/presence";
 
 /**
  * `/api/live` — the stream every screen listens to.
@@ -155,6 +155,12 @@ export async function GET(request: Request): Promise<Response> {
             notify: sendPresence,
           })
         : null;
+
+      // Ask the other processes who they can see (D-100). Only on arrival, and
+      // only because this is the moment a new viewer is looking at a room this
+      // process may know nothing about — waiting a heartbeat to find out would
+      // show them an empty one exactly when they are watching.
+      if (scope) void askWhoIsThere();
 
       const heartbeat = setInterval(() => send(`: ping\n\n`), HEARTBEAT_MS);
 

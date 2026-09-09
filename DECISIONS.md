@@ -2999,3 +2999,63 @@ client asks a question about itself, not about the change.
 *In one sentence:* the cheap version of this filter would have quietly broken
 the badge, and the badge is the one thing on screen that a change in someone
 else's list is allowed to move.
+
+### D-100
+**Presence crosses processes on the channel that was already open**
+· 2026-09-09 · active
+
+Each process states its own set of viewers per scope on a second Postgres
+channel, `arbor_presence`, and holds everyone else's with a thirty-second TTL
+against a ten-second heartbeat. `watching()` merges local streams with whatever
+the other processes last said.
+
+**This is the half D-092 deliberately left unbuilt**, and its reason for leaving
+it — "guessing the shape of that message before there are two processes is how
+you get a message shape that fits neither" — is answered by making the check
+*be* the second process. `check-actions` publishes on the real channel with its
+own process id, which is exactly what another server does, so the protocol is
+under test rather than a drawing of one.
+
+**The whole set, never a delta.** A delta needs the receiver to have heard every
+previous message, and a process that started ten seconds ago has not — which is
+precisely the case this exists for. So a message is "here is everybody I can see
+on this scope", and an empty one is how a process says they have all left, which
+is what makes a departure cross immediately rather than waiting out the TTL.
+
+**The heartbeat is the part worth admitting.** D-092's best property was that
+presence needed no heartbeat and nothing to sweep, because the connection *was*
+the signal. Between processes there is no shared connection: a server that is
+killed cannot say so, and its viewers would otherwise be present forever. So a
+TTL is unavoidable, and the honest framing is that this is a heartbeat between
+*servers* — one message per process per ten seconds, whatever the number of
+viewers — rather than the per-browser heartbeat the original design refused. The
+ratio is chosen so three ticks must be missed before a room empties, because a
+name that flickers when a server pauses for GC is worse than a name that lingers
+half a minute after somebody left.
+
+**A new stream asks rather than waits.** The moment a viewer opens a task is the
+moment they are looking, and up to ten seconds of an empty room would be the
+most visible possible failure. So a stream opening publishes `who`, and every
+other process answers by stating its sets.
+
+**Rejected: a `presence` table with an upsert and a sweep.** It is the version
+that needs no new message shape, and it spends writes while nobody is doing
+anything — which nothing else in this system does — and it is stale for as long
+as its timeout anyway. The TTL here holds *other people's claims in memory*; the
+table version would hold them in Postgres and pay for it on every keystroke of a
+navigation.
+
+**Rejected: a second channel per scope.** Postgres `LISTEN` is per-connection
+and per-channel name, so a channel per task means re-issuing `LISTEN` on
+navigation and a connection that accumulates thousands of them. One channel and
+a process id in the payload costs each process the messages it does not care
+about, which at this scale is nothing.
+
+**What it still does not do.** Nothing reconciles a process that is *partitioned
+from Postgres but still serving* — it will keep showing its own viewers and
+hold everyone else's until the TTL, then show only its own. That is the correct
+degradation and it is not signalled to anyone.
+
+*In one sentence:* the connection is still the signal within a process, and
+between them the cheapest honest substitute is each process repeating itself
+before anyone has time to doubt it.

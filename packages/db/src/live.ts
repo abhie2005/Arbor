@@ -1,6 +1,6 @@
 import { Client } from "pg";
 
-import { connectionString } from "./client";
+import { connectionString, pool } from "./client";
 
 /**
  * Live changes, over Postgres `LISTEN`/`NOTIFY`.
@@ -20,6 +20,19 @@ import { connectionString } from "./client";
 
 /** One channel for the whole workspace. Fan-out is the subscriber's problem. */
 export const LIVE_CHANNEL = "arbor_live";
+
+/**
+ * The second channel, for presence between processes (D-100).
+ *
+ * Separate from `arbor_live` rather than a variant payload on it, because the
+ * two have nothing in common but the wire: a change is transactional, durable
+ * in meaning, and checked against the receiver's access; a presence message is
+ * gossip about who is looking at what, published outside any transaction, and
+ * already scoped by the fact that only streams which passed the access check
+ * are listening. One channel carrying both would mean every subscriber
+ * discriminating on a field before it could tell whether a message was for it.
+ */
+export const PRESENCE_CHANNEL = "arbor_presence";
 
 export interface Change {
   /** Workspace the change happened in. */
@@ -81,7 +94,27 @@ export async function announceChange(
   await client.query(`SELECT pg_notify($1, $2)`, [LIVE_CHANNEL, JSON.stringify(change)]);
 }
 
+/**
+ * What one process tells the others about who it can see.
+ *
+ * `here` is a process stating the whole of its own set for one scope — not a
+ * delta, because a delta needs the receiver to have heard every previous
+ * message, and a process that started ten seconds ago has not. `who` is a
+ * process that just started asking everyone else to say theirs, so joining is
+ * immediate rather than one heartbeat away.
+ */
+export interface PresenceMessage {
+  /** Which process is speaking. Everyone ignores their own. */
+  p: string;
+  k: "here" | "who";
+  /** The scope, on `here`. */
+  s?: string;
+  /** Everybody that process can see on that scope. Empty means they all left. */
+  v?: { id: string; name: string }[];
+}
+
 type Listener = (change: Change) => void;
+type PresenceListener = (message: PresenceMessage) => void;
 
 /**
  * One connection per process, however many people are watching.
@@ -98,6 +131,7 @@ class Hub {
   private client: Client | null = null;
   private connecting: Promise<void> | null = null;
   private readonly listeners = new Set<Listener>();
+  private readonly presenceListeners = new Set<PresenceListener>();
   private closed = false;
 
   async add(listener: Listener): Promise<() => void> {
@@ -112,6 +146,13 @@ class Hub {
     };
   }
 
+  /** The same connection, the other channel. A second one would buy nothing. */
+  async addPresence(listener: PresenceListener): Promise<() => void> {
+    this.presenceListeners.add(listener);
+    await this.ensureConnected();
+    return () => this.presenceListeners.delete(listener);
+  }
+
   private async ensureConnected(): Promise<void> {
     if (this.client || this.closed) return;
     this.connecting ??= this.connect();
@@ -122,18 +163,22 @@ class Hub {
     const client = new Client({ connectionString: connectionString() });
 
     client.on("notification", (message) => {
-      if (message.channel !== LIVE_CHANNEL || !message.payload) return;
+      if (!message.payload) return;
 
-      let change: Change;
+      let parsed: unknown;
       try {
-        change = JSON.parse(message.payload) as Change;
+        parsed = JSON.parse(message.payload);
       } catch {
         // A payload that will not parse is a bug in the publisher, not a reason
         // to tear down every stream in the process.
         return;
       }
 
-      for (const listener of this.listeners) listener(change);
+      if (message.channel === LIVE_CHANNEL) {
+        for (const listener of this.listeners) listener(parsed as Change);
+      } else if (message.channel === PRESENCE_CHANNEL) {
+        for (const listener of this.presenceListeners) listener(parsed as PresenceMessage);
+      }
     });
 
     // A dropped connection is silent otherwise: the stream stays open and
@@ -143,6 +188,7 @@ class Hub {
 
     await client.connect();
     await client.query(`LISTEN ${LIVE_CHANNEL}`);
+    await client.query(`LISTEN ${PRESENCE_CHANNEL}`);
     this.client = client;
   }
 
@@ -151,7 +197,7 @@ class Hub {
 
     this.client = null;
     this.connecting = null;
-    if (this.listeners.size === 0) return;
+    if (this.listeners.size === 0 && this.presenceListeners.size === 0) return;
 
     // Flat delay rather than a backoff: the only realistic cause here is the
     // database restarting, and a second is short enough to be invisible and
@@ -174,4 +220,22 @@ class Hub {
 export async function subscribeToChanges(listener: Listener): Promise<() => void> {
   hub ??= new Hub();
   return hub.add(listener);
+}
+
+/** The same, for presence gossip (D-100). Also unfiltered, for the same reason. */
+export async function subscribeToPresence(listener: PresenceListener): Promise<() => void> {
+  hub ??= new Hub();
+  return hub.addPresence(listener);
+}
+
+/**
+ * Says something about who this process can see.
+ *
+ * On the pool rather than inside a transaction, unlike `announceChange` — there
+ * is no transaction for this to be part of. Presence is not a fact about the
+ * data; it is a fact about who is connected, and it is true or false regardless
+ * of what commits.
+ */
+export async function publishPresence(message: PresenceMessage): Promise<void> {
+  await pool().query(`SELECT pg_notify($1, $2)`, [PRESENCE_CHANNEL, JSON.stringify(message)]);
 }

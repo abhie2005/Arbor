@@ -24,9 +24,9 @@
  *
  *   npm run check:actions -- 3100
  */
-import { signIn } from "@arbor/db";
+import { publishPresence, signIn, subscribeToPresence } from "@arbor/db";
 import { UndoStack } from "@arbor/core";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
 
@@ -1634,6 +1634,73 @@ report(
 averyHere.close();
 samPeeking.close();
 averyOnPrivate.close();
+
+// --- presence across processes ----------------------------------------------
+//
+// The gap D-092 left open: one server knew nothing of another's viewers, so a
+// second instance would silently halve what everyone sees. This script is the
+// second process — it publishes on the same channel with its own id, which is
+// exactly what another server would do, so the protocol is under test rather
+// than a simulation of it (D-100).
+console.log("\npresence across processes → the channel, and a TTL\n");
+
+const OTHER_PROCESS = randomUUID();
+const ghost = { id: randomUUID(), name: "Morgan Vale" };
+
+// Subscribe before opening a stream, so the "who" the arrival sends is heard.
+const asked: string[] = [];
+const unsubscribePresence = await subscribeToPresence((message) => {
+  if (message.p === OTHER_PROCESS) return;
+  asked.push(message.k);
+  // Answer a "who" the way another server would: state the whole set.
+  if (message.k === "who") {
+    void publishPresence({
+      p: OTHER_PROCESS,
+      k: "here",
+      s: detailTask.id,
+      v: [ghost],
+    });
+  }
+});
+
+const lonely = await onTask(COOKIE, detailTask.id);
+await pause(1200);
+
+report(
+  "a stream opening asks the other processes who they can see",
+  asked.includes("who") ? null : `heard ${JSON.stringify(asked)}`,
+);
+
+report(
+  "and somebody on another server shows up in the answer",
+  lonely.heard().includes("Morgan Vale")
+    ? null
+    : `heard "${lonely.heard().slice(-200)}"`,
+);
+
+// The whole set, never a delta: an empty one is how a process says everybody
+// on its side left, rather than making everyone wait out the TTL.
+await publishPresence({ p: OTHER_PROCESS, k: "here", s: detailTask.id, v: [] });
+await pause(700);
+
+const afterEmpty = lonely.heard();
+report(
+  "an empty set is how a departure crosses, without waiting out the TTL",
+  afterEmpty.lastIndexOf('"people":[]') > afterEmpty.indexOf("Morgan Vale")
+    ? null
+    : `heard "${afterEmpty.slice(-200)}"`,
+);
+
+// This process also states its own set, which is what makes the other side of
+// the same conversation work.
+const stated = asked.filter((kind) => kind === "here").length;
+report(
+  "and this server states its own set, so the other side hears it too",
+  stated > 0 ? null : `only heard ${JSON.stringify(asked)}`,
+);
+
+lonely.close();
+unsubscribePresence();
 
 // --- what a nudge carries ---------------------------------------------------
 //

@@ -11,9 +11,13 @@ export {
 } from "./client";
 export {
   LIVE_CHANNEL,
+  PRESENCE_CHANNEL,
   announceChange,
+  publishPresence,
   subscribeToChanges,
+  subscribeToPresence,
   type Change,
+  type PresenceMessage,
 } from "./live";
 export {
   AuthError,
