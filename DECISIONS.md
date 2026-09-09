@@ -2902,3 +2902,50 @@ round-tripped through `JSON.parse(JSON.stringify(…))` and then handed to
 
 *In one sentence:* the undo stack is a network protocol, and it had been getting
 away with pretending otherwise.
+
+### D-098
+**The nudge learns one word, and it is a person** · 2026-09-09 · active
+
+`Change` gains an optional `t` — whose timer started or stopped. The route
+answers it by sending that viewer a `timer` event carrying their own running
+entry, past the filter that drops a viewer's own changes.
+
+**This is a deliberate exception to "a nudge, not a delta"** (D-090), and the
+case that earned it is narrow enough to name exactly. A nudge says *where*
+something happened and the browser answers by re-rendering, which works because
+every screen is a server component. Two things break that for a running timer:
+
+- **The echo filter drops your own writes.** It is right to: the tab that made
+  the change already refreshed on the way back from the action. But a timer is
+  one person's *global* state, and the person has more than one tab. A second
+  tab would never hear that the timer it is displaying had been stopped — and a
+  stale timer is not merely late, it is a claim. It goes on counting against a
+  task where nothing is being tracked, and the number it shows is one somebody
+  might put on a timesheet.
+- **The list is the wrong gate.** Stopping your own timer never needs access to
+  the task it was spent on (D-095), so a change routed by list would be
+  withheld from exactly the person it is about.
+
+**What it does not become.** `t` names a person, never a task and never a
+duration. The route does not forward it — it looks up *that viewer's own* row
+and sends the answer, so this leaks nothing the viewer could not already ask
+for, and there is still no second description of a mutation to keep in step
+with the first.
+
+**A timer event refreshes as well as updating the readout**, which looks like
+belt and braces and is not. The chrome is not the only thing on screen that
+knows about a timer: the task page lists the entry and offers to stop it. The
+first version updated the header and left the panel alone, and the result was a
+screen disagreeing with itself — the header said nothing was running while the
+panel three inches below offered to stop something. One of them stale is a bug;
+both of them stale is at least consistent.
+
+**The rejected alternative was a per-tab id** rather than a per-user one on the
+echo filter, which is the general fix and would have made every feature's own
+second tab live. It needs the tab's identity threaded from the browser through
+the server action into `applyOperations` and out to `announceChange` — a change
+to the signature of the thing with the most invariants attached to it, to solve
+a problem exactly one feature currently has.
+
+*In one sentence:* the transport stayed a nudge, and the one thing it now says
+about itself is who, not what.

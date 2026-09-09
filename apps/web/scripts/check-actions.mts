@@ -1635,6 +1635,56 @@ averyHere.close();
 samPeeking.close();
 averyOnPrivate.close();
 
+// --- the timer on the stream ------------------------------------------------
+//
+// The one message that has to arrive for a change the viewer made themselves.
+// Every other nudge is dropped by the echo filter on the way in, which is right
+// — your own writes already refreshed the tab that made them. A running timer
+// is the exception, because it is one person's global state and a second tab
+// would otherwise go on claiming a timer was running after it had been stopped
+// (D-098).
+console.log("\ntimer on the stream → your own change, past the echo filter\n");
+
+await db.query(`DELETE FROM time_entries`);
+
+const timerStream = await openStream(COOKIE);
+const bystander = await openStream(RILEY);
+await pause(300);
+
+await callOn(DETAIL_URL, DETAIL_ACTIONS.startTimer!, [detailTask.id]);
+await pause(900);
+
+report(
+  "starting a timer pushes it to your own stream",
+  /event: timer/.test(timerStream.heard()) && timerStream.heard().includes(detailTask.id)
+    ? null
+    : `heard "${timerStream.heard().slice(-200)}"`,
+);
+
+// It names a person, and the route answers with that person's own row. Somebody
+// else hears the ordinary nudge for the list and nothing about whose timer it is.
+report(
+  "and never to anybody else's",
+  !/event: timer/.test(bystander.heard()) ? null : "another viewer was told about the timer",
+);
+
+await callOn(DETAIL_URL, DETAIL_ACTIONS.stopTimer!, []);
+await pause(900);
+
+// "Nothing running" has to be pushed too — a readout that is only ever told
+// about timers starting is a readout that never stops one.
+const heardAfterStop = timerStream.heard();
+report(
+  "stopping pushes the absence, not only the arrival",
+  heardAfterStop.lastIndexOf('"running":null') > heardAfterStop.indexOf(detailTask.id)
+    ? null
+    : `heard "${heardAfterStop.slice(-200)}"`,
+);
+
+timerStream.close();
+bystander.close();
+await db.query(`DELETE FROM time_entries`);
+
 
 await db.query(`DELETE FROM comments WHERE object_id = ANY($1::uuid[])`, [
   [commentedTask.id, privateTask.id],

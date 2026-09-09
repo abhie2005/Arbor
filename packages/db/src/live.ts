@@ -28,6 +28,21 @@ export interface Change {
   l: string;
   /** Who did it, so a client can ignore its own echo. */
   a: string;
+  /**
+   * Whose timer started or stopped, when that is what this change was.
+   *
+   * **The one thing a nudge says about itself** (D-098). Everything else here
+   * is deliberately about *where* a change happened rather than what it was,
+   * because the browser answers a nudge by re-rendering and the re-render is
+   * the update. A running timer is the case that breaks: it is per-person
+   * global state, the echo filter drops your own changes so a second tab never
+   * hears about them, and a stale readout is not merely late — it claims a
+   * timer is running on a task where it has already been stopped.
+   *
+   * It names a person, never a task. The route answers it by looking up that
+   * viewer's own running entry, so this leaks nothing it did not already know.
+   */
+  t?: string;
 }
 
 /**

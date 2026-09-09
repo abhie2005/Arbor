@@ -18,6 +18,11 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
  *   context instead. Presence is ephemeral and belongs to one small component;
  *   re-rendering a page every time somebody opens a tab would be absurd
  *   (D-092).
+ * - a **timer** — what this viewer has running — also into context, and the
+ *   only message that arrives for changes *you* made. A refresh would not do
+ *   it: your own writes are filtered out below, so a timer started in another
+ *   tab would never reach this one, and the readout would go on claiming a
+ *   timer was running on a task where it had already been stopped (D-098).
  *
  * One connection for both, and the scope is in its URL: changing what you are
  * looking at reopens the stream, which is the browser telling the server where
@@ -29,11 +34,34 @@ export interface Person {
   name: string;
 }
 
+/** What the stream says this viewer has running. Mirrors `RunningEntry`. */
+export interface RunningTimer {
+  id: string;
+  taskId: string;
+  startedAt: string;
+  description: string | null;
+  isBillable: boolean;
+  taskKey: string | null;
+  taskName: string | null;
+}
+
 const PresenceContext = createContext<Person[]>([]);
+
+/**
+ * `undefined` means the stream has not spoken yet, which is different from
+ * `null` — "nothing is running". The readout renders what the server gave it
+ * until the first is true, and what the stream says forever after.
+ */
+const TimerContext = createContext<RunningTimer | null | undefined>(undefined);
 
 /** The people on this screen with you. Empty on screens that have no scope. */
 export function useWatching(): Person[] {
   return useContext(PresenceContext);
+}
+
+/** The viewer's running timer, or undefined until the stream has said. */
+export function useRunningTimer(): RunningTimer | null | undefined {
+  return useContext(TimerContext);
 }
 
 export function Live({
@@ -48,10 +76,26 @@ export function Live({
 }) {
   const router = useRouter();
   const [people, setPeople] = useState<Person[]>([]);
+  const [timer, setTimer] = useState<RunningTimer | null | undefined>(undefined);
 
   useEffect(() => {
     const source = new EventSource(scope ? `/api/live?scope=${encodeURIComponent(scope)}` : "/api/live");
     let pending: ReturnType<typeof setTimeout> | undefined;
+
+    /**
+     * Coalesced: a batch arrives as several nudges only when it touched several
+     * lists, and one refresh answers all of them.
+     *
+     * A refresh is only half of an update. Whether the screen actually changes
+     * is up to the components it re-renders, and a control holding
+     * `useState(props.value)` will keep showing the old one with nothing
+     * failing anywhere — see `use-server-value.ts`, which is what made this
+     * work.
+     */
+    const scheduleRefresh = () => {
+      clearTimeout(pending);
+      pending = setTimeout(() => router.refresh(), 250);
+    };
 
     source.onmessage = (event) => {
       let change: { a?: string };
@@ -67,17 +111,32 @@ export function Live({
       // an optimistic control.
       if (change.a === viewerId) return;
 
-      // Coalesced: a batch arrives as several nudges only when it touched
-      // several lists, and one refresh answers all of them.
-      //
-      // A refresh is only half of an update. Whether the screen actually
-      // changes is up to the components it re-renders, and a control holding
-      // `useState(props.value)` will keep showing the old one with nothing
-      // failing anywhere — see `use-server-value.ts`, which is what made this
-      // work.
-      clearTimeout(pending);
-      pending = setTimeout(() => router.refresh(), 250);
+      scheduleRefresh();
     };
+
+    source.addEventListener("timer", (event) => {
+      try {
+        const update = JSON.parse((event as MessageEvent<string>).data) as {
+          running: RunningTimer | null;
+        };
+        setTimer(update.running);
+
+        // **And refresh, even though this is your own change.** The readout in
+        // the chrome is not the only thing on screen that knows about a timer:
+        // the task page lists the entry and shows it running. Updating one and
+        // not the other leaves a screen disagreeing with itself, which is worse
+        // than either half being stale — the header said nothing was running
+        // while the panel three inches below it offered to stop something.
+        //
+        // The tab that made the change has already refreshed on the way back
+        // from the action; a second one 250ms later costs a re-render of server
+        // components that were about to be correct anyway.
+        scheduleRefresh();
+      } catch {
+        // A payload that will not parse is a publisher bug, not a reason to
+        // tear the stream down.
+      }
+    });
 
     source.addEventListener("presence", (event) => {
       try {
@@ -100,8 +159,16 @@ export function Live({
       // The people on the old scope are not the people on the new one, and a
       // stale set is worse than none while the next stream opens.
       setPeople([]);
+      // The timer is *not* cleared. It belongs to the viewer rather than to the
+      // scope, the new page renders the server's value for it anyway, and
+      // dropping back to "undefined" here would make the readout flicker on
+      // every navigation.
     };
   }, [router, viewerId, scope]);
 
-  return <PresenceContext.Provider value={people}>{children}</PresenceContext.Provider>;
+  return (
+    <PresenceContext.Provider value={people}>
+      <TimerContext.Provider value={timer}>{children}</TimerContext.Provider>
+    </PresenceContext.Provider>
+  );
 }

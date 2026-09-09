@@ -3373,3 +3373,54 @@ select.filter-add option {
   color: var(--text-3);
   font-size: var(--text-meta);
 }
+
+/* The running timer in the header (D-098). */
+.running-timer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 2px var(--space-2) 2px var(--space-3);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  font-size: var(--text-meta);
+}
+
+.running-timer[data-pending] {
+  opacity: 0.6;
+}
+
+.running-timer-task {
+  color: var(--text-2);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+}
+
+.running-timer-task:hover {
+  color: var(--text);
+}
+
+.running-timer-clock {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  font-variant-numeric: tabular-nums;
+  /* Fixed width, so a header does not reflow every time a digit rolls over. */
+  min-width: 4.5rem;
+  text-align: right;
+}
+
+.running-timer-stop {
+  font: inherit;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--accent);
+  background: none;
+  border: none;
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+
+.running-timer-stop:hover {
+  color: var(--text);
+}

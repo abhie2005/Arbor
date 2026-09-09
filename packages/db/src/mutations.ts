@@ -545,6 +545,7 @@ async function applyOne(
         field: op.entryId,
         oldValue: null,
         newValue: loggedMs(op.values),
+        timerUserId: op.userId,
       });
     }
 
@@ -593,6 +594,7 @@ async function applyOne(
         field: op.entryId,
         oldValue: loggedMs(op.from),
         newValue: loggedMs(op.to),
+        timerUserId: userId,
       });
     }
 
@@ -622,6 +624,7 @@ async function applyOne(
         field: op.entryId,
         oldValue: loggedMs(op.values),
         newValue: null,
+        timerUserId: op.userId,
       });
     }
 
@@ -709,6 +712,15 @@ interface LogArgs {
   field: string | null;
   oldValue: unknown;
   newValue: unknown;
+  /**
+   * Whose timer this changed, for the nudge (D-098).
+   *
+   * Passed rather than derived from the operation, because `setTimeEntry` does
+   * not carry a user id — the executor had to read the row to find out, and
+   * making the operation carry one would mean a client-supplied claim about
+   * whose time an entry is.
+   */
+  timerUserId?: string;
 }
 
 /**
@@ -745,6 +757,7 @@ async function logActivity(client: PoolClient, args: LogArgs): Promise<bigint> {
     w: args.workspaceId,
     l: args.listId,
     a: args.actorId,
+    ...(args.timerUserId ? { t: args.timerUserId } : {}),
   });
 
   return BigInt(result.rows[0]!.id);

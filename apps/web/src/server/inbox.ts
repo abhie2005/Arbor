@@ -3,9 +3,11 @@ import "server-only";
 import {
   type AmbientRow,
   type InboxRow,
+  type RunningEntry,
   activitySeen,
   loadAmbient,
   loadInbox,
+  runningEntryFor,
   unreadCount,
 } from "@arbor/db";
 import { cache } from "react";
@@ -167,6 +169,27 @@ function fromAmbient(row: AmbientRow): InboxEntry {
 export const inboxBadge = cache(async (userId: string): Promise<number | null> => {
   try {
     return await unreadCount(userId);
+  } catch {
+    return null;
+  }
+});
+
+/**
+ * The viewer's running timer, for the shell.
+ *
+ * Lives beside `inboxBadge` because it is the same kind of thing and answers to
+ * the same rule (D-085): chrome that belongs to the person rather than to the
+ * screen fetches itself, so no page has to remember to pass it. `cache` means a
+ * screen that also wants it — the task detail page does not, it has the entries
+ * themselves — costs one query rather than two.
+ *
+ * Null rather than a throw when the database is unreachable, for the same
+ * reason the badge does it: this runs inside every screen's chrome, and a
+ * missing database must not take down the page that explains how to start one.
+ */
+export const shellTimer = cache(async (userId: string): Promise<RunningEntry | null> => {
+  try {
+    return await runningEntryFor(userId);
   } catch {
     return null;
   }

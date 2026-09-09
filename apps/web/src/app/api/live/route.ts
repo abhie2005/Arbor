@@ -1,4 +1,4 @@
-import { type Change, pool, subscribeToChanges, taskAccess } from "@arbor/db";
+import { type Change, pool, runningEntryFor, subscribeToChanges, taskAccess } from "@arbor/db";
 
 import { getCurrentUser } from "@/server/auth";
 import { arrive, watching } from "@/server/presence";
@@ -18,11 +18,14 @@ import { arrive, watching } from "@/server/presence";
  * case that would break that, and did not: `?scope=` is the browser saying
  * where it is, once, by opening the connection there (D-092).
  *
- * Two kinds of message go down it. A `change` is a nudge — "something happened
+ * Three kinds of message go down it. A `change` is a nudge — "something happened
  * in list L" — and the page answers by re-rendering itself. A `presence` is the
  * data itself, the people currently on this scope, because presence is
  * ephemeral and re-rendering a page every time somebody's tab moves would be
- * absurd.
+ * absurd. A `timer` is the third and the newest (D-098): what this viewer has
+ * running, sent as data for the same reason presence is, and sent *past* the
+ * echo filter because your own timer started in another tab is precisely the
+ * change the echo filter was built to drop.
  */
 
 export const dynamic = "force-dynamic";
@@ -89,6 +92,25 @@ export async function GET(request: Request): Promise<Response> {
       };
 
       /**
+       * This viewer's running timer, looked up fresh.
+       *
+       * **Not filtered by access, and it does not need to be**: the query is
+       * scoped to the viewer's own id, so this can only ever describe their own
+       * row. It carries the task's key only when the viewer can still reach it
+       * (`runningEntryFor`), so a grant revoked mid-timer leaves the readout
+       * saying "a task" rather than naming one (D-095).
+       */
+      const sendTimer = async () => {
+        try {
+          const running = await runningEntryFor(viewer.id);
+          send(`event: timer\ndata: ${JSON.stringify({ running })}\n\n`);
+        } catch {
+          // A failed lookup is a stale readout, not a reason to close a stream
+          // that is still delivering everything else.
+        }
+      };
+
+      /**
        * **Every nudge is checked against this viewer's access.**
        *
        * The channel carries every change in the process, because the transport
@@ -111,6 +133,13 @@ export async function GET(request: Request): Promise<Response> {
       };
 
       const unsubscribe = await subscribeToChanges((change) => {
+        // Before the access check and outside it. A timer nudge names a person,
+        // this stream belongs to one, and the answer is built from that
+        // person's own row — so the list the change happened in is not a gate
+        // on it, and must not be: stopping your own timer never needs access to
+        // the task it was spent on (D-095).
+        if (change.t === viewer.id) void sendTimer();
+
         void mayHear(change).then((allowed) => {
           if (allowed) send(`data: ${JSON.stringify(change)}\n\n`);
         });

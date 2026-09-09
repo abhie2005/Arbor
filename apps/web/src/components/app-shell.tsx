@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 
 import { Live } from "@/components/live";
+import { RunningTimerReadout } from "@/components/running-timer";
 import { UndoButton, UndoProvider } from "@/components/undo";
 import { UserSwitcher } from "@/components/user-switcher";
-import { inboxBadge } from "@/server/inbox";
+import { inboxBadge, shellTimer } from "@/server/inbox";
 
 /**
  * The chrome every screen sits inside.
@@ -114,6 +115,10 @@ export function AppShell({
               )}
             </div>
             <div className="header-right">
+              {/* First in the row, and the only thing here that moves. A timer
+                  running is a state you are in, not an action you could take —
+                  the controls beside it are the actions. */}
+              <TimerSlot viewerId={chrome.viewer.id} />
               <a className="settings-link" href="/settings/statuses" title="Workspace settings">
                 Settings
               </a>
@@ -128,6 +133,22 @@ export function AppShell({
       </Live>
     </UndoProvider>
   );
+}
+
+/**
+ * The shell looks up the running timer for itself, exactly as the sidebar looks
+ * up the badge (D-085) — it belongs to the person, not to any one screen, and
+ * seven pages that each have to remember to fetch it is the drift this file was
+ * extracted to end.
+ *
+ * `loadedAt` is stamped here rather than inside the readout because the readout
+ * is a client component: it renders on the server and again in the browser, and
+ * the two do not share a clock. An instant that arrived as a prop is the same
+ * on both.
+ */
+async function TimerSlot({ viewerId }: { viewerId: string }) {
+  const running = await shellTimer(viewerId);
+  return <RunningTimerReadout initial={running} loadedAt={new Date().toISOString()} />;
 }
 
 /**
