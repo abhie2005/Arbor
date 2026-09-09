@@ -124,6 +124,22 @@ export {
   type ViewAccess,
 } from "./task-access";
 export {
+  addKeyResult,
+  createGoal,
+  deleteGoal,
+  deleteKeyResult,
+  goalOwnership,
+  keyResultOwnership,
+  listGoals,
+  resolveRollups,
+  updateGoal,
+  updateKeyResult,
+  type GoalPatch,
+  type GoalRecord,
+  type KeyResultInput,
+  type KeyResultRecord,
+} from "./goals";
+export {
   loadTaskTime,
   ownTimeEntry,
   recordDurationMs,

@@ -70,6 +70,16 @@ import {
   updateStatus,
 } from "./statuses";
 import { loadComments } from "./comments";
+import {
+  addKeyResult,
+  createGoal,
+  deleteGoal,
+  deleteKeyResult,
+  listGoals,
+  resolveRollups,
+  updateGoal,
+  updateKeyResult,
+} from "./goals";
 import { loadTaskTime, ownTimeEntry, runningEntryFor, totalTrackedMs } from "./time";
 import {
   activitySeen,
@@ -2316,6 +2326,233 @@ async function main() {
   await pool.query(`DELETE FROM time_entries WHERE task_id = ANY($1::uuid[])`, [
     [timeTask.id, otherTask.id],
   ]);
+
+  // --- goals ----------------------------------------------------------------
+  console.log("\ngoals \u2192 one number, from the compiler, as the owner\n");
+
+  await pool.query(`DELETE FROM goals WHERE workspace_id = $1`, [ws.id]);
+
+  const goal = await createGoal(
+    { workspaceId: ws.id!, name: "Ship the sprint", ownerId: viewer.id!, dueAt: null },
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  report(
+    "a goal defaults to being owned by whoever made it",
+    (
+      await createGoal(
+        { workspaceId: ws.id!, name: "Unowned on purpose" },
+        { actorId: owner.id!, connection: pool },
+      )
+    ).ownerId === owner.id
+      ? null
+      : "the goal came back with somebody else's owner",
+  );
+
+  const goalActivity = await one(
+    `SELECT verb, object_kind FROM activity WHERE object_id = $1 ORDER BY at DESC LIMIT 1`,
+    [goal.id],
+  );
+  report(
+    "and an activity row, because configuration changes are attributable too",
+    goalActivity?.verb === "goal.created" && goalActivity.object_kind === "goal"
+      ? null
+      : `logged ${JSON.stringify(goalActivity)}`,
+  );
+
+  // A manual key result: the numbers are entered, and progress is the fraction
+  // of the distance travelled.
+  const manualKr = await addKeyResult(
+    goal.id,
+    { name: "Interviews run", kind: "number", start: 0, target: 10, current: 4 },
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  // A rollup: the source is a view definition, compiled by the same thing that
+  // compiles a list (D-101).
+  const sprintList = await one(`SELECT id FROM containers WHERE name = 'Sprint 24'`);
+  const rollupKr = await addKeyResult(
+    goal.id,
+    {
+      name: "Tasks in the sprint",
+      kind: "rollup",
+      start: 0,
+      target: 20,
+      source: {
+        scope: { kind: "list", id: sprintList.id },
+        definition: DEFAULT_VIEW_DEFINITION,
+        aggregate: { fn: "count" },
+      },
+    },
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const sprintCount = Number(
+    (
+      await one(
+        `SELECT count(*) AS n FROM tasks t
+         JOIN access_index ax ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+         LEFT JOIN statuses s ON s.id = t.status_id
+         WHERE t.home_list_id = $1 AND t.deleted_at IS NULL AND t.archived_at IS NULL
+           AND (s.group IS NULL OR s.group <> 'closed')`,
+        [sprintList.id, viewer.id],
+      )
+    ).n,
+  );
+
+  const [loaded] = await listGoals(ws.id!, {}, pool);
+  const rollup = loaded!.keyResults.find((kr) => kr.id === rollupKr)!;
+  const entered = loaded!.keyResults.find((kr) => kr.id === manualKr)!;
+
+  report(
+    "a rollup counts exactly what the same filter would show on a list",
+    rollup.current === sprintCount
+      ? null
+      : `rollup said ${rollup.current}, the list has ${sprintCount}`,
+  );
+  report(
+    "and its column stays empty, because nothing writes a derived number",
+    (await one(`SELECT current_value FROM key_results WHERE id = $1`, [rollupKr]))
+      ?.current_value === null
+      ? null
+      : "a derived value was written to the row",
+  );
+  report(
+    "a manual key result reads the number somebody entered",
+    entered.current === 4 && entered.progress === 0.4
+      ? null
+      : `read ${entered.current} / ${String(entered.progress)}`,
+  );
+  report(
+    "and the goal averages its key results",
+    loaded!.progress !== null && Math.abs(loaded!.progress - (0.4 + rollup.progress!) / 2) < 1e-9
+      ? null
+      : `goal progress was ${String(loaded!.progress)}`,
+  );
+
+  // The decision this feature turned on (D-102): the number is the *owner's*.
+  // Resolved directly against a principal holding no grant anywhere, rather
+  // than by reassigning the goal to a seeded user — the sections above hand
+  // those users grants, so a check pointed at one passes on a fresh database
+  // and fails on the next run.
+  const noGrants = (await one(`SELECT gen_random_uuid() AS id`)).id!;
+  const asStranger = await resolveRollups(
+    loaded!.keyResults,
+    { workspaceId: ws.id!, ownerId: noGrants },
+    pool,
+  );
+  report(
+    "the rollup is computed as the owner, so a principal with no grant counts nothing",
+    asStranger.find((kr) => kr.id === rollupKr)!.current === 0
+      ? null
+      : `an owner with no grant counted ${String(asStranger.find((kr) => kr.id === rollupKr)!.current)}`,
+  );
+  report(
+    "and the same key results still count in full for one who has them",
+    (
+      await resolveRollups(loaded!.keyResults, { workspaceId: ws.id!, ownerId: viewer.id! }, pool)
+    ).find((kr) => kr.id === rollupKr)!.current === sprintCount
+      ? null
+      : "the owner's own number changed",
+  );
+
+  // owner_id is ON DELETE SET NULL, so this is reachable and has to mean
+  // something. Zero would be a claim that nothing had been done.
+  await pool.query(`UPDATE goals SET owner_id = NULL WHERE id = $1`, [goal.id]);
+  const [ownerless] = await listGoals(ws.id!, {}, pool);
+  const ownerlessRollup = ownerless!.keyResults.find((kr) => kr.id === rollupKr)!;
+  report(
+    "a goal with no owner reads as unmeasured, not as zero",
+    ownerlessRollup.current === null && ownerlessRollup.unmeasured !== null
+      ? null
+      : `read ${String(ownerlessRollup.current)}`,
+  );
+
+  await pool.query(`UPDATE goals SET owner_id = $1 WHERE id = $2`, [viewer.id, goal.id]);
+
+  // Refused on write, exactly as a saved view is (D-058) — not discovered when
+  // somebody opens the goals screen.
+  report(
+    "a rollup whose definition will not compile is refused when it is written",
+    await expectRejection(() =>
+      addKeyResult(
+        goal.id,
+        {
+          name: "Broken",
+          kind: "rollup",
+          source: {
+            scope: { kind: "list", id: sprintList.id },
+            definition: DEFAULT_VIEW_DEFINITION,
+            aggregate: { fn: "sum", field: "priority" },
+          },
+        },
+        { actorId: viewer.id!, connection: pool },
+      ),
+    ),
+  );
+
+  report(
+    "an aggregate nobody declared is refused too",
+    await expectRejection(() =>
+      addKeyResult(
+        goal.id,
+        {
+          name: "Injected",
+          kind: "rollup",
+          source: {
+            scope: { kind: "list", id: sprintList.id },
+            definition: DEFAULT_VIEW_DEFINITION,
+            aggregate: { fn: "COUNT(*); DROP TABLE tasks; --" },
+          },
+        },
+        { actorId: viewer.id!, connection: pool },
+      ),
+    ),
+  );
+
+  // A control that appears to set a number and silently does not is worse than
+  // one that says why it cannot (D-065).
+  report(
+    "setting a rollup's number by hand is refused rather than ignored",
+    await expectRejection(() =>
+      updateKeyResult(rollupKr, { current: 99 }, { actorId: viewer.id!, connection: pool }),
+    ),
+  );
+
+  await updateKeyResult(manualKr, { current: 10 }, { actorId: viewer.id!, connection: pool });
+  const [afterUpdate] = await listGoals(ws.id!, {}, pool);
+  report(
+    "a manual key result can be moved, and the goal follows",
+    afterUpdate!.keyResults.find((kr) => kr.id === manualKr)!.progress === 1
+      ? null
+      : "the update did not land",
+  );
+
+  await updateGoal(goal.id, { completed: true }, { actorId: viewer.id!, connection: pool });
+  report(
+    "completing a goal is a timestamp somebody set, not a number crossing 100%",
+    (await one(`SELECT completed_at FROM goals WHERE id = $1`, [goal.id]))?.completed_at !== null
+      ? null
+      : "completed_at was not set",
+  );
+
+  await deleteKeyResult(manualKr, { actorId: viewer.id!, connection: pool });
+  report(
+    "deleting a key result leaves the goal",
+    (await listGoals(ws.id!, {}, pool)).find((g) => g.id === goal.id)?.keyResults.length === 1
+      ? null
+      : "the wrong number of key results survived",
+  );
+
+  await deleteGoal(goal.id, { actorId: viewer.id!, connection: pool });
+  report(
+    "and deleting the goal takes its key results with it",
+    (await one(`SELECT count(*) AS n FROM key_results WHERE goal_id = $1`, [goal.id]))?.n === "0"
+      ? null
+      : "key results were orphaned",
+  );
+
+  await pool.query(`DELETE FROM goals WHERE workspace_id = $1`, [ws.id]);
 
   // --- saved views ---------------------------------------------------------
   console.log("\nsaved views → validated on write\n");

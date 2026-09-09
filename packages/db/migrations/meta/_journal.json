@@ -50,6 +50,13 @@
       "when": 1788974623474,
       "tag": "0006_one_running_timer",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788982602394,
+      "tag": "0007_goal_activity_kinds",
+      "breakpoints": true
     }
   ]
 }

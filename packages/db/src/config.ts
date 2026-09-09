@@ -47,7 +47,15 @@ export async function inTransaction<T>(
 export interface ConfigEvent {
   workspaceId: string;
   actorId: string;
-  objectKind: "status" | "status_set" | "task_type" | "field" | "container" | "view";
+  objectKind:
+    | "status"
+    | "status_set"
+    | "task_type"
+    | "field"
+    | "container"
+    | "view"
+    | "goal"
+    | "key_result";
   objectId: string;
   verb: string;
   field?: string | null;
