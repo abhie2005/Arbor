@@ -12,6 +12,7 @@
 import {
   DEFAULT_VIEW_DEFINITION,
   compileViewQuery,
+  invert,
   invertBatch,
   mentionedIds,
   parseRichText,
@@ -69,6 +70,7 @@ import {
   updateStatus,
 } from "./statuses";
 import { loadComments } from "./comments";
+import { loadTaskTime, ownTimeEntry, runningEntryFor, totalTrackedMs } from "./time";
 import {
   activitySeen,
   loadAmbient,
@@ -2023,6 +2025,280 @@ async function main() {
   await pool.query(`UPDATE memberships SET activity_seen_at = NULL WHERE workspace_id = $1`, [ws.id]);
 
   await pool.query(`DELETE FROM tasks WHERE name = 'Offer letter template'`);
+
+  // --- tracked time ---------------------------------------------------------
+  console.log("\ntime tracking → one running timer, and a duration nobody typed\n");
+
+  const timeTask = await one(`SELECT id FROM tasks WHERE key = 'ENG-415'`);
+  const otherTask = await one(`SELECT id FROM tasks WHERE key = 'ENG-417'`);
+  await pool.query(`DELETE FROM time_entries WHERE user_id = $1`, [viewer.id]);
+
+  const timerId = randomUUID();
+  const startedAt = new Date(Date.now() - 90 * 60_000);
+
+  await applyOperations(
+    [
+      {
+        kind: "createTimeEntry",
+        entryId: timerId,
+        taskId: timeTask.id!,
+        userId: viewer.id!,
+        values: { startedAt, endedAt: null, description: null, isBillable: false },
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const running = await runningEntryFor(viewer.id!, pool);
+  report(
+    "a started timer is the row with no end",
+    running?.id === timerId && running.taskKey === "ENG-415"
+      ? null
+      : `found ${JSON.stringify(running)}`,
+  );
+
+  const startRow = await one(`SELECT duration_ms FROM time_entries WHERE id = $1`, [timerId]);
+  report(
+    "and it has no duration yet, rather than a zero that reads as a fact",
+    startRow?.duration_ms === null ? null : `duration_ms was ${startRow?.duration_ms}`,
+  );
+
+  const startedLog = await one(
+    `SELECT verb, field FROM activity WHERE object_id = $1 ORDER BY at DESC LIMIT 1`,
+    [timeTask.id],
+  );
+  report(
+    "starting a timer writes an activity row nobody had to remember",
+    startedLog?.verb === "task.timer_started" && startedLog.field === timerId
+      ? null
+      : `logged ${startedLog?.verb}`,
+  );
+
+  // The rule the table comment states, now held by the database (D-094) as well
+  // as by the check that produces the nicer sentence.
+  report(
+    "a second timer for the same person is refused",
+    await expectRejection(() =>
+      applyOperations(
+        [
+          {
+            kind: "createTimeEntry",
+            entryId: randomUUID(),
+            taskId: otherTask.id!,
+            userId: viewer.id!,
+            values: { startedAt: new Date(), endedAt: null, description: null, isBillable: false },
+          },
+        ],
+        { actorId: viewer.id!, connection: pool },
+      ),
+    ),
+  );
+
+  report(
+    "but somebody else may have their own running at the same time",
+    await expectNoRejection(() =>
+      applyOperations(
+        [
+          {
+            kind: "createTimeEntry",
+            entryId: randomUUID(),
+            taskId: timeTask.id!,
+            userId: owner.id!,
+            values: { startedAt: new Date(), endedAt: null, description: null, isBillable: false },
+          },
+        ],
+        { actorId: owner.id!, connection: pool },
+      ),
+    ),
+  );
+  await pool.query(`DELETE FROM time_entries WHERE user_id = $1`, [owner.id]);
+
+  // An entry that ends before it starts would contribute a negative number to
+  // every sum it lands in, and nothing downstream would question it.
+  report(
+    "an entry that ends before it starts is refused",
+    await expectRejection(() =>
+      applyOperations(
+        [
+          {
+            kind: "createTimeEntry",
+            entryId: randomUUID(),
+            taskId: otherTask.id!,
+            userId: owner.id!,
+            values: {
+              startedAt: new Date("2026-01-02T10:00:00Z"),
+              endedAt: new Date("2026-01-02T09:00:00Z"),
+              description: null,
+              isBillable: false,
+            },
+          },
+        ],
+        { actorId: owner.id!, connection: pool },
+      ),
+    ),
+  );
+
+  // Stopping. The duration is computed from the two stored instants in SQL, so
+  // no caller can hand over one that disagrees with its own timestamps.
+  const endedAt = new Date(startedAt.getTime() + 90 * 60_000);
+  const stop: Operation = {
+    kind: "setTimeEntry",
+    entryId: timerId,
+    taskId: timeTask.id!,
+    from: { startedAt, endedAt: null, description: null, isBillable: false },
+    to: { startedAt, endedAt, description: "Reviewing the compiler", isBillable: true },
+  };
+  await applyOperations([stop], { actorId: viewer.id!, connection: pool });
+
+  const stopped = await one(
+    `SELECT ended_at, duration_ms, description, is_billable FROM time_entries WHERE id = $1`,
+    [timerId],
+  );
+  report(
+    "stopping denormalizes the duration, computed rather than supplied",
+    Number(stopped?.duration_ms) === 90 * 60_000
+      ? null
+      : `duration_ms was ${stopped?.duration_ms}`,
+  );
+  report(
+    "and carries the description and the billable flag with it",
+    stopped?.description === "Reviewing the compiler" && String(stopped.is_billable) === "true"
+      ? null
+      : `stored ${JSON.stringify(stopped)}`,
+  );
+  report(
+    "nothing is running once it has stopped",
+    (await runningEntryFor(viewer.id!, pool)) === null ? null : "a timer is still running",
+  );
+
+  const stoppedLog = await one(
+    `SELECT verb, new_value FROM activity WHERE object_id = $1 ORDER BY at DESC LIMIT 1`,
+    [timeTask.id],
+  );
+  report(
+    "a stop is logged as a stop, with how long it was",
+    stoppedLog?.verb === "task.timer_stopped" && Number(stoppedLog.new_value) === 90 * 60_000
+      ? null
+      : `logged ${stoppedLog?.verb} / ${stoppedLog?.new_value}`,
+  );
+
+  // Undo. The whole reason time entries are operations rather than a service.
+  await applyOperations(invertBatch([stop]), { actorId: viewer.id!, connection: pool });
+  const restarted = await runningEntryFor(viewer.id!, pool);
+  report(
+    "undoing a stop sets the end back to null, which is running again",
+    restarted?.id === timerId ? null : `found ${JSON.stringify(restarted)}`,
+  );
+  const restartedRow = await one(`SELECT duration_ms FROM time_entries WHERE id = $1`, [timerId]);
+  report(
+    "and clears the duration it had denormalized",
+    restartedRow?.duration_ms === null ? null : `duration_ms was ${restartedRow?.duration_ms}`,
+  );
+
+  await applyOperations([stop], { actorId: viewer.id!, connection: pool });
+
+  // Manual entries: logged after the fact, with an end already set.
+  const manualId = randomUUID();
+  const manual: Operation = {
+    kind: "createTimeEntry",
+    entryId: manualId,
+    taskId: timeTask.id!,
+    userId: viewer.id!,
+    values: {
+      startedAt: new Date("2026-09-01T09:00:00Z"),
+      endedAt: new Date("2026-09-01T09:30:00Z"),
+      description: null,
+      isBillable: false,
+    },
+  };
+  await applyOperations([manual], { actorId: viewer.id!, connection: pool });
+
+  const manualLog = await one(
+    `SELECT verb FROM activity WHERE object_id = $1 ORDER BY at DESC LIMIT 1`,
+    [timeTask.id],
+  );
+  report(
+    "logging time after the fact is a different verb from starting a timer",
+    manualLog?.verb === "task.time_logged" ? null : `logged ${manualLog?.verb}`,
+  );
+
+  const entries = await loadTaskTime(timeTask.id!, pool);
+  report(
+    "a task's entries come back newest first, with who tracked them",
+    entries.length === 2 && entries[0]!.id === timerId && entries[0]!.userName === "Riley Kaur"
+      ? null
+      : `got ${entries.length} entries`,
+  );
+  report(
+    "the total sums the stored durations",
+    totalTrackedMs(entries) === 120 * 60_000
+      ? null
+      : `summed ${totalTrackedMs(entries)}`,
+  );
+
+  // bigint arrives from node-postgres as a string; a string that looks like a
+  // number sums as concatenation, and the total silently becomes nonsense.
+  report(
+    "durations are numbers, not strings that look like numbers",
+    entries.every((entry) => entry.durationMs === null || typeof entry.durationMs === "number")
+      ? null
+      : "a duration came back as a string",
+  );
+
+  const owned = await ownTimeEntry(manualId, viewer.id!, pool);
+  report(
+    "an entry is loadable by the person whose time it is",
+    owned?.taskId === timeTask.id ? null : "the owner could not load their own entry",
+  );
+  report(
+    "and not by anybody else, in the same words as one that does not exist",
+    (await ownTimeEntry(manualId, owner.id!, pool)) === null
+      ? null
+      : "somebody else's entry came back",
+  );
+
+  // Hard delete, because there is no column to archive into — so the row rides
+  // along on the operation and the inverse puts it back with the same id.
+  const remove = invert(manual);
+  await applyOperations([remove], { actorId: viewer.id!, connection: pool });
+  report(
+    "deleting an entry removes the row",
+    (await loadTaskTime(timeTask.id!, pool)).length === 1 ? null : "the row is still there",
+  );
+
+  await applyOperations([invert(remove)], { actorId: viewer.id!, connection: pool });
+  const restoredEntry = await one(`SELECT id, duration_ms FROM time_entries WHERE id = $1`, [
+    manualId,
+  ]);
+  report(
+    "undoing the delete restores that entry, with its id and its duration",
+    restoredEntry?.id === manualId && Number(restoredEntry.duration_ms) === 30 * 60_000
+      ? null
+      : `restored ${JSON.stringify(restoredEntry)}`,
+  );
+
+  // The entry id, not the task id, is what the operation names — and an
+  // operation whose entry belongs to another task must not be applied on the
+  // strength of the task it claims.
+  report(
+    "an entry cannot be changed through a task it does not belong to",
+    await expectRejection(() =>
+      applyOperations(
+        [
+          {
+            kind: "setTimeEntry",
+            entryId: manualId,
+            taskId: otherTask.id!,
+            from: manual.values,
+            to: { ...manual.values, isBillable: true },
+          },
+        ],
+        { actorId: viewer.id!, connection: pool },
+      ),
+    ),
+  );
+
+  await pool.query(`DELETE FROM time_entries WHERE user_id = $1`, [viewer.id]);
 
   // --- saved views ---------------------------------------------------------
   console.log("\nsaved views → validated on write\n");

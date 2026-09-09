@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { FieldOption, ResolvedColumn } from "@arbor/core";
+import { type FieldOption, type ResolvedColumn, formatDuration } from "@arbor/core";
 
 import type { ColumnValues } from "./column-values";
 import type { CompiledTaskRow, StatusRow } from "./views";
@@ -128,7 +128,7 @@ function builtinCell(row: CompiledTaskRow, column: ResolvedColumn, context: Cell
       return number(row.points as number | null);
     case "timeEstimate": {
       const ms = row.time_estimate_ms as number | null;
-      return ms === null || ms === undefined ? EMPTY : { k: "num", text: duration(ms) };
+      return ms === null || ms === undefined ? EMPTY : { k: "num", text: formatDuration(ms) };
     }
 
     default:
@@ -256,16 +256,6 @@ function currency(value: number, code: string | undefined, precision: number | u
     // that will not render is a worse answer than an unformatted number.
     return value.toFixed(precision ?? 2);
   }
-}
-
-/** Estimates are stored in milliseconds and read in hours. */
-function duration(ms: number): string {
-  const hours = ms / 3_600_000;
-  return hours >= 1 ? `${round(hours)}h` : `${Math.round(ms / 60_000)}m`;
-}
-
-function round(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 
 function clamp(percent: number): number {

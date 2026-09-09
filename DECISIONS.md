@@ -2721,3 +2721,113 @@ that fits neither.
 
 *In one sentence:* presence was already being tracked by the transport, and the
 cheapest correct version was to stop pretending it was not.
+
+### D-093
+**Tracked time is an operation, not a timer service** · 2026-09-09 · active
+
+Starting, stopping, correcting and deleting a time entry all go through
+`applyOperations`. There is no `startTimer` function that inserts a row.
+
+**A timer service was the obvious shape and it was wrong for the obvious
+reason.** `time_entries` is a simple table with a simple lifecycle: insert on
+start, update on stop. A service doing exactly that is thirty lines and needs
+nothing from the mutation layer — and it would be the second thing in the system
+that writes, which is the thing every previous phase has refused to add (D-083).
+The second writer is the one that forgets the activity log, and it forgets it
+silently: nothing anywhere fails when a row is not written.
+
+**What coming through the executor buys, none of which was written for it.** The
+activity row, so "who tracked what on this task, when" is answerable from the
+same log that answers every other version of that question. Undo, so a timer
+started on the wrong task is ⌘Z rather than a support question. The live nudge,
+because `logActivity` announces (D-090), so a stop shows up on everybody else's
+screen without the timer knowing the stream exists. Three features that would
+each have been a task on the Phase 8 list.
+
+**The comparison that decided it is `markRead`**, which deliberately does *not*
+go through the executor (D-087). Read state is one person's view of a shared
+thing: it does not belong in the activity log, and undoing it is meaningless.
+Tracked time is the opposite on both counts — it is a fact about the task that
+everyone who can see the task can see, and deleting an entry by accident is
+precisely what undo is for.
+
+**Three operations, not five.** `createTimeEntry` covers starting a timer
+(`endedAt: null`) and logging time after the fact, because the row is the same
+row and the difference is one column. `setTimeEntry` covers stopping and
+editing, because undoing a stop *is* an edit — they were briefly two operations
+with one inverse between them, which meant two executor cases that had to stay
+identical. `deleteTimeEntry` is the third.
+
+**`durationMs` is not on any of them.** It is denormalized on stop so a
+timesheet sums a column rather than subtracting timestamps across a million rows
+— the schema's own reason — which makes it derived data sitting next to what it
+derives from. An operation that carried it could carry one that disagreed with
+its own instants, and nothing downstream would ever question the number. So the
+operation carries the two timestamps and the executor does the arithmetic in
+SQL, in one expression used by both writes.
+
+*In one sentence:* the timer got undo, an audit trail and live updates by not
+being allowed to write its own row.
+
+### D-094
+**One running timer is a constraint, not a convention** · 2026-09-09 · active
+
+`time_entries_one_running_idx` — a unique index on `user_id` where `ended_at IS
+NULL`. Migration 0006.
+
+**The schema already stated the rule and left it to be remembered.** The table
+comment said "enforce at most one per user in the service layer", written when
+the schema was designed and never enforced by anything, because nothing had ever
+written to the table. Implementing it as written would have meant a `SELECT`
+followed by an `INSERT`, which is a check with a gap in it: two tabs starting a
+timer in the same moment both look, both see nothing running, and both insert.
+The result is two running timers, and every duration either of them produces is
+wrong in a way no report can detect.
+
+**The rejected alternative was to keep it in the service layer and accept the
+race** on the grounds that one person double-clicking is rare. It is rare and it
+is also exactly what happens when a click looks like it did nothing and gets
+clicked again — which is a documented behaviour of this dev server, not a
+hypothetical.
+
+**The service layer keeps the pleasant half.** Starting a timer stops the
+running one in the same batch, so the constraint is never met in normal use; the
+executor's own check exists so the refusal is a sentence rather than a
+constraint-violation error. The index is what makes it true rather than likely,
+for every caller at once — including `undo`, which replays operations straight
+from a client, and the worker that does not exist yet.
+
+**It changes what `runningEntryFor` means.** `LIMIT 1` on that query is now a
+statement about the data rather than a way of coping with it.
+
+*In one sentence:* an invariant the database does not hold is an invariant the
+next caller gets to break.
+
+### D-095
+**You can always stop your own timer** · 2026-09-09 · active
+
+Starting a timer needs `edit` on the task. Stopping, correcting or deleting an
+entry needs only that the entry is yours — task access is not re-checked.
+
+**The asymmetry is deliberate and it is about what each half does.** Starting
+puts something new on somebody else's task, so it takes the same permission
+every other write to that task takes. Stopping changes a record of your own
+time, and the alternative is genuinely broken: revoke someone's grant while
+their timer runs and the entry can never be stopped by anyone, accruing hours
+against a task they cannot open. A permission change should not create an
+unstoppable write.
+
+**The rejected alternative was to stop running timers when a grant is revoked.**
+That makes `revokeAccess` write to a table it has no business in, and it does it
+inside the access-index rebuild, which is already the most load-bearing
+transaction in the system (D-071). A permission change that silently edits
+timesheets is worse than the problem.
+
+**What it does not leak.** `runningEntryFor` joins the task through
+`access_index`, so an unreachable task yields a timer with no name attached —
+the readout says "a task" and the stop button still works. The entry is
+returned because it is the viewer's own row; the task's name is not, because
+that is not theirs.
+
+*In one sentence:* the timer belongs to the person, the task belongs to the
+list, and only the first of those governs stopping.

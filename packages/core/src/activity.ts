@@ -38,6 +38,11 @@ export const AMBIENT_NOISE = [
   "task.position_changed",
   "task.watcher_added",
   "task.watcher_removed",
+  // Starting a timer is an intention; stopping one is a fact with a number
+  // attached. Announcing both would tell a watcher twice about a single act,
+  // and the first time it would have nothing to say — a timer that has just
+  // started has tracked no time.
+  "task.timer_started",
 ] as const;
 
 /**
@@ -78,6 +83,11 @@ const VERB_PHRASES: Record<string, string> = {
   "task.archived": "archived it",
   "task.restored": "restored it",
   "task.description_changed": "rewrote the description",
+  "task.timer_started": "started a timer",
+  "task.timer_stopped": "stopped a timer",
+  "task.time_logged": "logged time",
+  "task.time_changed": "edited a time entry",
+  "task.time_deleted": "deleted a time entry",
 };
 
 /**

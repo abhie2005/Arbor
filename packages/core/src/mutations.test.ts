@@ -312,3 +312,100 @@ describe("comment operations", () => {
     expect(activityVerb({ kind: "restoreComment", commentId: "c1", taskId: "t1" })).toBe("comment.restored");
   });
 });
+
+describe("time entries as operations", () => {
+  const ENTRY = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const started = new Date("2026-09-09T10:00:00.000Z");
+  const ended = new Date("2026-09-09T11:30:00.000Z");
+
+  const running: Operation = {
+    kind: "createTimeEntry",
+    entryId: ENTRY,
+    taskId: TASK,
+    userId: USER,
+    values: { startedAt: started, endedAt: null, description: null, isBillable: false },
+  };
+
+  const stop: Operation = {
+    kind: "setTimeEntry",
+    entryId: ENTRY,
+    taskId: TASK,
+    from: { startedAt: started, endedAt: null, description: null, isBillable: false },
+    to: { startedAt: started, endedAt: ended, description: null, isBillable: false },
+  };
+
+  // There is no soft delete on time_entries, so the row has to travel with the
+  // operation or undo would restore an entry rather than *the* entry.
+  it("inverts a creation into a delete that carries the row back", () => {
+    const undone = invert(running);
+    expect(undone).toEqual({
+      kind: "deleteTimeEntry",
+      entryId: ENTRY,
+      taskId: TASK,
+      userId: USER,
+      values: { startedAt: started, endedAt: null, description: null, isBillable: false },
+    });
+    expect(invert(undone)).toEqual(running);
+  });
+
+  it("undoes a stop by putting the end back to null, which is running again", () => {
+    const undone = invert(stop);
+    expect(undone.kind).toBe("setTimeEntry");
+    expect((undone as typeof stop).to.endedAt).toBeNull();
+    expect(invert(undone)).toEqual(stop);
+  });
+
+  // One operation, two verbs. A history that called both "logged time" would
+  // lose the only distinction endedAt makes.
+  it("names starting and logging differently in the log", () => {
+    expect(activityVerb(running)).toBe("task.timer_started");
+    expect(
+      activityVerb({
+        ...running,
+        values: { startedAt: started, endedAt: ended, description: null, isBillable: false },
+      } as Operation),
+    ).toBe("task.time_logged");
+  });
+
+  it("names a stop as a stop and any other edit as an edit", () => {
+    expect(activityVerb(stop)).toBe("task.timer_stopped");
+    expect(
+      activityVerb({
+        ...stop,
+        from: { startedAt: started, endedAt: ended, description: null, isBillable: false },
+        to: { startedAt: started, endedAt: ended, description: "写", isBillable: true },
+      } as Operation),
+    ).toBe("task.time_changed");
+  });
+
+  it("treats a save that changed nothing as a no-op", () => {
+    // Every save from a form builds fresh Date objects, so identity comparison
+    // would call reopening and closing the editor a change.
+    expect(
+      isNoop({
+        ...stop,
+        from: { startedAt: started, endedAt: ended, description: null, isBillable: false },
+        to: { startedAt: new Date(started), endedAt: new Date(ended), description: null, isBillable: false },
+      } as Operation),
+    ).toBe(true);
+  });
+
+  it("carries a task id, because that is what authorization is scoped to", () => {
+    // The column is nullable in the schema; an entry against no task would be a
+    // write `undo` could not check.
+    expect([running, stop, invert(running)].map((op) => op.taskId)).toEqual([TASK, TASK, TASK]);
+  });
+
+  it("undoes 'start a second timer stops the first' in one batch, backwards", () => {
+    const second = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    const batch: Operation[] = [
+      stop,
+      { ...running, entryId: second, values: { startedAt: ended, endedAt: null, description: null, isBillable: false } } as Operation,
+    ];
+
+    const undone = invertBatch(batch);
+    // The new entry is removed before the old one is restarted, or there would
+    // be an instant with two running timers for one person.
+    expect(undone.map((op) => op.kind)).toEqual(["deleteTimeEntry", "setTimeEntry"]);
+  });
+});

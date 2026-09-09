@@ -43,6 +43,13 @@
       "when": 1788888053087,
       "tag": "0005_membership_activity_seen",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788974623474,
+      "tag": "0006_one_running_timer",
+      "breakpoints": true
     }
   ]
 }

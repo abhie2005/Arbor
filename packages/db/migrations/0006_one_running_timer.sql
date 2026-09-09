@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "time_entries_one_running_idx" ON "time_entries" USING btree ("user_id") WHERE "time_entries"."ended_at" IS NULL;

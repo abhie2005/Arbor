@@ -1,11 +1,13 @@
 import {
   type Operation,
+  type TimeEntryValues,
   activityVerb,
   fieldValueColumn,
   isNoop,
   parseFieldValue,
   parseStoredDoc,
   renderPlain,
+  validateTimeEntry,
 } from "@arbor/core";
 import type { Pool, PoolClient } from "pg";
 
@@ -56,6 +58,22 @@ const FIELD_COLUMNS = {
  * chosen by the field's type; the rest are cleared on write.
  */
 const VALUE_COLUMNS = ["value_text", "value_num", "value_date", "value_bool", "value_json"] as const;
+
+/**
+ * `duration_ms`, computed from the two instants rather than accepted from
+ * anyone.
+ *
+ * The column is denormalized on stop so a timesheet sums a column instead of
+ * subtracting timestamps across a million rows — which makes it derived data
+ * living next to the data it derives from, and the only way those two can
+ * disagree is if something writes the derived half directly. So nothing does:
+ * the operation carries the instants, this expression carries the arithmetic,
+ * and both writes that can produce a duration use this string.
+ */
+const DURATION_MS = `CASE
+  WHEN $ENDED::timestamptz IS NULL THEN NULL
+  ELSE (EXTRACT(EPOCH FROM ($ENDED::timestamptz - $STARTED::timestamptz)) * 1000)::bigint
+END`;
 
 const RELATION_TABLES = {
   assignee: { table: "task_assignees", column: "user_id" },
@@ -481,10 +499,185 @@ async function applyOne(
       });
     }
 
+    /**
+     * Tracked time, through the same door as everything else (D-093).
+     *
+     * A timer service with its own INSERT would work and would be the second
+     * writer — no activity row, no undo, no nudge, and nothing to notice any of
+     * the three were missing. The cost of coming through here is that starting
+     * a timer writes a log row, which is exactly what makes "who tracked what,
+     * when" answerable from the table that already answers every other version
+     * of that question.
+     */
+    case "createTimeEntry": {
+      const meta = await taskMeta(client, op.taskId);
+
+      // Validated here as well as in the action, because the action is not the
+      // only caller: undo replays operations straight from a client, and the
+      // worker will apply them with no form in front of it at all.
+      validateTimeEntry(op.values);
+      if (op.values.endedAt === null) {
+        await requireNoOtherTimer(client, op.userId, op.entryId);
+      }
+
+      await client.query(
+        `INSERT INTO time_entries
+           (id, workspace_id, task_id, user_id, started_at, ended_at, duration_ms,
+            description, is_billable)
+         VALUES ($1, $2, $3, $4, $5, $6, ${duration("$6", "$5")}, $7, $8)`,
+        [
+          op.entryId,
+          meta.workspace_id,
+          op.taskId,
+          op.userId,
+          op.values.startedAt,
+          op.values.endedAt,
+          op.values.description,
+          op.values.isBillable,
+        ],
+      );
+
+      return await logActivity(client, {
+        op,
+        actorId,
+        workspaceId: meta.workspace_id,
+        listId: meta.home_list_id,
+        field: op.entryId,
+        oldValue: null,
+        newValue: loggedMs(op.values),
+      });
+    }
+
+    case "setTimeEntry": {
+      const meta = await taskMeta(client, op.taskId);
+      validateTimeEntry(op.to);
+
+      // Scoped to the task the operation names, not just to the entry id — the
+      // same rule as the comment operations, and for the same reason: an
+      // operation arriving from a client carries both, and writing to an entry
+      // whose task is not the one that was authorized would make the check that
+      // authorized it mean nothing.
+      const owner = await client.query<{ user_id: string }>(
+        `SELECT user_id FROM time_entries WHERE id = $1 AND task_id = $2`,
+        [op.entryId, op.taskId],
+      );
+      const userId = owner.rows[0]?.user_id;
+      if (!userId) throw new MutationRejected("That time entry no longer exists");
+
+      // Undoing a stop starts it running again, which is the one path that can
+      // produce a second running timer without anybody having asked for one.
+      if (op.to.endedAt === null) {
+        await requireNoOtherTimer(client, userId, op.entryId);
+      }
+
+      await client.query(
+        `UPDATE time_entries
+         SET started_at = $3, ended_at = $4, duration_ms = ${duration("$4", "$3")},
+             description = $5, is_billable = $6
+         WHERE id = $1 AND task_id = $2`,
+        [
+          op.entryId,
+          op.taskId,
+          op.to.startedAt,
+          op.to.endedAt,
+          op.to.description,
+          op.to.isBillable,
+        ],
+      );
+
+      return await logActivity(client, {
+        op,
+        actorId,
+        workspaceId: meta.workspace_id,
+        listId: meta.home_list_id,
+        field: op.entryId,
+        oldValue: loggedMs(op.from),
+        newValue: loggedMs(op.to),
+      });
+    }
+
+    /**
+     * The only hard delete in the executor.
+     *
+     * Everything else is archived so that undo has something to restore
+     * (D-015), and `time_entries` has no column to archive into. The operation
+     * carries the row instead, so its inverse is a `createTimeEntry` with the
+     * same id — undo restores *that* entry rather than one resembling it, and
+     * doing it twice is idempotent because the id comes back with it.
+     */
+    case "deleteTimeEntry": {
+      const meta = await taskMeta(client, op.taskId);
+
+      const result = await client.query(
+        `DELETE FROM time_entries WHERE id = $1 AND task_id = $2`,
+        [op.entryId, op.taskId],
+      );
+      if (result.rowCount === 0) throw new MutationRejected("That time entry no longer exists");
+
+      return await logActivity(client, {
+        op,
+        actorId,
+        workspaceId: meta.workspace_id,
+        listId: meta.home_list_id,
+        field: op.entryId,
+        oldValue: loggedMs(op.values),
+        newValue: null,
+      });
+    }
+
     default: {
       const exhaustive: never = op;
       throw new MutationRejected(`Unhandled operation: ${JSON.stringify(exhaustive)}`);
     }
+  }
+}
+
+/**
+ * The duration expression with its two placeholders bound.
+ *
+ * A function rather than a template at each call site so the ended/started
+ * order cannot be transposed in one of the two statements that use it — which
+ * would produce negative durations on exactly one write path and pass every
+ * check that only exercised the other.
+ */
+function duration(ended: string, started: string): string {
+  return DURATION_MS.replaceAll("$ENDED", ended).replaceAll("$STARTED", started);
+}
+
+/**
+ * What the activity log records for a time entry: how long it was.
+ *
+ * Null while it runs, because a timer that has just started has tracked
+ * nothing, and a zero in the log would read as a fact rather than as an absence.
+ */
+function loggedMs(values: TimeEntryValues): number | null {
+  if (values.endedAt === null) return null;
+  return values.endedAt.getTime() - values.startedAt.getTime();
+}
+
+/**
+ * At most one running entry per person — the rule the table comment states.
+ *
+ * A unique partial index holds it (D-094); this exists so the refusal is a
+ * sentence rather than a constraint-violation error, and so the check reads
+ * where the rule applies. In normal use it never fires: starting a timer stops
+ * the running one in the same batch, so the only things that reach here are a
+ * race between two tabs and a bug.
+ */
+async function requireNoOtherTimer(
+  client: PoolClient,
+  userId: string,
+  entryId: string,
+): Promise<void> {
+  const result = await client.query(
+    `SELECT 1 FROM time_entries
+     WHERE user_id = $1 AND ended_at IS NULL AND id <> $2
+     LIMIT 1`,
+    [userId, entryId],
+  );
+
+  if (result.rowCount !== 0) {
+    throw new MutationRejected("A timer is already running. Stop it before starting another.");
   }
 }
 

@@ -18,6 +18,7 @@
  */
 
 import { type RichDoc, renderPlain } from "./richtext";
+import { type TimeEntryValues, isRunning, sameTimeEntry } from "./time";
 
 export type TaskField =
   | "name"
@@ -132,6 +133,80 @@ export interface EditCommentOp {
   to: RichDoc;
 }
 
+/**
+ * Tracked time, as operations.
+ *
+ * **A time entry is workspace data, not one person's view state.** That is the
+ * whole of why these are operations and `markRead` is not (D-087): what a
+ * timesheet says happened on a task is a fact about the task, it belongs in the
+ * activity log next to the status changes it explains, and deleting an entry by
+ * accident is exactly the thing undo exists for. Read state is none of those.
+ *
+ * `userId` is whose time it is. It is the actor today — nobody may start a
+ * timer for somebody else — but it is on the operation rather than taken from
+ * the context, because `applyOperations` is also what the worker will call and
+ * "the actor" and "whose time this is" stop being the same person the moment an
+ * automation logs any.
+ *
+ * `taskId` is on all three for the reason it is on the comment operations: it
+ * is what authorization is scoped to (D-080). The column is nullable, so the
+ * schema would allow an entry against no task at all — and an operation whose
+ * target could not be checked would be a hole in every check `undo` makes. Time
+ * is tracked against a task here, or it is not tracked.
+ *
+ * **`durationMs` is absent on purpose.** It is denormalized on stop and derived
+ * from the two instants; an operation carrying it could carry one that
+ * disagreed with them, and no screen would ever show the disagreement.
+ */
+export interface CreateTimeEntryOp {
+  kind: "createTimeEntry";
+  entryId: string;
+  taskId: string;
+  userId: string;
+  /** `endedAt: null` starts a timer; an end already set logs time after the fact. */
+  values: TimeEntryValues;
+}
+
+/**
+ * Stopping a timer and correcting an entry are the same write.
+ *
+ * They were briefly two operations — `stopTimer` and `editTimeEntry` — and the
+ * pair had one inverse between them: undoing a stop is setting the end back to
+ * null, which *is* an edit. Two names for one shape meant two cases in the
+ * executor that had to stay identical, so there is one.
+ */
+export interface SetTimeEntryOp {
+  kind: "setTimeEntry";
+  entryId: string;
+  taskId: string;
+  from: TimeEntryValues;
+  to: TimeEntryValues;
+}
+
+/**
+ * Hard, unlike every other delete in this codebase — and the row travels with
+ * the operation because of it.
+ *
+ * Archiving is the rule elsewhere (D-015) precisely so a delete can be
+ * inverted, and `time_entries` has no column to archive into. Rather than a
+ * migration to add one, the operation carries what it removed: the inverse is a
+ * `createTimeEntry` with the same id, so undo restores the entry rather than an
+ * entry, and a second undo removes it again. An id that comes back is what
+ * makes that idempotent.
+ *
+ * The trade-off accepted: an entry deleted and never undone is gone from the
+ * activity log's `old_value` and nowhere else. Time entries are small and
+ * re-enterable; a comment, which is not, is soft-deleted instead.
+ */
+export interface DeleteTimeEntryOp {
+  kind: "deleteTimeEntry";
+  entryId: string;
+  taskId: string;
+  userId: string;
+  /** The row as it stood, so the inverse can put it back exactly. */
+  values: TimeEntryValues;
+}
+
 export type Operation =
   | SetFieldOp
   | SetCustomFieldOp
@@ -141,7 +216,10 @@ export type Operation =
   | CreateCommentOp
   | CommentLifecycleOp
   | EditCommentOp
-  | SetDescriptionOp;
+  | SetDescriptionOp
+  | CreateTimeEntryOp
+  | SetTimeEntryOp
+  | DeleteTimeEntryOp;
 
 export class MutationError extends Error {}
 
@@ -191,6 +269,31 @@ export function invert(op: Operation): Operation {
     case "setDescription":
       return { ...op, from: op.to, to: op.from };
 
+    // The entry travels with the delete, so undoing one restores *that* entry —
+    // same id, same instants — rather than a new row that resembles it.
+    case "createTimeEntry":
+      return {
+        kind: "deleteTimeEntry",
+        entryId: op.entryId,
+        taskId: op.taskId,
+        userId: op.userId,
+        values: op.values,
+      };
+
+    case "deleteTimeEntry":
+      return {
+        kind: "createTimeEntry",
+        entryId: op.entryId,
+        taskId: op.taskId,
+        userId: op.userId,
+        values: op.values,
+      };
+
+    // Undoing a stop sets the end back to null, which starts it running again.
+    // That falls out of swapping from and to rather than being a case.
+    case "setTimeEntry":
+      return { ...op, from: op.to, to: op.from };
+
     default: {
       const exhaustive: never = op;
       throw new MutationError(`Cannot invert unknown operation: ${JSON.stringify(exhaustive)}`);
@@ -236,6 +339,18 @@ export function activityVerb(op: Operation): string {
       return "comment.edited";
     case "setDescription":
       return "task.description_changed";
+    // One operation, two verbs, decided by the row rather than by the caller:
+    // creating an entry with no end is starting a timer, and creating one that
+    // already ended is logging time you spent earlier. A history that called
+    // both "logged time" would lose the distinction the endedAt column makes.
+    case "createTimeEntry":
+      return isRunning(op.values) ? "task.timer_started" : "task.time_logged";
+    case "setTimeEntry":
+      return isRunning(op.from) && !isRunning(op.to)
+        ? "task.timer_stopped"
+        : "task.time_changed";
+    case "deleteTimeEntry":
+      return "task.time_deleted";
     default: {
       const exhaustive: never = op;
       throw new MutationError(`No verb for operation: ${JSON.stringify(exhaustive)}`);
@@ -270,6 +385,14 @@ export function describe(op: Operation): string {
       return "Edited a comment";
     case "setDescription":
       return "Changed the description";
+    case "createTimeEntry":
+      return isRunning(op.values) ? "Started the timer" : "Logged time";
+    case "setTimeEntry":
+      return isRunning(op.from) && !isRunning(op.to)
+        ? "Stopped the timer"
+        : "Changed a time entry";
+    case "deleteTimeEntry":
+      return "Deleted a time entry";
     default: {
       const exhaustive: never = op;
       throw new MutationError(`No description for: ${JSON.stringify(exhaustive)}`);
@@ -335,6 +458,11 @@ export function isNoop(op: Operation): boolean {
   }
   if (op.kind === "setDescription") {
     return plainOrEmpty(op.from) === plainOrEmpty(op.to);
+  }
+  // Dates, so identity comparison would call re-saving an unchanged entry a
+  // change — and every save from a form builds new Date objects.
+  if (op.kind === "setTimeEntry") {
+    return sameTimeEntry(op.from, op.to);
   }
   return false;
 }

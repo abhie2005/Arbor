@@ -120,6 +120,16 @@ export {
   type ViewAccess,
 } from "./task-access";
 export {
+  loadTaskTime,
+  ownTimeEntry,
+  recordDurationMs,
+  runningEntryFor,
+  totalTrackedMs,
+  type OwnedEntry,
+  type RunningEntry,
+  type TimeEntryRecord,
+} from "./time";
+export {
   commentCounts,
   commentOwnership,
   loadComments,

@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm";
+import { relations, sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
@@ -7,6 +7,7 @@ import {
   pgTable,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -15,8 +16,16 @@ import { tasks } from "./tasks";
 import { users, workspaces } from "./workspaces";
 
 /**
- * A running entry is one with `endedAt` null. Enforce at most one per user in
- * the service layer — starting a second timer stops the first.
+ * A running entry is one with `endedAt` null.
+ *
+ * **At most one per user, and the database holds that** (D-094). It was written
+ * here as a service-layer rule, and a service-layer rule is a check with a gap
+ * in it: two tabs starting a timer at the same moment both look, both see
+ * nothing running, and both insert. The partial unique index below closes the
+ * gap for every caller at once, including the worker that does not exist yet.
+ *
+ * The service layer still does the pleasant half — starting a timer stops the
+ * running one in the same batch — so nobody ever meets the constraint.
  */
 export const timeEntries = pgTable(
   "time_entries",
@@ -41,6 +50,9 @@ export const timeEntries = pgTable(
     index("time_entries_user_idx").on(t.userId, t.startedAt),
     index("time_entries_task_idx").on(t.taskId),
     index("time_entries_running_idx").on(t.userId, t.endedAt),
+    uniqueIndex("time_entries_one_running_idx")
+      .on(t.userId)
+      .where(sql`${t.endedAt} IS NULL`),
   ],
 );
 
