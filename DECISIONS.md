@@ -3059,3 +3059,84 @@ degradation and it is not signalled to anyone.
 *In one sentence:* the connection is still the signal within a process, and
 between them the cheapest honest substitute is each process repeating itself
 before anyone has time to doubt it.
+
+### D-101
+**A key result's source is a view definition, and the compiler grew an
+aggregate** · 2026-09-09 · active
+
+`key_results.source` holds `{ scope, definition, aggregate }` — a view
+definition and what to total over it — and `compileAggregate` in
+`packages/core/src/views/compile.ts` turns it into one number, sharing
+`buildBase` with the row query and the group counts.
+
+**The column is a small query language, and there was already one.** "The number
+of tasks matching this filter" is exactly what a view definition says, and the
+compiler (D-032) already answers it with scope, nested filter clauses, custom
+fields, archived and closed handling, and the `access_index` join. A second
+language in `source` would have been a second set of answers to "does this task
+count", and the cost would not have been writing the parser. It would have been
+the day a goal said 12 and the list showed 14 and nobody could say which was
+right.
+
+So this is the compiler growing, which is what invariant 2 asks for (D-078): a
+consumer needing something the compiler cannot say means the compiler learns to
+say it, not that the consumer writes SQL.
+
+**Inline rather than a saved view id.** The rejected alternative binds `source`
+to an existing view, which is free filter-building UI and one place to edit the
+query — and it makes a goal's meaning editable by anyone who edits that view,
+and breakable by anyone who deletes it. A goal is a commitment; a number that
+moves because somebody tidied their saved views is a commitment that moved
+without anyone deciding to move it. The definition is validated by compiling it
+on write, the same rule saved views themselves follow.
+
+**`AGGREGATE_FNS` is a closed set and the summable built-ins are a shorter one.**
+The first for the reason `FIELD_COLUMNS` is closed (D-018) — `source` is
+ultimately client input, and a function name reaching the query as text is a way
+to write SQL into it. The second because "every numeric column" is not the same
+as "things worth totalling": summing `priority` produces a number with no
+meaning and averaging `position` produces one with less.
+
+**An empty sum is nought and an empty average is nothing.** A goal at the start
+of a quarter matches no tasks, and "no progress" is a number rather than an
+absence — but the mean of nothing is genuinely undefined, and reporting it as
+zero would claim the average was zero.
+
+*In one sentence:* the column was asking for a query language, and refusing to
+write a second one is the whole decision.
+
+### D-102
+**A rollup is computed as the goal's owner** · 2026-09-09 · active
+
+`compileAggregate` is run with the goal's `owner_id` as its viewer, not with the
+person looking at the screen.
+
+**A goal is a shared commitment, so its number has to be one number.** The
+compiler scopes every read by joining `access_index` for a viewer (ADR 3), which
+is right for a list — you see the tasks you can reach — and wrong for a goal:
+two people would open the same goal and see different progress, and "we are 60%
+there" would stop being a fact about the team. A progress bar that means
+something different per reader is worse than no progress bar.
+
+**The cost is real and it is an aggregate, never a row.** A count computed as
+the owner can include tasks the reader cannot open, so a number moves when a
+private task does. What it cannot do is name one: `compileAggregate` returns a
+scalar, and nothing on the goals screen can be drilled into. The goal names its
+owner on the same row as the number, so whose view it is, is on screen.
+
+**Rejected: computing it unscoped**, which is the truest number of all and needs
+an escape hatch that drops the `access_index` join. That is a hole in the one
+invariant the compiler exists to guarantee, and an escape hatch is a thing the
+next caller reaches for. A permission rule with a documented way around it is
+not a permission rule.
+
+**Rejected: computing it as the viewer**, which leaks nothing and makes the
+feature pointless.
+
+**What this means when an owner leaves.** `goals.owner_id` is `ON DELETE SET
+NULL`, so an ownerless goal has no principal to compute as. Its rollups resolve
+to null and read as unmeasured rather than as zero — the goal says it cannot be
+measured until somebody owns it, which is true and is also the prompt to fix it.
+
+*In one sentence:* progress everyone can see has to be progress computed for
+somebody in particular, and the owner is the only defensible somebody.

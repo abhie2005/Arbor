@@ -564,6 +564,116 @@ ORDER BY group_key ASC NULLS LAST`,
   };
 }
 
+/**
+ * Which aggregates a key result may ask for.
+ *
+ * A closed set for the same reason `FIELD_COLUMNS` is (D-018): a `source` blob
+ * is ultimately shaped by client input, and a function name that reached the
+ * query as text would be a way to write SQL into it.
+ */
+export const AGGREGATE_FNS = ["count", "sum", "avg"] as const;
+
+export type AggregateFn = (typeof AGGREGATE_FNS)[number];
+
+export interface AggregateSpec {
+  fn: AggregateFn;
+  /** Required by `sum` and `avg`, meaningless to `count`. */
+  field?: FieldRef;
+}
+
+/**
+ * Built-ins there is any sense in summing.
+ *
+ * Deliberately not "every numeric column": summing `priority` produces a number
+ * with no meaning, and averaging `position` produces one with less. A goal is
+ * measured in things somebody chose to count.
+ */
+const SUMMABLE_BUILTINS = new Set<BuiltinField>(["points", "timeEstimate"]);
+
+/**
+ * One number for a whole view: what a rollup key result is measured by.
+ *
+ * **This is the compiler growing rather than a second query language** (D-078).
+ * `key_results.source` describes "the tasks matching this filter", which is
+ * exactly what a view definition describes, so it *is* a view definition and
+ * this is one more thing to ask of it — sharing `buildBase` with the row query
+ * and the group counts, so what a rollup counts and what the same filter shows
+ * on screen can never disagree about scope, archived tasks, closed statuses or
+ * permissions.
+ *
+ * Writing a second small query language in `source` was the alternative, and
+ * the cost of it would not have been the parser. It would have been the day
+ * somebody asked why a goal said 12 and the list said 14.
+ */
+export function compileAggregate(
+  options: CompileOptions & { aggregate: AggregateSpec },
+): CompiledQuery {
+  const { fn, field } = options.aggregate;
+
+  if (!AGGREGATE_FNS.includes(fn)) {
+    throw new ViewCompileError(`Unknown aggregate "${String(fn)}"`);
+  }
+
+  const { joins, where, params } = buildBase(options);
+
+  // COALESCE so an empty set is nought rather than null: a goal at the start of
+  // a quarter matches no tasks, and "no progress" is a number, not an absence.
+  // `avg` is the exception — the mean of nothing is genuinely undefined, and
+  // reporting it as zero would say the average was zero.
+  let expression: string;
+
+  if (fn === "count") {
+    expression = "COUNT(*)::float8";
+  } else {
+    if (!field) throw new ViewCompileError(`"${fn}" needs a field to aggregate`);
+    const value = aggregateValueExpr(field, params, options.fields);
+    expression =
+      fn === "sum" ? `COALESCE(SUM(${value}), 0)::float8` : `AVG(${value})::float8`;
+  }
+
+  return {
+    text: `SELECT ${expression} AS value
+FROM tasks t
+${joins.join("\n")}
+WHERE ${where.join("\n  AND ")}`,
+    params: params.values,
+  };
+}
+
+/**
+ * The numeric expression a `sum` or `avg` runs over.
+ *
+ * Refuses anything that is not a number, rather than letting Postgres decide:
+ * summing a text column is an error at query time, which surfaces as a broken
+ * goal screen instead of as "you cannot measure a goal in dropdowns".
+ */
+function aggregateValueExpr(
+  field: FieldRef,
+  params: ParamBag,
+  fields: FieldCatalog | undefined,
+): string {
+  if (isCustomField(field)) {
+    const definition = requireField(field, fields);
+    const meta = FIELD_TYPE_META[definition.type];
+
+    if (meta.column !== "value_num") {
+      throw new ViewCompileError(
+        `Cannot total a "${definition.type}" field — a goal is measured in numbers`,
+      );
+    }
+
+    return `(SELECT fv.value_num
+            FROM field_values fv
+            WHERE fv.task_id = t.id AND fv.field_id = ${params.add(definition.id)})`;
+  }
+
+  if (!SUMMABLE_BUILTINS.has(field as BuiltinField)) {
+    throw new ViewCompileError(`Cannot total "${field}"`);
+  }
+
+  return builtinSql(field);
+}
+
 function groupKeyExpr(
   field: FieldRef,
   params: ParamBag,

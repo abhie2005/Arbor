@@ -5,6 +5,7 @@ import {
   MAX_CONDITIONS,
   MAX_FILTER_DEPTH,
   ViewCompileError,
+  compileAggregate,
   compileGroupCounts,
   compileViewQuery,
 } from "./compile";
@@ -491,5 +492,103 @@ describe("nested filter clauses", () => {
     });
 
     expect(flat.text).toContain("(t.priority = $3 AND s.group = $4)");
+  });
+});
+
+/**
+ * One number for a whole view — what a rollup key result is measured by.
+ *
+ * The checks that matter are not about arithmetic. They are that this shares
+ * `buildBase` with the row query, so a goal counting a filter and a list
+ * showing the same filter cannot disagree about permissions, archived tasks or
+ * closed statuses (D-101).
+ */
+describe("compileAggregate", () => {
+  function aggregate(
+    spec: Parameters<typeof compileAggregate>[0]["aggregate"],
+    overrides: Partial<ViewDefinition> = {},
+  ) {
+    return compileAggregate({
+      workspaceId: WORKSPACE,
+      viewerId: VIEWER,
+      scope: { kind: "list", id: LIST },
+      fields: CATALOG,
+      definition: { ...DEFAULT_VIEW_DEFINITION, ...overrides },
+      aggregate: spec,
+    });
+  }
+
+  it("scopes by the access index, exactly as the row query does", () => {
+    const { text, params } = aggregate({ fn: "count" });
+    expect(text).toContain("JOIN access_index ax ON ax.list_id = t.home_list_id");
+    expect(params[0]).toBe(VIEWER);
+  });
+
+  it("applies the definition's own filters", () => {
+    const { text, params } = aggregate(
+      { fn: "count" },
+      {
+        filters: {
+          ...DEFAULT_VIEW_DEFINITION.filters,
+          conditions: [{ field: "priority", op: "eq", value: 1 }],
+        } as ViewDefinition["filters"],
+      },
+    );
+    expect(text).toContain("t.priority");
+    expect(params).toContain(1);
+  });
+
+  it("hides archived and closed tasks the same way a view does", () => {
+    // The whole reason this shares buildBase: a goal that counted archived
+    // tasks while the list did not would be a number nobody could explain.
+    const { text } = aggregate({ fn: "count" });
+    expect(text).toContain("t.archived_at IS NULL");
+    expect(text).toContain("s.group IS NULL OR s.group <> 'closed'");
+  });
+
+  it("counts as a float, so a percentage does not divide integers", () => {
+    expect(aggregate({ fn: "count" }).text).toContain("COUNT(*)::float8");
+  });
+
+  it("reads an empty sum as nought, and an empty average as nothing", () => {
+    // A goal at the start of a quarter matches no tasks. "No progress" is a
+    // number; the mean of nothing is genuinely undefined.
+    expect(aggregate({ fn: "sum", field: "points" }).text).toContain("COALESCE(SUM(");
+    expect(aggregate({ fn: "avg", field: "points" }).text).not.toContain("COALESCE(AVG(");
+  });
+
+  it("totals a numeric custom field through its own typed column", () => {
+    const { text, params } = aggregate({ fn: "sum", field: `cf:${FIELD}` });
+    expect(text).toContain("fv.value_num");
+    expect(params).toContain(FIELD);
+  });
+
+  it("refuses to total a field that is not a number", () => {
+    expect(() => aggregate({ fn: "sum", field: `cf:${TEXT_FIELD}` })).toThrow(ViewCompileError);
+  });
+
+  it("refuses a built-in that would total to something meaningless", () => {
+    // Summing priority produces a number with no meaning, and averaging
+    // position produces one with less.
+    expect(() => aggregate({ fn: "sum", field: "priority" })).toThrow(/Cannot total/);
+    expect(() => aggregate({ fn: "avg", field: "position" })).toThrow(/Cannot total/);
+  });
+
+  it("refuses a sum with no field rather than totalling rows", () => {
+    expect(() => aggregate({ fn: "sum" })).toThrow(ViewCompileError);
+  });
+
+  it("refuses a function nobody declared", () => {
+    // `source` is client input; a function name reaching the query as text
+    // would be a way to write SQL into it.
+    expect(() =>
+      aggregate({ fn: "drop" as unknown as "count" }),
+    ).toThrow(ViewCompileError);
+  });
+
+  it("never inlines a value", () => {
+    const { text } = aggregate({ fn: "count" });
+    expect(text).not.toContain(WORKSPACE);
+    expect(text).not.toContain(VIEWER);
   });
 });
