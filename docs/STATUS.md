@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-09-07. Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-09-09. Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
@@ -16,7 +16,7 @@ verification found in each phase, is in `docs/HISTORY.md`.
 
 | Area | State |
 |---|---|
-| **Schema** | 43 tables, 9 enums, 116 indexes. Migrated (0000–0004) and seeded. |
+| **Schema** | 43 tables, 9 enums, 116 indexes. Migrated (0000–0005) and seeded. |
 | **View compiler** | Definition → one parameterized SQL query. Filters, grouping, sorting, group counts, permission scoping. Custom fields resolve through a required field catalog. |
 | **Hierarchy** | Config inheritance, effective privacy, denormalized ancestors, move-legality. |
 | **Ordering** | Fractional indices — one row written per drag. |
@@ -177,9 +177,49 @@ Phase 7's own list is empty. Two things it leaves behind, both recorded below:
 - **Presence is per-process.** Fine on one instance, wrong on two, and the fix
   is the channel that already exists.
 
-Then **Phase 8 — Depth**: time tracking, goals, dashboards. Time tracking is the
-one with a schema already waiting (`time_entries`), and the one that makes the
-existing reporting questions answerable.
+### Then Phase 8 — Depth
+
+Time tracking, goals, dashboards. **All three already have tables** in
+`packages/db/src/schema/time.ts`, migrated in 0000 and never touched by a line
+of code: `time_entries`, `task_estimates`, `goals`, `key_results`, `dashboards`.
+Read that file before planning any of it — the columns encode decisions that
+were made when the schema was designed, and re-deciding them by accident is how
+the two halves stop matching.
+
+**Time tracking is the one to do first.** It is self-contained, it is the only
+one of the three that a person uses every day, and its schema is the most
+opinionated:
+
+- A running entry is one with `ended_at` null, and the table comment says the
+  rule the service has to enforce: **at most one running entry per user**, so
+  starting a second timer stops the first. There is an index for exactly that
+  lookup (`time_entries_running_idx`).
+- `duration_ms` is denormalized on stop, deliberately, so a timesheet sums a
+  column instead of subtracting timestamps across a million rows.
+- `task_estimates` is per assignee, not per task — a shared task can be planned
+  per person, which means "the estimate" is a sum and the detail page's single
+  `timeEstimateMs` field is the *task-level* one. Decide how those two relate
+  before building either.
+- `is_billable` exists. Nothing in the product mentions billing yet, so it is a
+  column waiting for a decision, not a feature to build around.
+
+Two things it will collide with, both worth settling first rather than
+discovering:
+
+- **`automatic_progress`, `formula` and `rollup` are declared field types that
+  nothing computes** (see "deliberately not built"). A rollup of tracked time is
+  exactly the kind of thing they exist for, and the honest question is whether
+  Phase 8 finally needs `apps/worker` or whether these stay read-time
+  derivations like the ambient inbox.
+- **A timer is a live thing.** The stream already exists (D-090), and a running
+  timer is the second obvious thing to push down it after presence.
+
+Goals and dashboards are both larger and vaguer, and `key_results.kind` with its
+`source` json is the piece to think hardest about — it is a small query language
+hiding in a column, and the view compiler already is one (D-032). If a key
+result can be "the number of tasks matching this filter", it should compile
+through the thing that already compiles filters rather than growing a second
+one.
 
 ### Background — why notifications are shaped this way
 
