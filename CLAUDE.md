@@ -55,10 +55,20 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
    membership (D-088).
 8. **Dates**: a date-only value is midnight UTC and read in UTC (D-067).
    `dueHasTime` decides. Never format one without asking.
-9. **A control that shows a server value must follow it.** `useState(props.x)`
+9. **An operation must survive JSON.** It is handed to the client as an
+   inverse and posted back by `undo`, so a `Date` on one arrives as a string and
+   every helper that calls a date method on it throws. Instants on operations
+   are ISO strings (D-097). Typechecks, unit tests and `db:smoke` all pass while
+   this is wrong; `check:actions` is what catches it.
+10. **A control that shows a server value must follow it.** `useState(props.x)`
    takes the value once and never looks again, which no test in this repo can
    see — every check passed while a live rename left the old name on screen.
    Use `useServerValue` (D-090).
+11. **Announcing is `applyOperations`' job, once per batch.** Not
+    `logActivity`'s any more (D-099): the nudge carries who the fan-out told,
+    and the fan-out has not run when the activity row is written. A new
+    operation still cannot forget to broadcast, because there is no way to apply
+    one except through `applyOperations`.
 
 ## Where things are
 
@@ -78,6 +88,9 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | What a group of changes reads as (pure) | `packages/core/src/activity.ts` |
 | Reading the activity log | `packages/db/src/history.ts` |
 | Live changes: publish and subscribe | `packages/db/src/live.ts` |
+| Duration rules and formatting (pure) | `packages/core/src/time.ts` |
+| Reading tracked time (writes are operations) | `packages/db/src/time.ts` |
+| The timer panel and the one in the shell | `apps/web/src/components/task-time.tsx`, `running-timer.tsx` |
 | The stream, and who may hear a nudge | `apps/web/src/app/api/live/route.ts` |
 | Who else is looking at a task | `apps/web/src/server/presence.ts` |
 | An editable value that follows the server | `apps/web/src/components/use-server-value.ts` |
