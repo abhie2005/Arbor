@@ -79,6 +79,7 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Reading the activity log | `packages/db/src/history.ts` |
 | Live changes: publish and subscribe | `packages/db/src/live.ts` |
 | The stream, and who may hear a nudge | `apps/web/src/app/api/live/route.ts` |
+| Who else is looking at a task | `apps/web/src/server/presence.ts` |
 | An editable value that follows the server | `apps/web/src/components/use-server-value.ts` |
 | Schema | `packages/db/src/schema/` |
 | Seed — the demo workspace | `packages/db/src/seed.ts` |

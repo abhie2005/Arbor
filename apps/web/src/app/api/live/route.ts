@@ -1,20 +1,28 @@
-import { type Change, pool, subscribeToChanges } from "@arbor/db";
+import { type Change, pool, subscribeToChanges, taskAccess } from "@arbor/db";
 
 import { getCurrentUser } from "@/server/auth";
+import { arrive, watching } from "@/server/presence";
 
 /**
  * `/api/live` — the stream every screen listens to.
  *
- * The first route handler in the app, and the first thing that is not a page or
- * a server action. It exists because a server action cannot push: the app finds
- * out about its own writes when it re-renders after one, and finds out about
- * everybody else's never (D-090).
+ * The first route handler in the app, and the only place a change meets a
+ * viewer before it leaves the server. It exists because a server action cannot
+ * push: the app finds out about its own writes when it re-renders after one,
+ * and finds out about everybody else's never (D-090).
  *
- * **Server-Sent Events rather than a WebSocket.** The traffic is one-directional
- * — the server says "something changed", the browser says nothing back — and
- * `EventSource` reconnects on its own, which is the entire body of code a
- * WebSocket would have made us write. A socket becomes worth it when the
- * browser has something to send, which is presence.
+ * **Server-Sent Events rather than a WebSocket.** The traffic is
+ * one-directional — the server says "something changed", the browser says
+ * nothing back — and `EventSource` reconnects on its own, which is the entire
+ * body of code a WebSocket would have made us write. Presence looked like the
+ * case that would break that, and did not: `?scope=` is the browser saying
+ * where it is, once, by opening the connection there (D-092).
+ *
+ * Two kinds of message go down it. A `change` is a nudge — "something happened
+ * in list L" — and the page answers by re-rendering itself. A `presence` is the
+ * data itself, the people currently on this scope, because presence is
+ * ephemeral and re-rendering a page every time somebody's tab moves would be
+ * absurd.
  */
 
 export const dynamic = "force-dynamic";
@@ -34,6 +42,18 @@ export async function GET(request: Request): Promise<Response> {
   // plainly so `EventSource` stops retrying against a wall.
   if (!viewer) return new Response("Not signed in", { status: 401 });
 
+  /**
+   * What this stream is looking at, if anything.
+   *
+   * **Checked, not trusted.** Anyone can put a task id in a query string, and
+   * "who is looking at this" is exactly the kind of thing that must not answer
+   * for a task the asker cannot open — it would report activity on a private
+   * list to someone with no grant on it, which is the existence leak the
+   * refusals are careful not to be (D-080).
+   */
+  const requested = new URL(request.url).searchParams.get("scope");
+  const scope = requested && (await taskAccess(requested, viewer.id)) ? requested : null;
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream<Uint8Array>({
@@ -51,13 +71,30 @@ export async function GET(request: Request): Promise<Response> {
       };
 
       /**
+       * **Who *else* is here** — this viewer is filtered out before the payload
+       * is built, not after it arrives.
+       *
+       * The server is the only side that knows which stream belongs to whom, so
+       * doing it here makes the message mean exactly what the screen says. A
+       * payload that includes you and a client that removes you again are two
+       * places to hold the same rule, and the client's copy is the one that
+       * would be missed by a second consumer.
+       */
+      const sendPresence = (which: string) => {
+        const others = watching(which)
+          .filter((person) => person.userId !== viewer.id)
+          .map((person) => ({ id: person.userId, name: person.name }));
+
+        send(`event: presence\ndata: ${JSON.stringify({ scope: which, people: others })}\n\n`);
+      };
+
+      /**
        * **Every nudge is checked against this viewer's access.**
        *
        * The channel carries every change in the process, because the transport
        * has no idea who is listening (`live.ts`). This is where it finds out.
        * Without this, the stream would tell anyone with a session that
-       * *something* changed in a list they cannot open — which is exactly the
-       * existence leak the refusals are careful not to be (D-080).
+       * *something* changed in a list they cannot open.
        *
        * One indexed lookup per nudge per viewer. It could be cached per
        * connection, and it is not: a cache would have a stale window in which a
@@ -79,6 +116,17 @@ export async function GET(request: Request): Promise<Response> {
         });
       });
 
+      // Registered after the subscription so a stream cannot be announced as
+      // present and then fail to open.
+      const depart = scope
+        ? arrive({
+            userId: viewer.id,
+            name: viewer.name,
+            scope,
+            notify: sendPresence,
+          })
+        : null;
+
       const heartbeat = setInterval(() => send(`: ping\n\n`), HEARTBEAT_MS);
 
       // Named so the browser can tell "connected" from "reconnected", and so a
@@ -90,6 +138,9 @@ export async function GET(request: Request): Promise<Response> {
         if (!open) return;
         open = false;
         clearInterval(heartbeat);
+        // Leaving before unsubscribing, so the people still here are told by a
+        // process that is still able to tell them.
+        depart?.();
         unsubscribe();
         try {
           controller.close();

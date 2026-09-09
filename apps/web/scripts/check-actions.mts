@@ -1298,9 +1298,9 @@ await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskStatus!, [detailTask.id, beforeHi
 // list they cannot open would be an existence oracle with a keep-alive (D-090).
 console.log("\nlive stream → the same change, two viewers, one of them told\n");
 
-async function openStream(cookie: string) {
+async function openStream(cookie: string, query = "") {
   const controller = new AbortController();
-  const response = await fetch(`http://localhost:${PORT}/api/live`, {
+  const response = await fetch(`http://localhost:${PORT}/api/live${query}`, {
     headers: { Cookie: cookie },
     signal: controller.signal,
   });
@@ -1382,6 +1382,63 @@ report(
 averyStream.close();
 samStream.close();
 await db.query(`DELETE FROM comments WHERE object_id = $1`, [privateTask.id]);
+
+// --- presence ---------------------------------------------------------------
+//
+// Presence is the set of open streams, so the checks are about connections
+// rather than rows: opening one on a task makes you visible to the people
+// already there, closing it makes you gone, and asking about a task you cannot
+// open tells you nothing at all.
+console.log("\npresence → the connection is the signal\n");
+
+const onTask = async (cookie: string, taskId: string) =>
+  openStream(`${cookie}`, `?scope=${encodeURIComponent(taskId)}`);
+
+// Avery arrives first and sees nobody; Riley arrives second, and Avery is told.
+const averyHere = await onTask(COOKIE, detailTask.id);
+await pause(400);
+report(
+  "the first person on a task is told about nobody",
+  /event: presence/.test(averyHere.heard()) && /"people":\[\]/.test(averyHere.heard())
+    ? null
+    : `heard "${averyHere.heard().slice(0, 200)}"`,
+);
+
+const rileyHere = await onTask(RILEY, detailTask.id);
+await pause(600);
+report(
+  "a second arrival is pushed to the first, by name",
+  averyHere.heard().includes("Riley Kaur") ? null : "the arrival was not announced",
+);
+
+// Closing the stream is leaving. Nothing sweeps, nothing times out.
+rileyHere.close();
+await pause(700);
+const afterLeaving = averyHere.heard();
+report(
+  "and closing the connection is leaving, with nothing to sweep",
+  afterLeaving.lastIndexOf('"people":[]') > afterLeaving.indexOf("Riley Kaur")
+    ? null
+    : "the departure was never announced",
+);
+
+// A scope is a task, and asking about one you cannot open must not answer.
+await revokeHiring(samUserId);
+const samPeeking = await onTask(SAM, privateTask.id);
+const averyOnPrivate = await onTask(COOKIE, privateTask.id);
+await pause(700);
+report(
+  "asking to watch a task you cannot open registers nothing",
+  !/event: presence/.test(samPeeking.heard()) &&
+    !averyOnPrivate.heard().includes("Sam Petrov")
+    ? null
+    : "presence answered for a task the viewer cannot reach",
+);
+
+averyHere.close();
+samPeeking.close();
+averyOnPrivate.close();
+
 
 await db.query(`DELETE FROM comments WHERE object_id = ANY($1::uuid[])`, [
   [commentedTask.id, privateTask.id],

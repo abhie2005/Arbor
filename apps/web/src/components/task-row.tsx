@@ -6,6 +6,7 @@ import { useState } from "react";
 import { archiveTask, cycleStatus, renameTask, setPriority } from "@/server/actions";
 
 import { useServerValue } from "./use-server-value";
+import { Avatar } from "./avatar";
 import { useTaskAction } from "./use-task-action";
 
 export interface TaskRowData {
@@ -101,15 +102,8 @@ export function TaskRow({ task }: { task: TaskRowData }) {
 
       <span className="avatars">
         {task.assignees.map((person) => (
-          <span
-            key={person}
-            className="avatar"
-            style={{ background: avatarColor(person) }}
-            title={person}
-          >
-            {initials(person)}
-          </span>
-        ))}
+            <Avatar key={person} name={person} />
+          ))}
       </span>
 
       <button
@@ -145,24 +139,4 @@ function formatDue(value: string | null, hasTime: boolean) {
   };
 }
 
-function initials(name: string) {
-  return name
-    .split(" ")
-    .map((part) => part[0] ?? "")
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
 
-function avatarColor(name: string) {
-  const hues = [
-    "var(--avatar-1)",
-    "var(--avatar-2)",
-    "var(--avatar-3)",
-    "var(--avatar-4)",
-    "var(--avatar-5)",
-  ];
-  let hash = 0;
-  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return hues[hash % hues.length];
-}

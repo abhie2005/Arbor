@@ -16,6 +16,7 @@ import {
 } from "@/server/actions";
 
 import { Comments } from "./comments";
+import { Presence } from "./presence";
 import { TaskHistory } from "./task-history";
 import { useServerValue } from "./use-server-value";
 import { useTaskAction } from "./use-task-action";
@@ -127,6 +128,10 @@ export function TaskDetail({
             ×
           </button>
         ) : null}
+
+        {/* Last in the row, after the controls: who else is here is context,
+            not something to act on. */}
+        <Presence />
       </div>
 
       {failure ? (

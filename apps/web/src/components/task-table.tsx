@@ -16,6 +16,7 @@ import type { Cell } from "@/server/cells";
 import { archiveTask, cycleStatus, renameTask, setPriority } from "@/server/actions";
 
 import { useServerValue } from "./use-server-value";
+import { Avatar } from "./avatar";
 import { useTaskAction } from "./use-task-action";
 
 /**
@@ -320,14 +321,7 @@ function CellValue({
       return (
         <span className="avatars">
           {cell.names.map((person) => (
-            <span
-              key={person}
-              className="avatar"
-              style={{ background: avatarColor(person) }}
-              title={person}
-            >
-              {initials(person)}
-            </span>
+            <Avatar key={person} name={person} />
           ))}
         </span>
       );
@@ -391,24 +385,4 @@ function formatDate(iso: string, hasTime: boolean) {
   };
 }
 
-function initials(name: string) {
-  return name
-    .split(" ")
-    .map((part) => part[0] ?? "")
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
 
-function avatarColor(name: string) {
-  const hues = [
-    "var(--avatar-1)",
-    "var(--avatar-2)",
-    "var(--avatar-3)",
-    "var(--avatar-4)",
-    "var(--avatar-5)",
-  ];
-  let hash = 0;
-  for (const ch of name) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return hues[hash % hues.length];
-}

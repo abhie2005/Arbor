@@ -44,10 +44,11 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Notification fan-out** | Written inside the transaction that caused them, for direct signals only: assigned, mentioned, replied. Never to someone who cannot open the task, and the inbox filters again on read because access can be revoked afterwards. Rule is pure and in core. |
 | **Inbox** | `/inbox` — the first screen not scoped to one container, permission-scoped per row rather than per page. Unread and everything, opening a row marks it read and goes to the task, mark-read without opening, mark all read. The sidebar badge is the real count, fetched by the shell on every screen (D-085). Read state writes outside the operation layer, deliberately (D-087). |
 | **History** | The activity log's first reader. Every operation has written a row since Phase 2 and no screen read one; the detail page now shows what happened to a task, newest first, with ids resolved to names from what the page already loads (D-091). Scoped by the same `access_index` join as every other read. |
+| **Presence** | Who else is looking at a task, pushed down the same stream. The connection *is* the signal — no table, no heartbeat, nothing to sweep, and gone the instant a tab closes (D-092). A scope is checked with `taskAccess` before a stream is registered on it. Per-process: a second instance would not see the first's viewers. |
 | **Live updates** | Every screen holds an `EventSource` to `/api/live`. A change announces itself with `pg_notify` inside the transaction that made it, so a rollback announces nothing; the route handler checks each nudge against the viewer's access before it leaves, and the browser answers with `router.refresh()` (D-090). A nudge carries the workspace, list and actor — never what changed. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 329 unit tests, 143 live-Postgres checks, 83 server-action checks,
+**Verified:** 329 unit tests, 143 live-Postgres checks, 87 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 ---
@@ -68,14 +69,13 @@ four packages typechecking clean, and the interactions above driven in Chrome.
 
 ## Where to pick up
 
-**Phase 7 has presence left.** The task detail page, comments, both halves of
-notifications and live updates are built. Presence — who else is looking at this
-— is the last piece, and it is the first thing that needs the browser to send
-something rather than only receive.
+**Phase 7 is done.** The task detail page, comments, both halves of
+notifications, the activity log's first reader, live updates and presence are
+all built.
 
 The pass ran as commits verified on all four gates before the next started:
 shell extraction, authorization, the detail page, comments, fan-out, inbox,
-ambient activity, live updates.
+ambient activity, live updates, history, presence.
 
 ### Done — the inbox
 
@@ -154,18 +154,32 @@ inside the transaction that made it (D-090):
   `router.refresh()`, which is the whole update, because the screens are server
   components.
 
-### Next — presence
+### Done — presence
 
-Nobody is started on it, and it is the first thing that needs the browser to
-*send* something — which is the case a WebSocket has to make for itself
-(D-090). The question to settle first is where "who is looking at this" lives:
-a table that heartbeats and is swept, or memory in a process that does not
-exist yet. Neither is obviously right, and the second needs `apps/realtime`.
+Who else is on a task, in the title row, pushed down the stream that was already
+open. The decision is D-092 and the short version is that the connection was
+already tracking exactly this: a stream is open while somebody is looking and
+ends the moment they stop, so there is no table, no heartbeat and nothing stale.
 
-The other loose end live updates left is a **refresh storm on a busy list**:
-every nudge for a list you can see refreshes your page, whether or not anything
-on your screen changed. The nudge carries enough to be smarter — a page could
-ignore lists it is not rendering — and today none of them do.
+It also settled the question live updates left open. Presence looked like the
+case that would force a WebSocket, because it is the browser having something to
+say — and it did not, because `?scope=` says it by opening the connection there.
+
+### Next — Phase 8, or the two things Phase 7 left
+
+Phase 7's own list is empty. Two things it leaves behind, both recorded below:
+
+- **Every nudge refreshes, whether or not it mattered.** The cheapest fix needs
+  the notified user ids in the nudge, which means announcing once per batch
+  after the fan-out rather than per operation in `logActivity`. That is a
+  refactor of the file with the most invariants attached to it, and it deserves
+  its own verified chunk.
+- **Presence is per-process.** Fine on one instance, wrong on two, and the fix
+  is the channel that already exists.
+
+Then **Phase 8 — Depth**: time tracking, goals, dashboards. Time tracking is the
+one with a schema already waiting (`time_entries`), and the one that makes the
+existing reporting questions answerable.
 
 ### Background — why notifications are shaped this way
 
@@ -208,8 +222,12 @@ need something to run it, and `apps/worker` does not exist.
   you can reach re-renders whatever page you are on. Correct and wasteful; the
   nudge names the list, so a page that knows which lists it is showing could
   ignore the rest.
-- **Presence is not built**, and the stream is one-directional — the browser
-  cannot say "I am here" over an `EventSource`.
+- **Presence is per-process** (D-092). One instance sees all of its own
+  viewers and none of another's, so a second Fargate task would silently halve
+  what everyone sees.
+- **Presence is only on the task page.** A list does not show who is looking at
+  it, deliberately — but a *task row* could show who has that task open, and
+  that is a smaller change than it sounds now that the data is on the client.
 - **Ambient read state is all-or-nothing** (D-088). "Mark all read" moves the
   mark; there is no way to dismiss one watched task's activity and keep
   another's. Per-task dismissal would be a table of what you have dismissed

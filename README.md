@@ -147,13 +147,14 @@ connections, and API Gateway's WebSocket API bills per message.
       compiler that already served List and Board. The timeline is the one that
       made the compiler learn something: nested filter clauses, because
       "overlaps this window" is mixed AND and OR.
-- [ ] **7 — Collaboration.** Comments, mentions, the task detail page and the
-      inbox are done; every write is authorized, not merely authenticated.
-      Notifications have both halves: direct signals — assigned, mentioned,
-      replied — written inside the transaction that caused them, and activity on
-      what you watch aggregated at read time, so watching something costs no
-      writes. Screens are live over SSE and Postgres `LISTEN`/`NOTIFY`, with no
-      second service and no Redis. Presence is next.
+- [x] **7 — Collaboration.** Comments, mentions, the task detail page, its
+      history and the inbox; every write is authorized, not merely
+      authenticated. Notifications have both halves: direct signals — assigned,
+      mentioned, replied — written inside the transaction that caused them, and
+      activity on what you watch aggregated at read time, so watching something
+      costs no writes. Screens are live over SSE and Postgres `LISTEN`/`NOTIFY`,
+      and presence is the stream itself — no second service, no Redis, no
+      heartbeat.
 - [ ] **8 — Depth.** Time tracking, goals, dashboards.
 - [ ] **9 — Docs.** CRDT editor, nested pages, backlinks.
 - [ ] **10 — Automations, forms, public API.**

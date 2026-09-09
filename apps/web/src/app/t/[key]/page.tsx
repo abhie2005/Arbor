@@ -80,6 +80,8 @@ export default async function TaskPage({ params }: { params: Promise<{ key: stri
 
   const chrome: ShellChrome = {
     workspaceName: task.workspaceName,
+    // This screen is one task, so it is somewhere people gather (D-092).
+    scope: task.id,
     location: {
       spaceName: task.spaceName,
       folderName: task.folderName,

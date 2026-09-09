@@ -54,6 +54,14 @@ export interface ShellChrome {
   location?: ShellLocation;
   /** Which top-level entry is the current screen, when the screen is one of them. */
   active?: "inbox";
+  /**
+   * The one thing this screen is looking at, when it is one thing — a task id.
+   *
+   * It is what the live stream registers as presence, so it is deliberately not
+   * "the list": people gather on a task, and "seventeen people are on Sprint 24"
+   * is a fact nobody acts on (D-092).
+   */
+  scope?: string;
   viewer: { id: string; name: string };
   /** Empty outside development, which is what hides the switcher (D-034). */
   users: { id: string; name: string }[];
@@ -79,9 +87,10 @@ export function AppShell({
   return (
     <UndoProvider>
       {/* Mounted in the shell so every screen is live, rather than each page
-          remembering to be — the same reason the badge is fetched here. */}
-      <Live viewerId={chrome.viewer.id} />
-
+          remembering to be — the same reason the badge is fetched here. It
+          wraps rather than sits beside, because presence reaches a component
+          inside the page (D-092). */}
+      <Live viewerId={chrome.viewer.id} scope={chrome.scope}>
       <div className="shell">
         <Sidebar chrome={chrome} />
 
@@ -116,6 +125,7 @@ export function AppShell({
           {children}
         </main>
       </div>
+      </Live>
     </UndoProvider>
   );
 }

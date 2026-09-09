@@ -3083,3 +3083,42 @@ select.filter-add option {
   color: var(--text-3);
   white-space: nowrap;
 }
+
+/* --- presence (D-092) ------------------------------------------------------
+   Ephemeral, so it is quiet: a pulse and the faces, at the end of the title
+   row. It appears and disappears on its own, which is exactly why it must not
+   move anything else when it does. */
+
+.presence {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding-left: var(--space-2);
+}
+
+/* The same dot the footer uses for "live", so the two mean the same thing in
+   both places. */
+.presence-live {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: presence-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes presence-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .presence-live {
+    animation: none;
+  }
+}

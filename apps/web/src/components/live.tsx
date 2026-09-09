@@ -1,28 +1,56 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 /**
- * Keeps the screen live.
+ * Keeps the screen live, and says who else is on it.
  *
- * Renders nothing. It holds an `EventSource` open to `/api/live` and calls
- * `router.refresh()` when something the viewer can see has changed — which
- * re-runs the server components of whatever page is mounted and patches the
- * result in, without losing scroll position, focus, or any client state
- * (D-090). Every screen gets it because it is mounted in the shell, so "which
- * pages are live" is not a question anyone has to keep answering.
+ * Renders nothing of its own. It holds one `EventSource` to `/api/live` and
+ * handles the two things that come down it:
  *
- * **The nudge says nothing about what changed**, and this is why that is
- * enough: the page is a server component, so re-running it *is* the update. A
- * renderer that applied deltas by hand would be a second description of every
- * mutation, in a second shape, kept in step with the first by nobody.
+ * - a **change** — "something happened in list L" — answered with
+ *   `router.refresh()`, which re-runs the server components of whatever page is
+ *   mounted and patches the result in, keeping scroll, focus and client state
+ *   (D-090). The nudge says nothing about *what* changed, because the page is a
+ *   server component and re-running it is the update.
+ * - a **presence** — the people currently looking at this scope — put into
+ *   context instead. Presence is ephemeral and belongs to one small component;
+ *   re-rendering a page every time somebody opens a tab would be absurd
+ *   (D-092).
+ *
+ * One connection for both, and the scope is in its URL: changing what you are
+ * looking at reopens the stream, which is the browser telling the server where
+ * it is without ever sending a message.
  */
-export function Live({ viewerId }: { viewerId: string }) {
+
+export interface Person {
+  id: string;
+  name: string;
+}
+
+const PresenceContext = createContext<Person[]>([]);
+
+/** The people on this screen with you. Empty on screens that have no scope. */
+export function useWatching(): Person[] {
+  return useContext(PresenceContext);
+}
+
+export function Live({
+  viewerId,
+  scope,
+  children,
+}: {
+  viewerId: string;
+  /** What this screen is looking at, when it is one thing. */
+  scope?: string;
+  children: ReactNode;
+}) {
   const router = useRouter();
+  const [people, setPeople] = useState<Person[]>([]);
 
   useEffect(() => {
-    const source = new EventSource("/api/live");
+    const source = new EventSource(scope ? `/api/live?scope=${encodeURIComponent(scope)}` : "/api/live");
     let pending: ReturnType<typeof setTimeout> | undefined;
 
     source.onmessage = (event) => {
@@ -51,11 +79,29 @@ export function Live({ viewerId }: { viewerId: string }) {
       pending = setTimeout(() => router.refresh(), 250);
     };
 
+    source.addEventListener("presence", (event) => {
+      try {
+        const update = JSON.parse((event as MessageEvent<string>).data) as {
+          scope: string;
+          people: Person[];
+        };
+        // Already "who else": the server filters this viewer out when it builds
+        // the payload, so there is one place that knows the rule.
+        setPeople(update.people);
+      } catch {
+        // A payload that will not parse is a publisher bug, not a reason to
+        // tear the stream down.
+      }
+    });
+
     return () => {
       clearTimeout(pending);
       source.close();
+      // The people on the old scope are not the people on the new one, and a
+      // stale set is worse than none while the next stream opens.
+      setPeople([]);
     };
-  }, [router, viewerId]);
+  }, [router, viewerId, scope]);
 
-  return null;
+  return <PresenceContext.Provider value={people}>{children}</PresenceContext.Provider>;
 }

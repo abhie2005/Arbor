@@ -119,6 +119,7 @@ reasoning in place. The reversals are often the most interesting part.
 | [D-089](#d-089) | One stream, two halves | Frontend |
 | [D-090](#d-090) | A nudge over Postgres, not a delta over Redis | Architecture |
 | [D-091](#d-091) | The log stores ids; the page owes the words | Frontend |
+| [D-092](#d-092) | The connection is the presence | Architecture |
 
 ---
 
@@ -2670,3 +2671,53 @@ stops being read.
 *In one sentence:* the log is a record of operations and the screen is a
 sentence for a person, and the translation belongs where the vocabulary already
 is.
+
+### D-092
+**The connection is the presence** · 2026-09-08 · active
+
+Presence is the set of open `/api/live` streams and what each one says it is
+looking at. There is no `presence` table, no heartbeat from the browser, nothing
+to sweep, and no write anywhere in it.
+
+**The two designs on the table were a table and a service.** A row per viewer,
+upserted every twenty seconds and swept on a timeout, is the version that works
+with what already exists — and it spends writes while nobody is doing anything,
+which nothing else in this system does, and it is wrong for as long as the
+timeout: someone who closed their laptop is "here" for another forty seconds.
+A WebSocket service holds it in memory and needs `apps/realtime`, a second
+deployable and a second place for auth to be wrong.
+
+**The stream is already the thing both were reconstructing.** A connection is
+open exactly while somebody is looking, and it ends the moment they close the
+tab, navigate away or lose the network — the server finds out at once, from the
+request being aborted, which is the same instant a heartbeat scheme would still
+be waiting out. So presence costs nothing to keep and is never stale.
+
+**It also keeps SSE honest.** The argument for a stream over a socket was that
+the browser has nothing to send (D-090), and presence looked like the
+counter-example. It is not: `?scope=` is the browser saying where it is by
+*opening the connection there*. Changing what you are looking at reopens the
+stream, one request per navigation, next to the one the navigation was already
+making.
+
+**The scope is a task, not a list.** People gather on the thing they are working
+on; "seventeen people are on Sprint 24" is a fact nobody acts on, and it would
+make presence noisy in exactly the place a list view has no room for it.
+
+**Checked, not trusted.** A scope arrives in a query string, so it is verified
+with `taskAccess` before the stream is registered on it. Without that, "who is
+looking at this" would answer for a task the asker cannot open, which reports
+activity on a private list to someone with no grant on it (D-080). The payload
+is also "who *else*", filtered server-side, because the server is the only side
+that knows which stream belongs to whom.
+
+**What it costs is a real limit, and it is per-process.** A second server
+instance knows nothing of the first's viewers, so with two Fargate tasks you
+would see only the people who share yours. The fix is the channel that is
+already there — each process publishing its own set, others holding it with a
+TTL — and it is not built, because one process is what runs today and guessing
+the shape of that message before there are two is how you get a message shape
+that fits neither.
+
+*In one sentence:* presence was already being tracked by the transport, and the
+cheapest correct version was to stop pretending it was not.
