@@ -17,10 +17,11 @@ import {
 
 import { Comments } from "./comments";
 import { Presence } from "./presence";
+import { TaskTime } from "./task-time";
 import { TaskHistory } from "./task-history";
 import { useServerValue } from "./use-server-value";
 import { useTaskAction } from "./use-task-action";
-import type { CommentRecord, HistoryEntry } from "@arbor/db";
+import type { CommentRecord, HistoryEntry, TimeEntryRecord } from "@arbor/db";
 import type { DetailField, Person, Subtask } from "@/server/task";
 
 /**
@@ -58,6 +59,9 @@ export interface TaskDetailData {
   subtasks: Subtask[];
   descriptionText: string;
   comments: CommentRecord[];
+  timeEstimateMs: number | null;
+  timeEntries: TimeEntryRecord[];
+  loadedAt: string;
 }
 
 const PRIORITIES = [
@@ -263,6 +267,19 @@ export function TaskDetail({
           />
         ))}
       </dl>
+
+      {/* Between the fields and the conversation: tracked time is a fact about
+          the task, and the estimate it is measured against is one of the fields
+          directly above it. */}
+      <TaskTime
+        taskId={task.id}
+        entries={task.timeEntries}
+        estimateMs={task.timeEstimateMs}
+        canEdit={task.canEdit}
+        viewerId={viewerId}
+        loadedAt={task.loadedAt}
+        act={act}
+      />
 
       <Comments
         taskId={task.id}

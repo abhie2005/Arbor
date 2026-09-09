@@ -2831,3 +2831,74 @@ that is not theirs.
 
 *In one sentence:* the timer belongs to the person, the task belongs to the
 list, and only the first of those governs stopping.
+
+### D-096
+**The estimate is the task's, and `task_estimates` stays empty** · 2026-09-09 · active
+
+Tracked time is compared against `tasks.time_estimate_ms`. The `task_estimates`
+table — one row per assignee per task — is migrated, indexed, described in a
+column comment, and written to by nothing.
+
+**Its comment says what it is for and the comment is not wrong.** "Per-assignee
+estimate splits, so a shared task can be planned per person" is a real thing
+teams do, and the table is the right shape for it. What it is not is a thing
+that can be turned on without deciding what "the estimate" then means.
+
+**Making it authoritative would have made an existing operation lie.**
+`timeEstimateMs` is already a `TaskField`: `setField` writes it, `invert` undoes
+it, the activity log records it as "changed estimate", and the table view has a
+column for it. Deriving that column from a `SUM` over `task_estimates` turns
+every one of those into a description of something that no longer happens — the
+operation would still be accepted, still be logged, still be undoable, and would
+no longer be what set the number. That is the worst kind of change, because
+nothing fails.
+
+**The rejected third option was to build both** — a task-level plan and
+per-person splits constrained to sum to no more than it. It is the honest
+model and it is two editors, two screens and a constraint, none of which anyone
+has asked for while the demo workspace has four people and no shared tasks.
+
+**What it costs.** A shared task cannot be planned per person, which is exactly
+what the table was designed to allow. When that is wanted, the way in is to make
+`task_estimates` the detail and the task-level column the roll-up — and to do it
+*with* the operation, so that `setField` on an estimate becomes a refusal rather
+than a write that silently means something else.
+
+*In one sentence:* an unused table is free, and a used column that quietly
+stopped being the source of truth is not.
+
+### D-097
+**An operation has to survive JSON** · 2026-09-09 · active
+
+`TimeEntryValues` holds ISO strings, not `Date`s. Every instant that travels on
+an operation is a string.
+
+**Found by `check:actions`, which is the only thing that could have found it.**
+The time operations were written with `startedAt: Date`, which typechecks,
+passes 32 unit tests, passes 21 checks against real Postgres, and throws
+`a.startedAt.getTime is not a function` the first time an undo happens — because
+an operation is not a value inside one process. The server hands it to the
+client as an inverse, the client holds it on the undo stack, and `undo` posts it
+back to be applied. `JSON.stringify` turns a `Date` into a string and
+`JSON.parse` does not turn it back.
+
+**Nothing else in the union had noticed**, and it is worth being precise about
+why, because it looks like the rule was always being followed. It was not:
+`setField`'s `from` and `to` are `unknown`, and a due date on one of them
+crosses the wire as a string, reaches Postgres, and is accepted without comment.
+The convention survived on the strength of nobody ever calling a `Date` method
+on it. Time entries were the first operation to store a typed instant and the
+first to do arithmetic with one.
+
+**The rejected fix was to revive the operation at the boundary** — a
+`parseOperation` that `undo` calls to turn wire shapes back into typed ones.
+That is the general answer and it puts a second definition of every operation's
+shape next to the first, kept in step by hand. Making the operation JSON all the
+way through means there is nothing to revive.
+
+**The check that would have caught it now exists**: every time operation is
+round-tripped through `JSON.parse(JSON.stringify(…))` and then handed to
+`isNoop`, `activityVerb` and `invert`. It fails if a `Date` comes back.
+
+*In one sentence:* the undo stack is a network protocol, and it had been getting
+away with pretending otherwise.

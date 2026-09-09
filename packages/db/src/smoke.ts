@@ -2031,10 +2031,15 @@ async function main() {
 
   const timeTask = await one(`SELECT id FROM tasks WHERE key = 'ENG-415'`);
   const otherTask = await one(`SELECT id FROM tasks WHERE key = 'ENG-417'`);
-  await pool.query(`DELETE FROM time_entries WHERE user_id = $1`, [viewer.id]);
+  // Cleared by task rather than by person: a run that died halfway through
+  // leaves somebody else's entries on these tasks, and a count that depends on
+  // who ran last is a check that fails for a reason it cannot name.
+  await pool.query(`DELETE FROM time_entries WHERE task_id = ANY($1::uuid[])`, [
+    [timeTask.id, otherTask.id],
+  ]);
 
   const timerId = randomUUID();
-  const startedAt = new Date(Date.now() - 90 * 60_000);
+  const startedAt = new Date(Date.now() - 90 * 60_000).toISOString();
 
   await applyOperations(
     [
@@ -2086,7 +2091,12 @@ async function main() {
             entryId: randomUUID(),
             taskId: otherTask.id!,
             userId: viewer.id!,
-            values: { startedAt: new Date(), endedAt: null, description: null, isBillable: false },
+            values: {
+              startedAt: new Date().toISOString(),
+              endedAt: null,
+              description: null,
+              isBillable: false,
+            },
           },
         ],
         { actorId: viewer.id!, connection: pool },
@@ -2104,7 +2114,12 @@ async function main() {
             entryId: randomUUID(),
             taskId: timeTask.id!,
             userId: owner.id!,
-            values: { startedAt: new Date(), endedAt: null, description: null, isBillable: false },
+            values: {
+              startedAt: new Date().toISOString(),
+              endedAt: null,
+              description: null,
+              isBillable: false,
+            },
           },
         ],
         { actorId: owner.id!, connection: pool },
@@ -2126,8 +2141,8 @@ async function main() {
             taskId: otherTask.id!,
             userId: owner.id!,
             values: {
-              startedAt: new Date("2026-01-02T10:00:00Z"),
-              endedAt: new Date("2026-01-02T09:00:00Z"),
+              startedAt: "2026-01-02T10:00:00Z",
+              endedAt: "2026-01-02T09:00:00Z",
               description: null,
               isBillable: false,
             },
@@ -2140,7 +2155,7 @@ async function main() {
 
   // Stopping. The duration is computed from the two stored instants in SQL, so
   // no caller can hand over one that disagrees with its own timestamps.
-  const endedAt = new Date(startedAt.getTime() + 90 * 60_000);
+  const endedAt = new Date(new Date(startedAt).getTime() + 90 * 60_000).toISOString();
   const stop: Operation = {
     kind: "setTimeEntry",
     entryId: timerId,
@@ -2205,8 +2220,8 @@ async function main() {
     taskId: timeTask.id!,
     userId: viewer.id!,
     values: {
-      startedAt: new Date("2026-09-01T09:00:00Z"),
-      endedAt: new Date("2026-09-01T09:30:00Z"),
+      startedAt: "2026-09-01T09:00:00Z",
+      endedAt: "2026-09-01T09:30:00Z",
       description: null,
       isBillable: false,
     },
@@ -2298,7 +2313,9 @@ async function main() {
     ),
   );
 
-  await pool.query(`DELETE FROM time_entries WHERE user_id = $1`, [viewer.id]);
+  await pool.query(`DELETE FROM time_entries WHERE task_id = ANY($1::uuid[])`, [
+    [timeTask.id, otherTask.id],
+  ]);
 
   // --- saved views ---------------------------------------------------------
   console.log("\nsaved views → validated on write\n");

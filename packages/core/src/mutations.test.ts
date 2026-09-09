@@ -315,8 +315,8 @@ describe("comment operations", () => {
 
 describe("time entries as operations", () => {
   const ENTRY = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-  const started = new Date("2026-09-09T10:00:00.000Z");
-  const ended = new Date("2026-09-09T11:30:00.000Z");
+  const started = "2026-09-09T10:00:00.000Z";
+  const ended = "2026-09-09T11:30:00.000Z";
 
   const running: Operation = {
     kind: "createTimeEntry",
@@ -385,7 +385,7 @@ describe("time entries as operations", () => {
       isNoop({
         ...stop,
         from: { startedAt: started, endedAt: ended, description: null, isBillable: false },
-        to: { startedAt: new Date(started), endedAt: new Date(ended), description: null, isBillable: false },
+        to: { startedAt: "2026-09-09T10:00:00Z", endedAt: "2026-09-09T11:30:00Z", description: null, isBillable: false },
       } as Operation),
     ).toBe(true);
   });
@@ -394,6 +394,27 @@ describe("time entries as operations", () => {
     // The column is nullable in the schema; an entry against no task would be a
     // write `undo` could not check.
     expect([running, stop, invert(running)].map((op) => op.taskId)).toEqual([TASK, TASK, TASK]);
+  });
+
+  /**
+   * The one that was missing.
+   *
+   * An operation is not a value in this process — it is handed to the client as
+   * an inverse, held on the undo stack, and posted back to be applied. So it
+   * has to survive JSON, and a `Date` does not: it arrives as a string, and
+   * every helper that called `.getTime()` on it threw where nothing could see
+   * it (D-097). Nothing else in the union had noticed, because nothing else
+   * stored a typed Date.
+   */
+  it("survives the round trip an undo actually makes", () => {
+    for (const op of [running, stop, invert(running)]) {
+      const wire = JSON.parse(JSON.stringify(op)) as Operation;
+
+      expect(() => isNoop(wire)).not.toThrow();
+      expect(() => activityVerb(wire)).not.toThrow();
+      expect(() => invert(wire)).not.toThrow();
+      expect(wire).toEqual(op);
+    }
   });
 
   it("undoes 'start a second timer stops the first' in one batch, backwards", () => {

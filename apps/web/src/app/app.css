@@ -3122,3 +3122,254 @@ select.filter-add option {
     animation: none;
   }
 }
+
+/* --- tracked time (D-093) -------------------------------------------------- */
+
+.time h2 {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.time-total {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pushed to the end of the heading row, which is where every other primary
+   action on this page sits. */
+.time-toggle {
+  margin-left: auto;
+  font: inherit;
+  font-size: var(--text-meta);
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-2);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 2px var(--space-3);
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.time-toggle:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+/* A running timer is the one control on this page that is announcing a state
+   rather than offering an action, so it is the one that carries colour. */
+.time-toggle[data-running] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.time-elsewhere {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+.time-estimate {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+}
+
+.time-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+
+.time-bar-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  overflow: hidden;
+}
+
+.time-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* Over the estimate. The bar itself stops at full — the colour is what says
+   which side of the line this is, because a bar that grew past its track would
+   need a track that means something different. */
+.time-bar-fill[data-over="true"] {
+  background: var(--danger);
+}
+
+.time-bar-label {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.time-estimate-field,
+.time-billable {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.time-unit {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+.time-log,
+.time-editor {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.time-log input[type="text"] {
+  flex: 1;
+  min-width: 8rem;
+}
+
+.time-log input,
+.time-editor input,
+.time-estimate-field input {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 2px var(--space-2);
+}
+
+.time-log input[type="number"],
+.time-editor input[type="number"],
+.time-estimate-field input[type="number"] {
+  width: 4.5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.time-log button,
+.time-editor button,
+.time-actions button {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 2px var(--space-3);
+  cursor: pointer;
+}
+
+.time-log button:hover:not(:disabled),
+.time-editor button:hover,
+.time-actions button:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.time-log button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.time-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.time-entry {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-meta);
+}
+
+.time-entry[data-running] .time-length {
+  color: var(--accent);
+}
+
+.time-who {
+  color: var(--text-2);
+}
+
+.time-length {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.time-note {
+  color: var(--text-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.time-flag {
+  font-size: var(--text-mono);
+  color: var(--text-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-2);
+}
+
+.time-when {
+  margin-left: auto;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.time-actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.time-delete {
+  color: var(--text-3);
+}
+
+.time-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* The editor opens under the row it belongs to rather than replacing it, so
+   the length being corrected stays visible while it is corrected. */
+.time-editor {
+  flex-basis: 100%;
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-3);
+  border-left: 2px solid var(--line);
+}
+
+.time-empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}

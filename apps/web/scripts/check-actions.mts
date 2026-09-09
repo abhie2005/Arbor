@@ -1289,6 +1289,202 @@ report(
 
 await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskStatus!, [detailTask.id, beforeHistory.status_id]);
 
+// --- tracked time -----------------------------------------------------------
+//
+// The seam these checks exist for is visible here twice. `startTimer` returns a
+// batch of two operations, and the undo stack has to reverse it in the right
+// order; and `stopTimer` takes no arguments at all, so the check has to prove
+// the server found the right entry rather than trusting an id the client sent.
+console.log("\ntime tracking → a timer, a batch, and an undo that reverses it\n");
+
+// The whole table, not this section's own rows. Nothing else in the app writes
+// to it, a run that dies halfway leaves a *running* timer behind, and a running
+// timer keeps growing — so the next run's totals are off by however long it sat
+// there, which is a failure that names the wrong thing.
+await db.query(`DELETE FROM time_entries`);
+
+const otherTimed = await one(`SELECT id FROM tasks WHERE key = 'ENG-417'`);
+
+const started = await callOn(DETAIL_URL, DETAIL_ACTIONS.startTimer!, [detailTask.id]);
+const firstTimer = await one(
+  `SELECT e.id, e.task_id, e.ended_at, e.duration_ms FROM time_entries e
+   JOIN users u ON u.id = e.user_id
+   WHERE u.email = 'avery@example.com' AND e.ended_at IS NULL`,
+);
+report(
+  "starting a timer writes a running entry against the task",
+  firstTimer?.task_id === detailTask.id && firstTimer.ended_at === null
+    ? null
+    : "no running entry appeared",
+);
+
+const timerVerb = await one(
+  `SELECT verb FROM activity WHERE object_id = $1 ORDER BY at DESC LIMIT 1`,
+  [detailTask.id],
+);
+report(
+  "and an activity row, because the timer does not write its own SQL",
+  timerVerb?.verb === "task.timer_started" ? null : `logged ${timerVerb?.verb}`,
+);
+
+// The rule the schema asked for, made pleasant: the second timer stops the
+// first rather than being refused, in one batch so it is one undo entry.
+const switched = await callOn(DETAIL_URL, DETAIL_ACTIONS.startTimer!, [otherTimed.id]);
+const runningNow = await db.query(
+  `SELECT e.id, e.task_id FROM time_entries e JOIN users u ON u.id = e.user_id
+   WHERE u.email = 'avery@example.com' AND e.ended_at IS NULL`,
+);
+report(
+  "starting a second timer leaves exactly one running, on the new task",
+  runningNow.rows.length === 1 && runningNow.rows[0].task_id === otherTimed.id
+    ? null
+    : `${runningNow.rows.length} timers running`,
+);
+
+const firstAfterSwitch = await one(`SELECT ended_at, duration_ms FROM time_entries WHERE id = $1`, [
+  firstTimer.id,
+]);
+report(
+  "and stops the first, denormalizing a duration nobody typed",
+  firstAfterSwitch.ended_at !== null && Number(firstAfterSwitch.duration_ms) >= 0
+    ? null
+    : "the first timer was left running or has no duration",
+);
+
+// Two operations, one entry on the stack. Undoing has to remove the new entry
+// *before* restarting the old one, or there is an instant with two running.
+const switchInverse = switched.text.match(/\[\{"kind":"deleteTimeEntry".*?\}\]/);
+report(
+  "the switch comes back as one batch whose first step removes the new entry",
+  switchInverse ? null : `no invertible batch in the response: ${switched.text.slice(0, 200)}`,
+);
+
+const timerStack = new UndoStack(20);
+timerStack.push(JSON.parse(switchInverse![0]));
+await callOn("http://localhost:" + PORT + "/", PAGE_ACTIONS.undo!, [timerStack.pop()]);
+
+const afterTimerUndo = await db.query(
+  `SELECT e.id, e.task_id FROM time_entries e JOIN users u ON u.id = e.user_id
+   WHERE u.email = 'avery@example.com' AND e.ended_at IS NULL`,
+);
+report(
+  "and undo puts the first timer back, with the second gone",
+  afterTimerUndo.rows.length === 1 && afterTimerUndo.rows[0].id === firstTimer.id
+    ? null
+    : `after undo: ${JSON.stringify(afterTimerUndo.rows)}`,
+);
+
+// No task id in the call. The server has to find the running entry itself —
+// the shell's readout is only as fresh as its last render, and the timer it is
+// showing may already have been stopped in another tab.
+const stopped = await callOn(DETAIL_URL, DETAIL_ACTIONS.stopTimer!, []);
+const nothingRunning = await db.query(
+  `SELECT e.id FROM time_entries e JOIN users u ON u.id = e.user_id
+   WHERE u.email = 'avery@example.com' AND e.ended_at IS NULL`,
+);
+report(
+  "stopping takes no task id and finds the running entry itself",
+  nothingRunning.rows.length === 0 ? null : "a timer is still running",
+);
+report(
+  "and returns an inverse that would start it again",
+  stopped.text.includes('"kind":"setTimeEntry"') ? null : "no inverse came back",
+);
+
+// Logging after the fact: minutes at the boundary, two instants in the table.
+await callOn(DETAIL_URL, DETAIL_ACTIONS.logTime!, [detailTask.id, 45, "Pairing on the compiler", true]);
+const logged = await one(
+  `SELECT e.duration_ms, e.description, e.is_billable, e.started_at, e.ended_at
+   FROM time_entries e JOIN users u ON u.id = e.user_id
+   WHERE u.email = 'avery@example.com' AND e.description = 'Pairing on the compiler'`,
+);
+report(
+  "logging 45 minutes stores 45 minutes, computed from the two instants",
+  Number(logged?.duration_ms) === 45 * 60_000 ? null : `stored ${logged?.duration_ms}`,
+);
+report(
+  "and keeps the billable flag it was given",
+  String(logged.is_billable) === "true" ? null : "the flag was dropped",
+);
+
+// Refused the way every task action refuses: a thrown message that
+// `useTaskAction` catches and shows, rather than a returned result object —
+// those are for the settings forms, which have a field to render an error
+// beside.
+const beforeBadLog = await one(`SELECT count(*) AS n FROM time_entries WHERE task_id = $1`, [
+  detailTask.id,
+]);
+const badLog = await callOn(DETAIL_URL, DETAIL_ACTIONS.logTime!, [detailTask.id, 0, "", false]);
+const afterBadLog = await one(`SELECT count(*) AS n FROM time_entries WHERE task_id = $1`, [
+  detailTask.id,
+]);
+report(
+  "logging nothing is refused, with a sentence and no row",
+  /minutes/i.test(badLog.text) && afterBadLog.n === beforeBadLog.n
+    ? null
+    : `status ${badLog.status}, rows ${beforeBadLog.n} → ${afterBadLog.n}`,
+);
+
+// Somebody else's entry, in the same words as one that does not exist — telling
+// the two apart would say which ids are real.
+const entryOfAverys = await one(
+  `SELECT e.id FROM time_entries e JOIN users u ON u.id = e.user_id
+   WHERE u.email = 'avery@example.com' AND e.description = 'Pairing on the compiler'`,
+);
+const notYours = await callOn(
+  DETAIL_URL,
+  DETAIL_ACTIONS.deleteTimeEntry!,
+  [entryOfAverys.id],
+  RILEY,
+);
+const stillThere = await one(`SELECT id FROM time_entries WHERE id = $1`, [entryOfAverys.id]);
+report(
+  "somebody else cannot delete your time entry",
+  stillThere && /no longer exists/.test(notYours.text) ? null : "another person's entry was deleted",
+);
+
+// Starting a timer needs edit on the task; stopping your own never does
+// (D-095). Aimed at the private task rather than at this section's own, because
+// the sharing checks above leave Sam holding grants on the engineering lists —
+// a check pointed there passes on a fresh database and fails on the next run.
+const cannotStart = await callOn(DETAIL_URL, DETAIL_ACTIONS.startTimer!, [privateTask.id], SAM);
+const strangerTimer = await one(
+  `SELECT e.id FROM time_entries e JOIN users u ON u.id = e.user_id
+   WHERE u.email = 'sam@example.com'`,
+);
+report(
+  "starting a timer on a task you cannot reach is refused",
+  /no longer exists|permission/.test(cannotStart.text) && !strangerTimer
+    ? null
+    : "a stranger started a timer",
+);
+
+// The estimate is the task-level column (D-096), so it is a setField and lands
+// in the same log and the same undo stack as every other field.
+await callOn(DETAIL_URL, DETAIL_ACTIONS.setTimeEstimate!, [detailTask.id, 120]);
+const estimated = await one(`SELECT time_estimate_ms FROM tasks WHERE id = $1`, [detailTask.id]);
+report(
+  "setting an estimate writes the task-level column, in milliseconds",
+  Number(estimated.time_estimate_ms) === 120 * 60_000
+    ? null
+    : `stored ${estimated.time_estimate_ms}`,
+);
+report(
+  "and task_estimates stays empty, because nothing writes to it yet",
+  (await db.query(`SELECT 1 FROM task_estimates LIMIT 1`)).rows.length === 0
+    ? null
+    : "something wrote a per-assignee estimate",
+);
+
+const detailWithTime = await (await fetch(DETAIL_URL, { headers: { Cookie: COOKIE } })).text();
+report(
+  "the page renders the tracked total against the estimate",
+  detailWithTime.includes("45m of 2h") ? null : "the time panel did not render the comparison",
+);
+
+await callOn(DETAIL_URL, DETAIL_ACTIONS.setTimeEstimate!, [detailTask.id, null]);
+await db.query(`DELETE FROM time_entries`);
+
 // --- the live stream --------------------------------------------------------
 //
 // The first route handler in the app, and the only place a change meets a

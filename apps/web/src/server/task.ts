@@ -11,9 +11,11 @@ import {
 } from "@arbor/core";
 import {
   type CommentRecord,
+  type TimeEntryRecord,
   fieldsAvailableOn,
   listTaskTypes,
   loadComments,
+  loadTaskTime,
   pool,
   resolveStatusSetFor,
   taskAccess,
@@ -103,6 +105,23 @@ export interface TaskDetail {
   fields: DetailField[];
   subtasks: Subtask[];
 
+  /**
+   * The task-level estimate, in milliseconds — the one tracked time is compared
+   * against (D-096). `task_estimates` is per-assignee and stays empty.
+   */
+  timeEstimateMs: number | null;
+  /** Everyone's tracked time on this task, newest first. */
+  timeEntries: TimeEntryRecord[];
+  /**
+   * When the server assembled this page.
+   *
+   * A running timer has to tick, ticking needs a `now`, and the server and the
+   * browser do not have the same one — reading a clock during render is a
+   * hydration mismatch. So the first frame is measured against this, and the
+   * browser's own clock takes over on mount.
+   */
+  loadedAt: string;
+
   /** Null when there is none, or when what is stored will not parse (D-083). */
   description: RichDoc | null;
   /** The same, as text, so the textarea has something to start from. */
@@ -177,6 +196,8 @@ interface TaskRow {
   completed_at: Date | null;
   archived_at: Date | null;
   created_by_name: string | null;
+  /** bigint, so node-postgres hands it over as a string. */
+  time_estimate_ms: string | null;
   workspace_id: string;
   workspace_name: string;
   home_list_id: string;
@@ -206,6 +227,7 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
             t.due_at, t.due_has_time, t.start_at, t.start_has_time,
             t.task_type_id, t.parent_task_id, t.description,
             t.created_at, t.updated_at, t.completed_at, t.archived_at,
+            t.time_estimate_ms,
             cu.name AS created_by_name,
             w.id AS workspace_id, w.name AS workspace_name,
             l.id AS home_list_id, l.name AS list_name,
@@ -237,6 +259,7 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
     parent,
     listCount,
     comments,
+    timeEntries,
   ] = await Promise.all([
       resolveStatusSetFor(row.workspace_id, row.home_list_id, connection),
       fieldsAvailableOn(row.workspace_id, row.home_list_id, row.task_type_id, connection),
@@ -285,6 +308,10 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
         [row.home_list_id],
       ),
       loadComments(taskId, connection),
+      // Tracked time is task content like a comment is, so it loads with the
+      // task rather than beside it. Not scoped again here: `taskAccess` above
+      // is what decides whether any of this page exists for this viewer.
+      loadTaskTime(taskId, connection),
     ]);
 
   // Stored JSON is untrusted input even from our own table (D-018): it was
@@ -360,6 +387,9 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
     description,
     descriptionText: description ? renderPlain(description) : "",
     comments,
+    timeEstimateMs: row.time_estimate_ms === null ? null : Number(row.time_estimate_ms),
+    timeEntries,
+    loadedAt: new Date().toISOString(),
     subtasks: subtasks.rows.map((s) => ({
       id: s.id,
       key: s.key,

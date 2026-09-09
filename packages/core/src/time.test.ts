@@ -16,8 +16,8 @@ const NOW = new Date("2026-09-09T12:00:00.000Z");
 
 function entry(patch: Partial<TimeEntryValues> = {}): TimeEntryValues {
   return {
-    startedAt: new Date("2026-09-09T10:00:00.000Z"),
-    endedAt: new Date("2026-09-09T11:30:00.000Z"),
+    startedAt: "2026-09-09T10:00:00.000Z",
+    endedAt: "2026-09-09T11:30:00.000Z",
     description: null,
     isBillable: false,
     ...patch,
@@ -54,36 +54,36 @@ describe("validateTimeEntry", () => {
   });
 
   it("refuses an entry that ends before it starts", () => {
-    const backwards = entry({ endedAt: new Date("2026-09-09T09:00:00.000Z") });
+    const backwards = entry({ endedAt: "2026-09-09T09:00:00.000Z" });
     expect(() => validateTimeEntry(backwards, NOW)).toThrow(TimeEntryInvalid);
   });
 
   it("refuses a zero-length entry", () => {
-    const instant = entry({ endedAt: new Date("2026-09-09T10:00:00.000Z") });
+    const instant = entry({ endedAt: "2026-09-09T10:00:00.000Z" });
     expect(() => validateTimeEntry(instant, NOW)).toThrow(TimeEntryInvalid);
   });
 
   it("refuses a start in the future", () => {
-    const later = entry({ startedAt: new Date("2026-09-10T10:00:00.000Z"), endedAt: null });
+    const later = entry({ startedAt: "2026-09-10T10:00:00.000Z", endedAt: null });
     expect(() => validateTimeEntry(later, NOW)).toThrow(/future/);
   });
 
   it("tolerates a start a few seconds ahead, because two clocks disagree", () => {
     // Postgres runs in a VM here and drifts tens of milliseconds either way. A
     // timer started this instant must not be refused for it.
-    const skewed = entry({ startedAt: new Date(NOW.getTime() + 20_000), endedAt: null });
+    const skewed = entry({ startedAt: new Date(NOW.getTime() + 20_000).toISOString(), endedAt: null });
     expect(() => validateTimeEntry(skewed, NOW)).not.toThrow();
   });
 
   it("refuses a date that is not one, rather than summing NaN later", () => {
-    const broken = entry({ startedAt: new Date("nonsense") });
+    const broken = entry({ startedAt: "nonsense" });
     expect(() => validateTimeEntry(broken, NOW)).toThrow(TimeEntryInvalid);
   });
 
   it("accepts an entry left running over a weekend", () => {
     // No maximum length on purpose: the honest answer to a forgotten timer is a
     // long entry somebody can correct, not a refusal or a silent truncation.
-    const friday = entry({ startedAt: new Date("2026-09-04T17:00:00.000Z"), endedAt: null });
+    const friday = entry({ startedAt: "2026-09-04T17:00:00.000Z", endedAt: null });
     expect(() => validateTimeEntry(friday, NOW)).not.toThrow();
   });
 });
@@ -97,8 +97,14 @@ describe("sameTimeEntry", () => {
     expect(sameTimeEntry(entry({ description: null }), entry({ description: "" }))).toBe(true);
   });
 
+  it("compares instants, not spellings", () => {
+    // The same moment has more than one ISO spelling, and a form that
+    // re-serializes an entry it did not change must not read as an edit.
+    expect(sameTimeEntry(entry(), entry({ endedAt: "2026-09-09T11:30:00Z" }))).toBe(true);
+  });
+
   it("sees a changed end", () => {
-    const later = entry({ endedAt: new Date("2026-09-09T11:31:00.000Z") });
+    const later = entry({ endedAt: "2026-09-09T11:31:00.000Z" });
     expect(sameTimeEntry(entry(), later)).toBe(false);
   });
 

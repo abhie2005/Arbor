@@ -21,13 +21,30 @@
  * Tuesday" without waiting.
  */
 
-/** What an entry says about itself. Everything else about it is derived. */
+/**
+ * What an entry says about itself. Everything else about it is derived.
+ *
+ * **The instants are ISO strings, not `Date`s, because an operation has to
+ * survive JSON** (D-097). Operations cross the wire in both directions: the
+ * server hands one back as an inverse, the client holds it on the undo stack,
+ * and `undo` posts it back to be applied. A `Date` does not make that round
+ * trip — it arrives as a string, and every helper that called `.getTime()` on
+ * it threw. Nothing else in the union had noticed, because nothing else stored
+ * a typed `Date`: `setField`'s dates are `unknown` and reach Postgres, which
+ * accepts an ISO string without comment.
+ */
 export interface TimeEntryValues {
-  startedAt: Date;
+  /** ISO 8601, UTC. */
+  startedAt: string;
   /** Null while it is running. The whole state machine is this one field. */
-  endedAt: Date | null;
+  endedAt: string | null;
   description: string | null;
   isBillable: boolean;
+}
+
+/** An instant from the wire. `NaN` is a real answer here — `validate` refuses it. */
+function at(value: string): number {
+  return new Date(value).getTime();
 }
 
 export class TimeEntryInvalid extends Error {}
@@ -56,8 +73,8 @@ export function isRunning(values: TimeEntryValues): boolean {
  * the two agree because they are the same function over different `now`s.
  */
 export function entryDurationMs(values: TimeEntryValues, now: Date = new Date()): number {
-  const end = values.endedAt ?? now;
-  return Math.max(0, end.getTime() - values.startedAt.getTime());
+  const end = values.endedAt === null ? now.getTime() : at(values.endedAt);
+  return Math.max(0, end - at(values.startedAt));
 }
 
 /**
@@ -76,30 +93,37 @@ export function entryDurationMs(values: TimeEntryValues, now: Date = new Date())
  * work somebody actually did.
  */
 export function validateTimeEntry(values: TimeEntryValues, now: Date = new Date()): void {
-  if (Number.isNaN(values.startedAt.getTime())) {
+  const started = at(values.startedAt);
+
+  if (Number.isNaN(started)) {
     throw new TimeEntryInvalid("That start time is not a date");
   }
 
-  if (values.startedAt.getTime() > now.getTime() + FUTURE_TOLERANCE_MS) {
+  if (started > now.getTime() + FUTURE_TOLERANCE_MS) {
     throw new TimeEntryInvalid("Time cannot be tracked in the future");
   }
 
   if (values.endedAt === null) return;
 
-  if (Number.isNaN(values.endedAt.getTime())) {
+  const ended = at(values.endedAt);
+
+  if (Number.isNaN(ended)) {
     throw new TimeEntryInvalid("That end time is not a date");
   }
 
-  if (values.endedAt.getTime() <= values.startedAt.getTime()) {
+  if (ended <= started) {
     throw new TimeEntryInvalid("A time entry has to end after it starts");
   }
 }
 
 /** Two entries hold the same values — what tells an edit from an accident. */
 export function sameTimeEntry(a: TimeEntryValues, b: TimeEntryValues): boolean {
+  // Compared as instants rather than as strings: the same moment has more than
+  // one spelling, and a form that re-serializes an entry it did not change must
+  // not read as an edit.
   return (
-    a.startedAt.getTime() === b.startedAt.getTime() &&
-    (a.endedAt?.getTime() ?? null) === (b.endedAt?.getTime() ?? null) &&
+    at(a.startedAt) === at(b.startedAt) &&
+    (a.endedAt === null ? null : at(a.endedAt)) === (b.endedAt === null ? null : at(b.endedAt)) &&
     (a.description ?? "") === (b.description ?? "") &&
     a.isBillable === b.isBillable
   );

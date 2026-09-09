@@ -169,7 +169,7 @@ export function recordDurationMs(entry: TimeEntryRecord, now = new Date()): numb
   if (entry.endedAt === null) {
     return entryDurationMs(
       {
-        startedAt: new Date(entry.startedAt),
+        startedAt: entry.startedAt,
         endedAt: null,
         description: entry.description,
         isBillable: entry.isBillable,
@@ -224,8 +224,10 @@ export async function ownTimeEntry(
     taskId: row.task_id,
     userId: row.user_id,
     values: {
-      startedAt: row.started_at,
-      endedAt: row.ended_at,
+      // ISO strings, because an operation built from these is posted back by
+      // undo and has to survive JSON (D-097).
+      startedAt: row.started_at.toISOString(),
+      endedAt: row.ended_at === null ? null : row.ended_at.toISOString(),
       description: row.description,
       isBillable: row.is_billable,
     },

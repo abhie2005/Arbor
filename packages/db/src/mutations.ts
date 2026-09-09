@@ -652,7 +652,7 @@ function duration(ended: string, started: string): string {
  */
 function loggedMs(values: TimeEntryValues): number | null {
   if (values.endedAt === null) return null;
-  return values.endedAt.getTime() - values.startedAt.getTime();
+  return new Date(values.endedAt).getTime() - new Date(values.startedAt).getTime();
 }
 
 /**
