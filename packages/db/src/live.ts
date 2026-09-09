@@ -29,20 +29,34 @@ export interface Change {
   /** Who did it, so a client can ignore its own echo. */
   a: string;
   /**
-   * Whose timer started or stopped, when that is what this change was.
+   * Whose timers started or stopped, when that is what this change was.
    *
-   * **The one thing a nudge says about itself** (D-098). Everything else here
-   * is deliberately about *where* a change happened rather than what it was,
-   * because the browser answers a nudge by re-rendering and the re-render is
-   * the update. A running timer is the case that breaks: it is per-person
-   * global state, the echo filter drops your own changes so a second tab never
-   * hears about them, and a stale readout is not merely late — it claims a
-   * timer is running on a task where it has already been stopped.
+   * Everything else here is deliberately about *where* a change happened rather
+   * than what it was, because the browser answers a nudge by re-rendering and
+   * the re-render is the update. A running timer is the case that breaks
+   * (D-098): it is per-person global state, the echo filter drops your own
+   * changes so a second tab never hears about them, and a stale readout is not
+   * merely late — it claims a timer is running on a task where it has already
+   * been stopped.
    *
-   * It names a person, never a task. The route answers it by looking up that
-   * viewer's own running entry, so this leaks nothing it did not already know.
+   * It names people, never tasks. The route answers it by looking up that
+   * viewer's own running entry, so it leaks nothing the viewer could not
+   * already ask for.
    */
-  t?: string;
+  t?: string[];
+  /**
+   * Who this change wrote a notification for, when it wrote any.
+   *
+   * **What makes a nudge ignorable** (D-099). A page knows which lists it is
+   * showing and can skip a change in any other — except that every screen also
+   * carries the inbox badge, and the badge moves for exactly one reason: a
+   * change that named you. Without this, "did that matter to me" had no answer
+   * and every screen re-rendered for every change anywhere.
+   *
+   * Absent rather than empty on the overwhelmingly common change that notified
+   * nobody.
+   */
+  n?: string[];
 }
 
 /**

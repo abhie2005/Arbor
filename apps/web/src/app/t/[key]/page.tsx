@@ -82,6 +82,9 @@ export default async function TaskPage({ params }: { params: Promise<{ key: stri
     workspaceName: task.workspaceName,
     // This screen is one task, so it is somewhere people gather (D-092).
     scope: task.id,
+    // And it shows one list's worth of nothing else, so a change anywhere else
+    // cannot alter a pixel of it (D-099).
+    lists: [task.listId],
     location: {
       spaceName: task.spaceName,
       folderName: task.folderName,

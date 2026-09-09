@@ -1635,6 +1635,80 @@ averyHere.close();
 samPeeking.close();
 averyOnPrivate.close();
 
+// --- what a nudge carries ---------------------------------------------------
+//
+// The nudge used to be three fields about *where* a change happened, and every
+// screen re-rendered for every change anywhere. It now also says who it wrote a
+// notification for, which is the only reason a change in a list you are not
+// looking at can alter your screen — it moves the badge (D-099).
+console.log("\nnudges → what mattered, and to whom\n");
+
+const averyUserId = (await one(`SELECT id FROM users WHERE email = 'avery@example.com'`)).id;
+const detailList = (
+  await one(`SELECT home_list_id FROM tasks WHERE id = $1`, [detailTask.id])
+).home_list_id;
+
+const nudgeStream = await openStream(COOKIE);
+await pause(300);
+
+// A status click: notifies nobody, names one list.
+await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskStatus!, [detailTask.id, targetStatus.id], RILEY);
+await pause(900);
+
+const quietNudge = nudgeStream
+  .heard()
+  .split("\n")
+  .filter((line) => line.startsWith("data: {") && line.includes('"l":'))
+  .at(-1);
+
+report(
+  "a change that told nobody carries no recipients at all",
+  quietNudge && !quietNudge.includes('"n":')
+    ? null
+    : `nudge was ${quietNudge ?? "never delivered"}`,
+);
+report(
+  "and still names the list, which is what a screen compares itself to",
+  quietNudge?.includes(detailList) ? null : `nudge was ${quietNudge}`,
+);
+
+// A mention: notifies somebody, so the badge moved and every screen has to hear
+// about it however far from that list it is.
+await callOn(
+  DETAIL_URL,
+  DETAIL_ACTIONS.postComment!,
+  [detailTask.id, "Over to you @Avery Mills", null, false],
+  RILEY,
+);
+await pause(900);
+
+const namedNudge = nudgeStream
+  .heard()
+  .split("\n")
+  .filter((line) => line.startsWith("data: {") && line.includes('"n":'))
+  .at(-1);
+
+report(
+  "a change that named somebody carries who, so their badge can answer",
+  namedNudge?.includes(averyUserId) ? null : `nudge was ${namedNudge ?? "never delivered"}`,
+);
+
+// One batch, one announcement. The comment and the watcher it adds are two
+// operations on the same list, and they used to be two nudges.
+const deliveries = nudgeStream
+  .heard()
+  .split("\n")
+  .filter((line) => line.startsWith("data: {")).length;
+report(
+  "a batch announces once per list, not once per operation",
+  deliveries <= 4 ? null : `${deliveries} nudges for two actions`,
+);
+
+nudgeStream.close();
+await db.query(`DELETE FROM comments WHERE object_id = $1`, [detailTask.id]);
+await db.query(`DELETE FROM notifications WHERE task_id = $1`, [detailTask.id]);
+await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskStatus!, [detailTask.id, detailTask.status_id]);
+
 // --- the timer on the stream ------------------------------------------------
 //
 // The one message that has to arrive for a change the viewer made themselves.

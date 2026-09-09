@@ -13,7 +13,10 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
  *   `router.refresh()`, which re-runs the server components of whatever page is
  *   mounted and patches the result in, keeping scroll, focus and client state
  *   (D-090). The nudge says nothing about *what* changed, because the page is a
- *   server component and re-running it is the update.
+ *   server component and re-running it is the update. It is answered only if it
+ *   could have mattered: a change in a list this screen is not showing changes
+ *   nothing on it, unless it wrote this viewer a notification, which moves the
+ *   badge in the chrome of every screen (D-099).
  * - a **presence** — the people currently looking at this scope — put into
  *   context instead. Presence is ephemeral and belongs to one small component;
  *   re-rendering a page every time somebody opens a tab would be absurd
@@ -67,11 +70,22 @@ export function useRunningTimer(): RunningTimer | null | undefined {
 export function Live({
   viewerId,
   scope,
+  lists,
   children,
 }: {
   viewerId: string;
   /** What this screen is looking at, when it is one thing. */
   scope?: string;
+  /**
+   * The lists whose contents are on this screen.
+   *
+   * **Undefined and empty mean different things**, and the difference is the
+   * whole of the filter. Undefined is "this screen has not said" — the inbox,
+   * settings — and it keeps the old behaviour of refreshing for anything, which
+   * is the safe answer for a screen nobody has thought about yet. An empty
+   * array would be a screen saying it shows no list's contents at all.
+   */
+  lists?: readonly string[];
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -98,9 +112,9 @@ export function Live({
     };
 
     source.onmessage = (event) => {
-      let change: { a?: string };
+      let change: { a?: string; l?: string; n?: string[] };
       try {
-        change = JSON.parse(event.data) as { a?: string };
+        change = JSON.parse(event.data) as { a?: string; l?: string; n?: string[] };
       } catch {
         return;
       }
@@ -110,6 +124,15 @@ export function Live({
       // for every keystroke-sized edit, and it is the one that would fight with
       // an optimistic control.
       if (change.a === viewerId) return;
+
+      // A change that named you moved the inbox badge, and the badge is in the
+      // chrome of every screen — so this one is answered wherever you are,
+      // whatever it was about (D-099).
+      const named = change.n?.includes(viewerId) ?? false;
+
+      // Otherwise: only if this screen is showing the list it happened in. A
+      // task moving on a board nobody has open is not news to a calendar.
+      if (!named && lists && (!change.l || !lists.includes(change.l))) return;
 
       scheduleRefresh();
     };
@@ -164,7 +187,12 @@ export function Live({
       // dropping back to "undefined" here would make the readout flicker on
       // every navigation.
     };
-  }, [router, viewerId, scope]);
+    // `lists` is joined rather than passed by identity: a page rebuilding the
+    // same array on every render would otherwise tear down and reopen the
+    // stream each time, which is a reconnect per keystroke and a presence
+    // record that flickers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, viewerId, scope, lists?.join(",")]);
 
   return (
     <PresenceContext.Provider value={people}>

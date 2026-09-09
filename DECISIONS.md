@@ -2949,3 +2949,53 @@ a problem exactly one feature currently has.
 
 *In one sentence:* the transport stayed a nudge, and the one thing it now says
 about itself is who, not what.
+
+### D-099
+**A nudge says who it was for, and the announcement moved to say it**
+· 2026-09-09 · active
+
+`announceChange` runs once per batch from `applyOperations`, not once per
+operation from `logActivity`. The payload gains `n` — the people this change
+wrote a notification for — and a screen ignores any change in a list it is not
+showing unless it names the viewer.
+
+**The problem was that every screen re-rendered for every change anywhere.**
+Correct, and wasteful in a way that gets worse with the workspace rather than
+with the page: someone editing a task in a space you have never opened
+re-renders the calendar you are looking at. The nudge already named the list, so
+the filter looked like a one-line client change — and it was not, because of the
+badge.
+
+**The inbox badge is what makes "not my list" the wrong test.** It sits in the
+chrome of every screen (D-085), so a change in a list you are nowhere near
+*does* alter your page when it mentions you. Filtering on the list alone would
+have made mentions arrive whenever the page next happened to render, which is
+the thing live updates exist to stop being true. So the nudge has to distinguish
+"changed something you can see" from "changed something about you", and only the
+fan-out knows the second.
+
+**Which is why the announcement had to move.** It lived in `logActivity`
+precisely so a new operation could not forget to broadcast (D-090) — the
+property is worth keeping and it is not lost, because `applyOperations` is the
+only way to apply an operation at all, so a batch cannot forget either. But the
+fan-out runs *after* the activity row is written, so a nudge emitted from inside
+the log is emitted before anyone knows who it told. One announcement per batch
+per list is also strictly fewer: Postgres was already collapsing identical
+payloads inside one transaction, and now they are not generated in the first
+place.
+
+**Undefined and empty mean different things on the client**, and the difference
+is the whole of the filter. A screen that has not said which lists it shows —
+the inbox, settings — keeps refreshing on everything, which is the answer that
+cannot be wrong for a screen nobody has thought about. The five renderers say it
+without a line of change in any of them, because `loadView` already returned the
+list id and `chromeFrom` is the one place that builds their chrome — which is
+what that function was extracted for.
+
+**What it does not do.** The nudge still says nothing about *what* changed. `n`
+is a list of people, the same shape and the same reasoning as `t` (D-098): the
+client asks a question about itself, not about the change.
+
+*In one sentence:* the cheap version of this filter would have quietly broken
+the badge, and the badge is the one thing on screen that a change in someone
+else's list is allowed to move.

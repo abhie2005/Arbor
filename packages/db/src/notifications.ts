@@ -151,11 +151,17 @@ export async function fanOutTarget(
 }
 
 /**
- * Writes the notifications one operation implies.
+ * Writes the notifications one operation implies, and returns who it told.
  *
  * Called from inside `applyOperations`' transaction with its client, so a
  * failure here rolls the operation back with it. `activityId` links the row to
  * what caused it, which is what makes "why am I being told this" answerable.
+ *
+ * **The ids rather than a count**, because the nudge carries them (D-099): a
+ * change that wrote you a notification is a change that moved the badge in
+ * every screen's chrome, and it is the only kind that did. Returning a number
+ * meant the announcement could not tell the difference, so every screen
+ * re-rendered for every change anywhere.
  */
 export async function fanOut(
   client: PoolClient,
@@ -163,7 +169,7 @@ export async function fanOut(
   target: FanOutTarget,
   actorId: string,
   activityId: bigint | null,
-): Promise<number> {
+): Promise<string[]> {
   const context: FanOutContext = { actorId };
 
   // Two facts the pure rule cannot derive, each loaded only when the operation
@@ -181,7 +187,7 @@ export async function fanOut(
   }
 
   const recipients = recipientsFor(op, context);
-  if (recipients.length === 0) return 0;
+  if (recipients.length === 0) return [];
 
   const allowed = await reachable(
     client,
@@ -190,7 +196,7 @@ export async function fanOut(
   );
 
   const excerpt = excerptOf(op);
-  let written = 0;
+  const told: string[] = [];
 
   for (const recipient of recipients) {
     if (!allowed.has(recipient.userId)) continue;
@@ -208,10 +214,10 @@ export async function fanOut(
         JSON.stringify(payloadFor(recipient.kind, target, excerpt)),
       ],
     );
-    written += 1;
+    told.push(recipient.userId);
   }
 
-  return written;
+  return told;
 }
 
 /** What the notification is about, in the words that were written. */

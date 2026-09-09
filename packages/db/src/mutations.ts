@@ -130,11 +130,15 @@ export async function applyOperations(
   };
 
   // Joining a caller's transaction: no BEGIN, no COMMIT, no release. Throwing
-  // is still correct — the caller's rollback covers these statements too.
+  // is still correct — the caller's rollback covers these statements too. The
+  // announcement still happens here and is still transactional, because NOTIFY
+  // is delivered at the *caller's* commit.
   if (context.client) {
+    const heard = new Announcements(context.actorId);
     for (const op of meaningful) {
-      result.notified += await applyAndNotify(context.client, op, context.actorId);
+      result.notified += await applyAndNotify(context.client, op, context.actorId, heard);
     }
+    await heard.announce(context.client);
     return result;
   }
 
@@ -143,9 +147,11 @@ export async function applyOperations(
   try {
     await client.query("BEGIN");
 
+    const heard = new Announcements(context.actorId);
     for (const op of meaningful) {
-      result.notified += await applyAndNotify(client, op, context.actorId);
+      result.notified += await applyAndNotify(client, op, context.actorId, heard);
     }
+    await heard.announce(client);
 
     await client.query("COMMIT");
     return result;
@@ -154,6 +160,64 @@ export async function applyOperations(
     throw error;
   } finally {
     client.release();
+  }
+}
+
+/**
+ * What this batch will tell the world, collected while it runs.
+ *
+ * **The announcement moved out of `logActivity` and up to here** (D-099), which
+ * is the one thing about this refactor worth being nervous about: broadcasting
+ * from inside the function every operation already passes through was what made
+ * "a new operation cannot forget to broadcast" true by construction (D-090).
+ * That property is not lost, it moved — `applyOperations` is the only way to
+ * apply an operation at all, so a batch cannot forget either, and there is now
+ * one announcement per batch instead of one per operation.
+ *
+ * It had to move because the interesting part of a nudge is not knowable when
+ * `logActivity` runs. Whether a change wrote somebody a notification is decided
+ * by the fan-out, which happens *after* the activity row exists — so a nudge
+ * emitted from inside the log could never say who it was for, and every screen
+ * had to re-render for every change anywhere.
+ *
+ * Grouped by list, because that is what a subscriber's access is checked
+ * against and what a page compares itself to. A bulk edit of two hundred tasks
+ * in one list was already collapsing to one delivery inside Postgres; now it is
+ * one call.
+ */
+class Announcements {
+  private readonly lists = new Map<string, { w: string; n: Set<string>; t: Set<string> }>();
+
+  constructor(private readonly actorId: string) {}
+
+  touch(workspaceId: string, listId: string): void {
+    if (!this.lists.has(listId)) {
+      this.lists.set(listId, { w: workspaceId, n: new Set(), t: new Set() });
+    }
+  }
+
+  notified(listId: string, userIds: readonly string[]): void {
+    const entry = this.lists.get(listId);
+    for (const id of userIds) entry?.n.add(id);
+  }
+
+  timer(listId: string, userId: string): void {
+    this.lists.get(listId)?.t.add(userId);
+  }
+
+  async announce(client: PoolClient): Promise<void> {
+    for (const [listId, entry] of this.lists) {
+      await announceChange(client, {
+        w: entry.w,
+        l: listId,
+        a: this.actorId,
+        // Omitted when empty rather than sent as `[]`, so the common change —
+        // a status click that notified nobody — carries no extra bytes and the
+        // client's check stays a single optional-chained call.
+        ...(entry.n.size > 0 ? { n: [...entry.n] } : {}),
+        ...(entry.t.size > 0 ? { t: [...entry.t] } : {}),
+      });
+    }
   }
 }
 
@@ -174,21 +238,35 @@ async function applyAndNotify(
   client: PoolClient,
   op: Operation,
   actorId: string,
+  heard: Announcements,
 ): Promise<number> {
-  const activityId = await applyOne(client, op, actorId);
+  const logged = await applyOne(client, op, actorId, heard);
   if (!mayNotify(op)) return 0;
 
   const target = await fanOutTarget(client, op.taskId, actorId);
   if (!target) return 0;
 
-  return fanOut(client, op, target, actorId, activityId);
+  const told = await fanOut(client, op, target, actorId, logged.id);
+
+  // Onto the *task's own* list, which is where the activity row went too — a
+  // notification about a task belongs to the list that task lives in, whatever
+  // else this batch touched.
+  heard.notified(logged.listId, told);
+  return told.length;
+}
+
+interface Logged {
+  id: bigint;
+  workspaceId: string;
+  listId: string;
 }
 
 async function applyOne(
   client: PoolClient,
   op: Operation,
   actorId: string,
-): Promise<bigint | null> {
+  heard: Announcements,
+): Promise<Logged> {
   switch (op.kind) {
     case "setField": {
       const column = FIELD_COLUMNS[op.field];
@@ -215,7 +293,7 @@ async function applyOne(
       );
 
       const row = requireRow(result.rows[0], op.taskId);
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: row.workspace_id,
@@ -256,7 +334,7 @@ async function applyOne(
       );
 
       const meta = await taskMeta(client, op.taskId);
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -288,7 +366,7 @@ async function applyOne(
       }
 
       const meta = await taskMeta(client, op.taskId);
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -333,7 +411,7 @@ async function applyOne(
         [op.taskId, op.listId, v.position],
       );
 
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: row.workspace_id,
@@ -354,7 +432,7 @@ async function applyOne(
       );
 
       const row = requireRow(result.rows[0], op.taskId);
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: row.workspace_id,
@@ -410,7 +488,7 @@ async function applyOne(
         [op.commentId, meta.workspace_id, op.taskId, op.parentId, actorId, JSON.stringify(body)],
       );
 
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -437,7 +515,7 @@ async function applyOne(
 
       if (result.rowCount === 0) throw new MutationRejected("That comment no longer exists");
 
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -461,7 +539,7 @@ async function applyOne(
 
       if (result.rowCount === 0) throw new MutationRejected("That comment no longer exists");
 
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -488,7 +566,7 @@ async function applyOne(
         op.taskId,
       ]);
 
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -537,7 +615,7 @@ async function applyOne(
         ],
       );
 
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -586,7 +664,7 @@ async function applyOne(
         ],
       );
 
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -616,7 +694,7 @@ async function applyOne(
       );
       if (result.rowCount === 0) throw new MutationRejected("That time entry no longer exists");
 
-      return await logActivity(client, {
+      return await logActivity(client, heard, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -727,13 +805,19 @@ interface LogArgs {
  * Returns the id it wrote, so a notification can point at the thing that caused
  * it — which is what makes "why am I being told this" a question with an answer.
  *
- * **It also announces the change**, on the same connection and inside the same
- * transaction. Here rather than in `applyOperations` for the reason this
- * function exists at all: every operation already passes through it, so a new
- * operation cannot forget to broadcast any more than it can forget to log
- * (D-090). `NOTIFY` is transactional, so a rolled-back batch announces nothing.
+ * **It records what to announce rather than announcing it** (D-099). The
+ * broadcast used to happen here, because every operation passes through this
+ * function and so a new operation could not forget to send one (D-090). It has
+ * moved up to `applyOperations`, which every operation also passes through and
+ * which is the first place that knows the part of a nudge worth carrying: who
+ * the fan-out told. `NOTIFY` is still emitted inside the transaction, so a
+ * rolled-back batch still announces nothing.
  */
-async function logActivity(client: PoolClient, args: LogArgs): Promise<bigint> {
+async function logActivity(
+  client: PoolClient,
+  heard: Announcements,
+  args: LogArgs,
+): Promise<Logged> {
   const result = await client.query<{ id: string }>(
     `INSERT INTO activity
        (workspace_id, actor_id, object_kind, object_id, verb, field, old_value, new_value, list_id)
@@ -751,14 +835,12 @@ async function logActivity(client: PoolClient, args: LogArgs): Promise<bigint> {
     ],
   );
 
-  // Identical for every operation in this batch that touched the same list, so
-  // Postgres collapses a bulk edit into one delivery on its own.
-  await announceChange(client, {
-    w: args.workspaceId,
-    l: args.listId,
-    a: args.actorId,
-    ...(args.timerUserId ? { t: args.timerUserId } : {}),
-  });
+  heard.touch(args.workspaceId, args.listId);
+  if (args.timerUserId) heard.timer(args.listId, args.timerUserId);
 
-  return BigInt(result.rows[0]!.id);
+  return {
+    id: BigInt(result.rows[0]!.id),
+    workspaceId: args.workspaceId,
+    listId: args.listId,
+  };
 }

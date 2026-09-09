@@ -138,7 +138,7 @@ export async function GET(request: Request): Promise<Response> {
         // person's own row — so the list the change happened in is not a gate
         // on it, and must not be: stopping your own timer never needs access to
         // the task it was spent on (D-095).
-        if (change.t === viewer.id) void sendTimer();
+        if (change.t?.includes(viewer.id)) void sendTimer();
 
         void mayHear(change).then((allowed) => {
           if (allowed) send(`data: ${JSON.stringify(change)}\n\n`);

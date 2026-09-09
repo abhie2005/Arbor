@@ -56,6 +56,15 @@ export interface ShellChrome {
   /** Which top-level entry is the current screen, when the screen is one of them. */
   active?: "inbox";
   /**
+   * The lists whose contents this screen shows, when it knows.
+   *
+   * Passed straight to `Live`, which uses it to ignore a change that happened
+   * somewhere this screen is not looking (D-099). Left unset by a screen that
+   * is not scoped to lists — the inbox, settings — which keeps them refreshing
+   * on anything, the answer that cannot be wrong.
+   */
+  lists?: readonly string[];
+  /**
    * The one thing this screen is looking at, when it is one thing — a task id.
    *
    * It is what the live stream registers as presence, so it is deliberately not
@@ -91,7 +100,7 @@ export function AppShell({
           remembering to be — the same reason the badge is fetched here. It
           wraps rather than sits beside, because presence reaches a component
           inside the page (D-092). */}
-      <Live viewerId={chrome.viewer.id} scope={chrome.scope}>
+      <Live viewerId={chrome.viewer.id} scope={chrome.scope} lists={chrome.lists}>
       <div className="shell">
         <Sidebar chrome={chrome} />
 
@@ -290,6 +299,7 @@ export function chromeFrom(
     workspaceName: string;
     spaceName: string;
     folderName: string;
+    listId: string;
     listName: string;
     listTaskCount: number;
   },
@@ -304,6 +314,10 @@ export function chromeFrom(
       listName: data.listName,
       listTaskCount: data.listTaskCount,
     },
+    // All five renderers show one list, and `loadView` already knew which —
+    // so the whole filter arrives at five pages without one of them changing
+    // (D-099). Exactly what this function was extracted for.
+    lists: [data.listId],
     viewer,
     users,
   };
