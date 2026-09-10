@@ -3140,3 +3140,44 @@ measured until somebody owns it, which is true and is also the prompt to fix it.
 
 *In one sentence:* progress everyone can see has to be progress computed for
 somebody in particular, and the owner is the only defensible somebody.
+
+### D-103
+**A goal is configuration, and its permission is its owner** · 2026-09-10 · active
+
+Goal and key-result writes go through the configuration services
+(`inTransaction`, `logConfigChange`) rather than `applyOperations`. Creating one
+takes workspace `member`; changing one takes being its owner, or being a
+workspace admin. ⌘Z does not reach any of it.
+
+**Not an operation, because an operation is a thing done to a task.** Every
+member of the `Operation` union carries a `taskId`, and that is not decoration:
+it is what `requireTaskAccess` checks and what `undo` maps a client-supplied
+batch onto before applying it (D-080). A goal has no task, so a goal operation
+would be a write whose target could not be checked — which is precisely the hole
+the time-entry operations were careful not to open when the schema offered them
+a nullable `task_id` (D-093). Status sets, custom fields and task types are
+already on the other side of this line; goals join them.
+
+The cost is that undo does not reach a goal. That is the same cost the settings
+screens pay, it is consistent, and a deleted goal is recoverable from the
+activity row in a way a ⌘Z-less comment would not be.
+
+**Owner-or-admin is blunt, and it is less arbitrary here than elsewhere.**
+D-081 settled configuration on the workspace role because there was no smaller
+thing to scope to — a space has no permission of its own. A goal is different:
+it has an `owner_id`, that column is already load-bearing because the rollup is
+computed as that person (D-102), and "the person whose number this is" is a
+defensible answer to "who may change it". Admin remains the escape hatch for the
+goal whose owner has left.
+
+**What it does not do is give goals privacy.** `goals` has a workspace and an
+owner and no container, which is the schema stating that a goal is
+workspace-level, and the honest consequence is that every member sees every
+goal. Scoping them to a space would mean a `container_id` — which `dashboards`
+has and `goals` deliberately does not — and inventing one to paper over a
+visibility gap would be re-deciding the schema by accident. It is recorded as a
+gap instead.
+
+*In one sentence:* a goal has no task to be authorized against and does have an
+owner, so it is configuration whose permission is the one column it already
+needed for something else.

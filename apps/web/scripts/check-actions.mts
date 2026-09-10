@@ -752,10 +752,21 @@ const DETAIL_URL = `http://localhost:${PORT}/t/ENG-415`;
 const DETAIL_ACTIONS = actionIds("app/t/[key]/page");
 
 const detailTask = await one(`SELECT id, status_id, task_type_id FROM tasks WHERE key = 'ENG-415'`);
+/**
+ * A status the task is not already in.
+ *
+ * Named rather than hard-coded, because a run that dies between setting this
+ * and restoring it leaves the task sitting on the target — and then the "move
+ * it" check passes trivially while the undo check below finds no inverse to
+ * parse, which reads as a broken action rather than as stale data. It cost an
+ * afternoon once.
+ */
 const targetStatus = await one(
   `SELECT s.id FROM statuses s
    JOIN status_sets ss ON ss.id = s.status_set_id
-   WHERE ss.name = 'Engineering' AND s.name = 'In Review'`,
+   WHERE ss.name = 'Engineering' AND s.id <> $1
+   ORDER BY s.position LIMIT 1`,
+  [detailTask.status_id],
 );
 
 const picked = await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskStatus!, [
@@ -770,8 +781,13 @@ report(
 
 // Same operation as the list's cycling, so the same stack has to undo it.
 const statusInverse = picked.text.match(/\[\{"kind":"setField".*?\}\]/);
+if (!statusInverse) {
+  throw new Error(
+    `setTaskStatus returned no inverse. Response was: ${picked.text.slice(-300)}`,
+  );
+}
 const statusStack = new UndoStack(20);
-statusStack.push(JSON.parse(statusInverse![0]));
+statusStack.push(JSON.parse(statusInverse[0]));
 await callOn("http://localhost:" + PORT + "/", PAGE_ACTIONS.undo!, [statusStack.pop()]);
 const afterStatusUndo = await one(`SELECT status_id FROM tasks WHERE id = $1`, [detailTask.id]);
 report(
@@ -1702,6 +1718,176 @@ report(
 lonely.close();
 unsubscribePresence();
 
+const workspaceId = (await one(`SELECT id FROM workspaces WHERE slug = 'northwind'`)).id;
+const averyUserId = (await one(`SELECT id FROM users WHERE email = 'avery@example.com'`)).id;
+
+// --- goals ------------------------------------------------------------------
+//
+// The seam worth driving here is the rollup: a form posts four choices, the
+// action turns them into a view definition, and the compiler has to refuse the
+// ones that cannot be measured *before* the row is written (D-101). And the
+// number that comes back has to be the owner's, not the reader's (D-102).
+console.log("\ngoals \u2192 a number from the compiler, as the owner\n");
+
+await db.query(`DELETE FROM goals WHERE workspace_id = $1`, [workspaceId]);
+await warm("/goals");
+const GOALS_URL = `http://localhost:${PORT}/goals`;
+const GOAL_ACTIONS = actionIds("app/goals/page");
+
+const madeGoal = await callOn(GOALS_URL, GOAL_ACTIONS.createWorkspaceGoal!, [
+  "Close out the sprint",
+  "2026-12-31",
+]);
+const goalRow = await one(
+  `SELECT id, owner_id, due_at FROM goals WHERE workspace_id = $1`,
+  [workspaceId],
+);
+report(
+  "creating a goal writes it, owned by whoever made it",
+  goalRow?.owner_id === averyUserId ? null : `owner was ${String(goalRow?.owner_id)}`,
+);
+report(
+  "and a due date is stored as a calendar day, in UTC",
+  new Date(goalRow.due_at).toISOString().startsWith("2026-12-31T00:00:00")
+    ? null
+    : `stored ${String(goalRow.due_at)}`,
+);
+report(
+  "the action came back without an inverse, because a goal is configuration",
+  !madeGoal.text.includes('"kind":"setField"') ? null : "a goal action returned an operation",
+);
+
+const sprintListId = (
+  await one(`SELECT id FROM containers WHERE name = 'Sprint 24'`)
+).id;
+
+// The rollup the form actually posts: a metric and a container.
+await callOn(GOALS_URL, GOAL_ACTIONS.addGoalKeyResult!, [
+  goalRow.id,
+  { name: "Tasks done", kind: "rollup", start: "0", target: "20", scopeId: sprintListId, scopeKind: "list", metric: "completed" },
+]);
+
+const storedKr = await one(
+  `SELECT kind, source::text AS source, current_value FROM key_results WHERE goal_id = $1`,
+  [goalRow.id],
+);
+// Parsed rather than matched as a substring: jsonb renders with a space after
+// each colon, so `"showClosed":true` never appears in the text however true it
+// is — a check that quietly asserts the wrong thing.
+const krSource = JSON.parse(storedKr.source) as {
+  definition?: { filters?: { showClosed?: boolean; conditions?: unknown[] } };
+  aggregate?: { fn?: string };
+  scope?: { kind?: string; id?: string };
+};
+
+report(
+  "a rollup stores a view definition, not a query language of its own",
+  krSource.definition && krSource.aggregate?.fn === "count" && krSource.scope?.id === sprintListId
+    ? null
+    : `stored ${String(storedKr?.source).slice(0, 160)}`,
+);
+report(
+  "and its current_value column stays empty, because the number is derived",
+  storedKr.current_value === null ? null : `stored ${String(storedKr.current_value)}`,
+);
+
+// "Tasks done" has to see closed tasks; the default view hides them, so a count
+// of finished work would otherwise be zero forever with nothing to say why.
+report(
+  "counting finished work turns on the filter that would otherwise hide it",
+  krSource.definition?.filters?.showClosed === true &&
+    (krSource.definition.filters.conditions?.length ?? 0) === 1
+    ? null
+    : `filters were ${JSON.stringify(krSource.definition?.filters)}`,
+);
+
+const goalsPage = await (await fetch(GOALS_URL, { headers: { Cookie: COOKIE } })).text();
+const doneInSprint = Number(
+  (
+    await one(
+      `SELECT count(*) AS n FROM tasks t
+       JOIN access_index ax ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+       JOIN statuses s ON s.id = t.status_id
+       WHERE t.home_list_id = $1 AND t.deleted_at IS NULL AND t.archived_at IS NULL
+         AND s.group IN ('done','closed')`,
+      [sprintListId, averyUserId],
+    )
+  ).n,
+);
+report(
+  "the page renders the number the compiler counted",
+  goalsPage.includes(`>${doneInSprint}<`) || goalsPage.includes(`value="${doneInSprint}"`)
+    ? null
+    : `expected ${doneInSprint} on the page`,
+);
+
+// A rollup counts itself. A control that appeared to set it and silently did
+// nothing would be worse than one that says why it cannot (D-065).
+const krId = (await one(`SELECT id FROM key_results WHERE goal_id = $1`, [goalRow.id])).id;
+const forcedValue = await callOn(GOALS_URL, GOAL_ACTIONS.setKeyResultValue!, [krId, "99"]);
+report(
+  "setting a rollup's number by hand is refused, not ignored",
+  /counts itself/.test(forcedValue.text) ? null : `said "${forcedValue.text.slice(-160)}"`,
+);
+
+// Refused on write, so a goal cannot be saved in a state that breaks the screen.
+const badRollup = await callOn(GOALS_URL, GOAL_ACTIONS.addGoalKeyResult!, [
+  goalRow.id,
+  { name: "Nonsense", kind: "rollup", scopeId: sprintListId, scopeKind: "list", metric: "made-up" },
+]);
+const krCount = await one(`SELECT count(*) AS n FROM key_results WHERE goal_id = $1`, [goalRow.id]);
+report(
+  "a metric nobody declared is refused before anything is written",
+  krCount.n === "1" && /count|measure/i.test(badRollup.text)
+    ? null
+    : `${krCount.n} key results after a bad post`,
+);
+
+// Owner or admin (D-103). Riley is a member and does not own this goal.
+const notMine = await callOn(GOALS_URL, GOAL_ACTIONS.renameGoal!, [goalRow.id, "Hijacked"], RILEY);
+const stillNamedGoal = await one(`SELECT name FROM goals WHERE id = $1`, [goalRow.id]);
+report(
+  "somebody who neither owns the goal nor administers the workspace cannot change it",
+  stillNamedGoal?.name === "Close out the sprint" && /owner|admin/i.test(notMine.text)
+    ? null
+    : `name is now ${String(stillNamedGoal?.name)}`,
+);
+
+// A manual key result, which is the half a person does type into.
+await callOn(GOALS_URL, GOAL_ACTIONS.addGoalKeyResult!, [
+  goalRow.id,
+  { name: "Interviews", kind: "number", start: "0", target: "10", current: "0" },
+]);
+const manualKrId = (
+  await one(`SELECT id FROM key_results WHERE goal_id = $1 AND kind = 'number'`, [goalRow.id])
+).id;
+await callOn(GOALS_URL, GOAL_ACTIONS.setKeyResultValue!, [manualKrId, "5"]);
+report(
+  "a manual key result takes the number somebody typed",
+  (await one(`SELECT current_value FROM key_results WHERE id = $1`, [manualKrId]))
+    ?.current_value === "5"
+    ? null
+    : "the value did not land",
+);
+
+await callOn(GOALS_URL, GOAL_ACTIONS.setGoalComplete!, [goalRow.id, true]);
+report(
+  "completing a goal is a timestamp somebody set, not a number crossing 100%",
+  (await one(`SELECT completed_at FROM goals WHERE id = $1`, [goalRow.id]))?.completed_at !== null
+    ? null
+    : "completed_at was not set",
+);
+
+await callOn(GOALS_URL, GOAL_ACTIONS.removeGoal!, [goalRow.id]);
+report(
+  "deleting a goal takes its key results with it",
+  (await one(`SELECT count(*) AS n FROM key_results WHERE goal_id = $1`, [goalRow.id])).n === "0"
+    ? null
+    : "key results were orphaned",
+);
+
+await db.query(`DELETE FROM goals WHERE workspace_id = $1`, [workspaceId]);
+
 // --- what a nudge carries ---------------------------------------------------
 //
 // The nudge used to be three fields about *where* a change happened, and every
@@ -1710,7 +1896,6 @@ unsubscribePresence();
 // looking at can alter your screen — it moves the badge (D-099).
 console.log("\nnudges → what mattered, and to whom\n");
 
-const averyUserId = (await one(`SELECT id FROM users WHERE email = 'avery@example.com'`)).id;
 const detailList = (
   await one(`SELECT home_list_id FROM tasks WHERE id = $1`, [detailTask.id])
 ).home_list_id;

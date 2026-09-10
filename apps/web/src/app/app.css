@@ -3424,3 +3424,290 @@ select.filter-add option {
 .running-timer-stop:hover {
   color: var(--text);
 }
+
+/* --- goals (D-101, D-102) -------------------------------------------------- */
+
+.goals {
+  padding: var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 60rem;
+}
+
+.goals[data-pending] {
+  opacity: 0.7;
+}
+
+.goals-empty,
+.goal-empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.goal-new,
+.kr-new {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.goal-new input[type="text"] {
+  flex: 1;
+  min-width: 14rem;
+}
+
+.goal-new input,
+.goal-new select,
+.kr-new input,
+.kr-new select,
+.goal-meta input,
+.goal-meta select,
+.kr-input {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 2px var(--space-2);
+}
+
+.goal-new input[type="number"],
+.kr-new input[type="number"],
+.kr-input {
+  width: 5rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.goal-new button,
+.kr-new button,
+.kr-add,
+.kr-toggle {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 2px var(--space-3);
+  cursor: pointer;
+}
+
+.goal-new button:hover:not(:disabled),
+.kr-new button:hover,
+.kr-add:hover,
+.kr-toggle:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.goal-new button:disabled,
+.kr-new button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.goal {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: var(--space-4);
+  background: var(--raised);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* A finished goal stays on the page and stops competing for attention. */
+.goal[data-done] {
+  opacity: 0.6;
+}
+
+.goal[data-done] .goal-title,
+.goal[data-done] .goal-title-static {
+  text-decoration: line-through;
+}
+
+.goal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.goal-check {
+  font: inherit;
+  font-size: var(--text-body);
+  line-height: 1;
+  color: var(--text-3);
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.goal-check:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.goal-check:disabled {
+  cursor: default;
+}
+
+.goal-title,
+.goal-title-static {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: 2px var(--space-2);
+  margin: 0;
+}
+
+.goal-title:hover,
+.goal-title:focus {
+  border-color: var(--line);
+  background: var(--bg);
+}
+
+.goal-percent {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* "Not measured" is a different statement from "0%", and reads as one. */
+.goal-percent-none {
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: var(--text-meta);
+}
+
+.goal-delete,
+.kr-delete {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+}
+
+.goal-delete:hover,
+.kr-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.goal-meta {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.goal-meta label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+.kr-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.kr {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--line);
+  font-size: var(--text-meta);
+  flex-wrap: wrap;
+}
+
+.kr-name {
+  flex: 1;
+  min-width: 8rem;
+  color: var(--text-2);
+}
+
+.kr-bar {
+  flex: 1;
+  min-width: 6rem;
+}
+
+.kr-bar-track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  overflow: hidden;
+}
+
+.kr-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+/* Past the target. The bar stops at full; the colour is what says which side
+   of the line this is. */
+.kr-bar-fill[data-over="true"] {
+  background: var(--success);
+}
+
+.kr-value {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.kr-current {
+  color: var(--text);
+}
+
+.kr-target {
+  color: var(--text-3);
+}
+
+/* A rollup that could not be measured says why. "Not measured" and "measured
+   as nothing" look the same and are not. */
+.kr[data-unmeasured] .kr-current {
+  color: var(--text-3);
+}
+
+/* Starts its own line, and is ordered last so the row's controls stay on the
+   first one — otherwise the delete button is orphaned under the sentence. */
+.kr-why {
+  order: 1;
+  flex-basis: 100%;
+  color: var(--text-3);
+  font-size: var(--text-mono);
+}
+
+.kr-arrow {
+  color: var(--text-3);
+}
+
+.kr-add {
+  align-self: flex-start;
+}

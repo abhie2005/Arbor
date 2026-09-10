@@ -36,6 +36,9 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 2. **No renderer has a query of its own.** Every view reads through
    `compileViewQuery`. A renderer needing something the compiler cannot say
    means the compiler grows (D-078), not that the renderer writes SQL (D-032).
+   A goal's rollup obeys this too: `key_results.source` holds a view definition
+   and `compileAggregate` shares `buildBase` with the row query, so a goal and a
+   list cannot disagree about what counts (D-101).
 3. **Every server action authorizes, not just authenticates.** `requireUser`
    says who; `requireTaskAccess` / `requireListAccess` / `requireViewAccess` /
    `requireWorkspaceRole` say whether (D-080, D-081).
@@ -89,6 +92,8 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Reading the activity log | `packages/db/src/history.ts` |
 | Live changes: publish and subscribe | `packages/db/src/live.ts` |
 | Duration rules and formatting (pure) | `packages/core/src/time.ts` |
+| Key-result kinds, progress arithmetic (pure) | `packages/core/src/goals.ts` |
+| Goals, key results, and running a rollup | `packages/db/src/goals.ts` |
 | Reading tracked time (writes are operations) | `packages/db/src/time.ts` |
 | The timer panel and the one in the shell | `apps/web/src/components/task-time.tsx`, `running-timer.tsx` |
 | The stream, and who may hear a nudge | `apps/web/src/app/api/live/route.ts` |

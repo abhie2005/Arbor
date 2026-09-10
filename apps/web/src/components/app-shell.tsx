@@ -54,7 +54,7 @@ export interface ShellChrome {
    */
   location?: ShellLocation;
   /** Which top-level entry is the current screen, when the screen is one of them. */
-  active?: "inbox";
+  active?: "inbox" | "goals";
   /**
    * The lists whose contents this screen shows, when it knows.
    *
@@ -197,6 +197,13 @@ async function Sidebar({ chrome }: { chrome: ShellChrome }) {
           {/* No badge at zero: an empty inbox should look empty, and a `0`
               sitting where a count goes reads as a number worth checking. */}
           {unread ? <span className="count" data-unread>{unread}</span> : null}
+        </a>
+        <a
+          className="nav"
+          href="/goals"
+          aria-current={chrome.active === "goals" ? "page" : undefined}
+        >
+          <span className="ic">◎</span>Goals
         </a>
       </nav>
 
