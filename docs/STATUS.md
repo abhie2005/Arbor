@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-09-09 (Phase 8, first pass). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-09-10 (Phase 8: time tracking and goals). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
@@ -16,7 +16,7 @@ verification found in each phase, is in `docs/HISTORY.md`.
 
 | Area | State |
 |---|---|
-| **Schema** | 43 tables, 9 enums, 117 indexes. Migrated (0000–0006) and seeded. |
+| **Schema** | 43 tables, 9 enums, 117 indexes. Migrated (0000–0007) and seeded. |
 | **View compiler** | Definition → one parameterized SQL query. Filters, grouping, sorting, group counts, permission scoping. Custom fields resolve through a required field catalog. |
 | **Hierarchy** | Config inheritance, effective privacy, denormalized ancestors, move-legality. |
 | **Ordering** | Fractional indices — one row written per drag. |
@@ -47,9 +47,10 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Presence** | Who else is looking at a task, pushed down the same stream. The connection *is* the signal — no table, no heartbeat, nothing to sweep, and gone the instant a tab closes (D-092). A scope is checked with `taskAccess` before a stream is registered on it. Per-process: a second instance would not see the first's viewers. |
 | **Live updates** | Every screen holds an `EventSource` to `/api/live`. A change announces itself with `pg_notify` inside the transaction that made it, so a rollback announces nothing; the route handler checks each nudge against the viewer's access before it leaves, and the browser answers with `router.refresh()` (D-090). A nudge carries the workspace, list and actor — never what changed. |
 | **Time tracking** | Start and stop on the task page, an entry list, logging time after the fact, and tracked-against-estimate. Every write is an operation (D-093), so ⌘Z undoes a stop and restores a deleted entry. At most one running timer per person, held by a unique partial index (D-094). A readout in the shell of every screen, pushed down the live stream so a timer started in another tab appears in this one (D-098). |
+| **Goals** | `/goals` — goals with key results of four kinds. A *rollup* key result holds a view definition and is counted by the compiler (D-101), so a goal and a list can never disagree about what counts; it is computed as the goal's **owner** rather than the reader (D-102), which is what makes progress a shared fact. Manual, currency and yes/no key results are entered. Progress is the mean of the key results, each clamped; completion is a timestamp somebody set, not a number crossing 100%. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 363 unit tests, 164 live-Postgres checks, 114 server-action checks,
+**Verified:** 399 unit tests, 180 live-Postgres checks, 127 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 ---
@@ -63,7 +64,7 @@ four packages typechecking clean, and the interactions above driven in Chrome.
   presence between them (D-100), all on one connection per process. `apps/worker`
   still has nothing to run.
 - `packages/sdk` — empty. Needed once there's an API worth a typed client.
-- Docs, chat, dashboards, goals, automations, AI.
+- Docs, chat, dashboards, automations, AI.
 - Derived field types (`formula`, `rollup`, `automatic_progress`) are declared
   and filterable, but nothing computes them yet. Time tracking did **not**
   change this: a tracked total is summed at read time, so the question of
@@ -74,139 +75,139 @@ four packages typechecking clean, and the interactions above driven in Chrome.
 
 ## Where to pick up
 
-**Phase 7 is closed.** Both things it left behind are fixed — nudges can now be
-ignored (D-099) and presence crosses processes (D-100) — and the entries below
-say what each cost.
+**Phase 7 is closed** — both things it left behind are fixed (D-099, D-100).
 
-**Phase 8 has had its first pass: time tracking is built.** Goals and dashboards
-are the rest of it and neither has been started.
+**Phase 8 has time tracking and goals.** Dashboards are the rest of it and have
+not been started.
 
-### Next — goals, then dashboards
+### Next — dashboards
 
-`goals`, `key_results` and `dashboards` are still tables nothing has ever
-written to. Read `packages/db/src/schema/time.ts` before planning either — the
-columns encode decisions made when the schema was designed, and re-deciding them
-by accident is how the two halves stop matching.
+`dashboards` is the last of the three tables migrated in 0000 that nothing has
+ever written to. Its columns say more than the other two did:
 
-**`key_results.kind` with its `source` json is the piece to think hardest
-about.** It is a small query language hiding in a column, and the view compiler
-already is one (D-032). If a key result can be "the number of tasks matching
-this filter", it should compile through the thing that already compiles filters
-rather than growing a second one. That is the decision to make before writing
-any of it, not after.
+- **It has a `container_id`, and `goals` deliberately does not.** That is the
+  schema saying a dashboard belongs somewhere in the tree while a goal belongs
+  to the workspace — so a dashboard has an obvious permission story (the
+  container's) that goals had to do without, and it should use it rather than
+  copying D-103's owner-or-admin rule.
+- **`layout` is "a grid of cards; each card is a saved query plus a chart
+  spec".** The saved-query half is settled by the same argument goals settled
+  (D-101): it is a view definition, compiled by the compiler, and `compileAggregate`
+  already exists for the cards that are one number. The part that is genuinely
+  new is the chart spec, and the question to answer first is whether a card
+  compiles to *rows* (a chart) or to *one number* (a stat), because those are
+  two different compiler calls and a card that could be either is a card whose
+  renderer has to ask.
 
-Two things time tracking settled that goals will meet again:
+**Do not let a dashboard card grow a second query language**, for exactly the
+reason a key result did not. If a card wants something the compiler cannot say,
+the compiler grows.
 
-- **An operation has to survive JSON** (D-097), which is now an invariant in
-  `CLAUDE.md`. Any new operation carrying an instant carries a string.
-- **A rollup is still a read-time derivation**, not a worker. Tracked totals are
-  summed at display time from a denormalized column; `automatic_progress`,
-  `formula` and `rollup` remain declared and uncomputed. A key result over a
-  filter would be the first thing that seriously tests whether that holds.
+The open question dashboards will force is **whose permissions a card reads
+with**. Goals answered it with the owner (D-102) because a goal is a shared
+commitment with an owner on the row. A dashboard sits in a container, so the
+viewer is the defensible answer there — which means two people can see different
+numbers on one dashboard, and that is correct rather than a bug. Decide it
+before the first card, and say it on screen.
 
-### Done — time tracking
+### Done — goals
 
-`time_entries` had existed since migration 0000 with no code touching it. What
-is built is the whole of the daily loop: start, stop, log after the fact,
-correct, delete, and an estimate to measure against.
+Built this pass. `goals` and `key_results` had existed since migration 0000 with
+nothing touching them.
 
 The decisions, each logged:
 
-- **It goes through `applyOperations`** (D-093). A timer service with its own
-  INSERT was thirty lines and would have been the second thing in the system
-  that writes — the thing every previous phase refused to add. Coming through
-  the executor bought the activity row, undo, and the live nudge without the
-  feature doing anything for any of them.
-- **`duration_ms` is derived in SQL** from the two stored instants, and is
-  absent from every operation. An operation that could carry a duration could
-  carry one that disagreed with its own timestamps, and no screen would ever
-  show the disagreement.
-- **One running timer per person is a unique partial index**, migration 0006
-  (D-094), not the service-layer rule the table comment asked for — that rule is
-  a `SELECT` followed by an `INSERT`, and two tabs slip through it. The service
-  layer still stops the running timer in the same batch, so nobody meets the
-  constraint.
-- **Stopping your own entry does not re-check task access** (D-095). Starting
-  needs `edit`; stopping needs only that the entry is yours, because a grant
-  revoked mid-timer would otherwise leave a running entry nobody can stop.
-- **The estimate is `tasks.time_estimate_ms`** and `task_estimates` stays empty
-  (D-096). Making the per-assignee table authoritative would have left
-  `setField` on an estimate still accepted, still logged and still undoable
-  while no longer being what set the number.
-- **An operation has to survive JSON** (D-097). `TimeEntryValues` held `Date`s,
-  which typechecked and passed 32 unit tests and 21 `db:smoke` checks and threw
-  on the first undo. `check:actions` is the only thing that could have found it.
+- **`source` is a view definition** (D-101). The column was asking for a small
+  query language and the compiler already is one, so it grew `compileAggregate`,
+  which shares `buildBase` with the row query and the group counts. A second
+  language would have been a second set of answers to "does this task count",
+  and the cost would have been the day a goal said 12 and the list showed 14.
+  Inline rather than bound to a saved view: a goal is a commitment, and a number
+  that moves because somebody tidied their saved views moved without anyone
+  deciding.
+- **A rollup is computed as the goal's owner** (D-102), so everyone reading a
+  goal reads the same number. The cost is real and named: an aggregate can
+  include tasks the reader cannot open, though it can never name one. Computing
+  it unscoped was rejected because the escape hatch is what the next caller
+  reaches for.
+- **A goal is configuration** (D-103), so it goes through the config services
+  rather than `applyOperations` — an operation carries a `taskId` and a goal has
+  no task. ⌘Z does not reach a goal, the same as it does not reach a status set.
+- **An ownerless goal reads as unmeasured, not as zero.** `owner_id` is `ON
+  DELETE SET NULL`, so it is reachable, and zero would be a claim that nothing
+  had been done.
 
-### Done — nudges that can be ignored
+### Done — time tracking
 
-Every screen used to re-render for every change anywhere. The nudge already
-named the list, so the filter looked like a one-line client change — and it was
-not, because the inbox badge is in the chrome of every screen, so a change in a
-list you are nowhere near *does* alter your page when it mentions you.
+Start, stop, log after the fact, correct, delete, and an estimate to measure
+against, on `/t/KEY` and in the chrome of every screen.
 
-So the nudge carries `n`, the people the fan-out told, and the announcement
-moved out of `logActivity` up to `applyOperations` to be able to say it — the
-fan-out runs after the activity row is written (D-099). The property that put it
-in `logActivity` is kept: `applyOperations` is the only way to apply an
-operation, so a batch cannot forget to broadcast either. One announcement per
-batch per list rather than one per operation.
+- **It goes through `applyOperations`** (D-093), which bought the activity row,
+  undo and the live nudge for free.
+- **`duration_ms` is derived in SQL** from the two stored instants and is absent
+  from every operation.
+- **One running timer per person is a unique partial index** (D-094), migration
+  0006 — not the service-layer rule the table comment asked for, which two tabs
+  slip through.
+- **Stopping your own entry does not re-check task access** (D-095).
+- **The estimate is `tasks.time_estimate_ms`**; `task_estimates` stays empty
+  (D-096).
+- **An operation has to survive JSON** (D-097) — now an invariant in
+  `CLAUDE.md`, found by `check:actions` after passing everything else.
 
-The five renderers got the filter without a line changed in any of them, because
-`loadView` already returned the list id and `chromeFrom` is the one place that
-builds their chrome. Screens that have not said which lists they show — the
-inbox, settings — keep refreshing on everything, which is the answer that cannot
-be wrong.
+### Done — the two things Phase 7 left
 
-### Done — presence across processes
-
-Each process states its own set per scope on a second Postgres channel and holds
-everyone else's with a thirty-second TTL against a ten-second heartbeat
-(D-100). The whole set, never a delta; an empty set is how a departure crosses
-without waiting out the TTL; a stream opening publishes `who` so a new viewer
-sees the room immediately.
-
-D-092 left this unbuilt on the grounds that guessing the message shape before
-there are two processes gets a shape that fits neither. That is answered by
-making the check *be* the second process: `check-actions` publishes on the real
-channel with its own process id, which is exactly what another server does.
-
-The heartbeat is the honest cost, and D-092's best property was not needing one.
-Between processes there is no shared connection to be the signal and a killed
-server cannot say so. It is one message per server per ten seconds rather than
-one per browser, which is the distinction that made the original refusal right.
+- **Nudges can be ignored** (D-099). The nudge carries who the fan-out told, and
+  the announcement moved out of `logActivity` up to `applyOperations` to be able
+  to say it. The list-only filter would have quietly broken the inbox badge.
+- **Presence crosses processes** (D-100). Each process states its own set on a
+  second Postgres channel and holds everyone else's with a TTL. The check *is*
+  the second process, which is what answered D-092's objection to building it.
 
 ### Known gaps in what was just built
 
-- **A timesheet screen does not exist.** `duration_ms` is denormalized so a
-  timesheet can sum a column, and nothing sums it — tracked time is visible only
-  on the task it was spent on. "My time this week" is the obvious next screen
-  and it is the one that would make `is_billable` mean anything.
-- **`is_billable` is collected and never used.** The checkbox writes it because
-  a fact known at the moment of tracking and not recorded is lost; nothing in
-  the product mentions billing, and nothing reads the column.
-- **Time cannot be tracked against anything but a task.** `time_entries.task_id`
-  is nullable and the operations require it, because `taskId` is what
-  authorization is scoped to (D-080) and an operation whose target cannot be
-  checked is a hole in `undo`.
-- **No rollup of tracked time to a parent task or a list.** A subtask's hours do
-  not reach its parent. This is the case the derived field types exist for and
-  the honest question of whether they stay read-time derivations.
-- **The estimate has no per-person split** (D-096), which is what
-  `task_estimates` was designed for.
-- **Editing an entry moves its start, holding its end.** "When did you stop" is
-  the half people remember, but it means correcting a long entry silently
-  rewrites when it began.
-- **A timer running past midnight belongs entirely to the day it stopped.** No
-  screen splits an entry across days yet, and a timesheet would have to.
-- **The shell readout shows one timer**, which is all there can be — but it
-  shows nothing at all about time tracked today, so a person who stops and
-  starts has no running total anywhere.
-- **A nudge in a list you cannot see is still evaluated per viewer** at the
-  route, one indexed lookup each. The filter added in D-099 is on the client;
-  the server still checks every nudge against every stream.
-- **Presence does not survive a partition.** A process cut off from Postgres
-  keeps showing its own viewers and drops everyone else's after the TTL, which
-  is the correct degradation and is not signalled to anyone.
+**Goals**
+
+- **Goals have no privacy.** Every member sees every goal, because `goals` has
+  no container to scope to. Scoping them would mean adding a `container_id` —
+  which `dashboards` has and `goals` deliberately does not — so inventing one to
+  paper over this would be re-deciding the schema by accident.
+- **A rollup is one query per key result.** A screen of five goals with three
+  each is fifteen small indexed aggregates. One `UNION ALL` is the fix available
+  when that stops being cheap; it is not the shape to reach for first.
+- **Nothing caches a rollup.** Every render recounts. That is the same bet the
+  ambient inbox makes and it holds for the same reason, until a dashboard puts
+  twenty of them on one screen.
+- **Key results cannot be reordered.** `position` is written with a fractional
+  index and nothing moves one.
+- **The rollup form offers four metrics and a container.** `source` can express
+  any view definition the compiler can compile; the form cannot. A real filter
+  builder is the missing half, and the data model needs no migration for it.
+- **No history screen reads a goal's activity.** `goal.created`, `goal.updated`
+  and the key-result verbs are written and nothing displays them — the same gap
+  every other configuration verb has.
+- **Goals are workspace-scoped and the workspace is still the demo one.**
+  `requireWorkspace()` looks up a slug.
+- **A currency key result has no way to pick its currency in the UI.** The
+  column and the parser handle it; the form always sends the default.
+
+**Time tracking** (unchanged from the last pass)
+
+- No timesheet screen; `is_billable` is collected and never read; time cannot be
+  tracked against anything but a task; no rollup of tracked time to a parent or
+  a list; editing an entry moves its start and holds its end; an entry spanning
+  midnight belongs to the day it stopped.
+- **A tracked-time rollup would be the obvious link between the two halves of
+  Phase 8** and does not exist: `compileAggregate` totals `points` and
+  `timeEstimate`, not time actually tracked, because that needs the compiler to
+  reach a table outside `tasks`.
+
+**Live and presence**
+
+- A nudge is still evaluated per viewer at the route, one indexed lookup each;
+  the D-099 filter is on the client.
+- Presence does not survive a partition, and does not say so.
+- Presence is only on the task page.
 
 ### Background — why notifications are shaped this way
 
