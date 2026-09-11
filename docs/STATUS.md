@@ -51,7 +51,7 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Dashboards** | `/dashboards` — a grid of cards, each a filter plus a way of drawing it. A card's `kind` *is* which compiler entry point it calls (D-104): a stat is `compileAggregate`, a chart is `compileGroupCounts`. Counted as the **viewer** (D-105), which is the opposite of a goal and for a reason. Scoped to a container, with personal dashboards following the saved view rule. Charts are HTML bars measured against the largest slice; no charting library. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 418 unit tests, 196 live-Postgres checks, 141 server-action checks,
+**Verified:** 418 unit tests, 196 live-Postgres checks, 140 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 ---
