@@ -223,6 +223,7 @@ export interface CardLabels {
   statuses?: Map<string, { name: string; color: string }>;
   people?: Map<string, string>;
   containers?: Map<string, string>;
+  taskTypes?: Map<string, string>;
 }
 
 const PRIORITY_NAMES: Record<string, string> = {
@@ -258,9 +259,13 @@ function describeKey(
       return { label: STATUS_GROUPS[key] ?? key, color: null };
     case "priority":
       return { label: PRIORITY_NAMES[key] ?? key, color: null };
-    case "assignee":
+    // Not `assignee` — the compiler refuses to group by a multi-valued field,
+    // because a task with three assignees belongs to three groups. `createdBy`
+    // is one person, so it is here.
     case "createdBy":
       return { label: labels.people?.get(key) ?? "Someone", color: null };
+    case "taskType":
+      return { label: labels.taskTypes?.get(key) ?? "No type", color: null };
     case "list":
     case "space":
     case "folder":

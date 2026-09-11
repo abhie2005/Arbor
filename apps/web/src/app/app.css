@@ -3711,3 +3711,259 @@ select.filter-add option {
 .kr-add {
   align-self: flex-start;
 }
+
+/* --- dashboards (D-104, D-105) --------------------------------------------- */
+
+.dashboards {
+  padding: var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  max-width: 72rem;
+}
+
+.dashboards[data-pending] {
+  opacity: 0.7;
+}
+
+.dash-empty,
+.dash-dropped {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.dash-new,
+.dash-new-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.dash-new input[type="text"],
+.dash-new-card input[type="text"] {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.dash-new input,
+.dash-new select,
+.dash-new-card input,
+.dash-new-card select {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 2px var(--space-2);
+}
+
+.dash-new button,
+.dash-new-card button,
+.dash-add {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 2px var(--space-3);
+  cursor: pointer;
+}
+
+.dash-new button:hover:not(:disabled),
+.dash-new-card button:hover,
+.dash-add:hover {
+  color: var(--text);
+  border-color: var(--line-strong);
+}
+
+.dash-new button:disabled,
+.dash-new-card button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.dash-personal {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
+.dash {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dash-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.dash-title {
+  font: inherit;
+  font-size: var(--text-body);
+  font-weight: 600;
+  color: var(--text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: 2px var(--space-2);
+  min-width: 12rem;
+}
+
+.dash-title:hover,
+.dash-title:focus {
+  border-color: var(--line);
+  background: var(--raised);
+}
+
+.dash-where {
+  flex: 1;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.dash-delete,
+.card-delete {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+}
+
+.dash-delete:hover,
+.card-delete:hover {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+/* Auto-fit rather than a fixed column count: a dashboard is read on a laptop
+   beside a sidebar and on a screen shared into a meeting, and the same grid
+   has to do both without a breakpoint per surface. */
+.dash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: var(--space-3);
+}
+
+.card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--raised);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-height: 6.5rem;
+}
+
+.card[data-failed] {
+  border-color: var(--danger);
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.card-title {
+  flex: 1;
+  margin: 0;
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.card-failed,
+.card-empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-mono);
+}
+
+.card-stat {
+  margin: auto 0 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.card-number {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  line-height: 1.1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-unit {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+.card-bars {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.card-bar {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr 2rem;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-meta);
+}
+
+.card-bar-label {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-bar-track {
+  height: 8px;
+  border-radius: 2px;
+  background: var(--line-strong);
+  overflow: hidden;
+}
+
+.card-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  /* A group with none of anything still gets a sliver, so an empty bar reads
+     as a row that exists rather than as a missing one. */
+  min-width: 2px;
+}
+
+.card-bar-count {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-add {
+  align-self: flex-start;
+}

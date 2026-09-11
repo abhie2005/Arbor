@@ -54,7 +54,7 @@ export interface ShellChrome {
    */
   location?: ShellLocation;
   /** Which top-level entry is the current screen, when the screen is one of them. */
-  active?: "inbox" | "goals";
+  active?: "inbox" | "goals" | "dashboards";
   /**
    * The lists whose contents this screen shows, when it knows.
    *
@@ -204,6 +204,13 @@ async function Sidebar({ chrome }: { chrome: ShellChrome }) {
           aria-current={chrome.active === "goals" ? "page" : undefined}
         >
           <span className="ic">◎</span>Goals
+        </a>
+        <a
+          className="nav"
+          href="/dashboards"
+          aria-current={chrome.active === "dashboards" ? "page" : undefined}
+        >
+          <span className="ic">▦</span>Dashboards
         </a>
       </nav>
 

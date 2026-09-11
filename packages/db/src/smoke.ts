@@ -2717,6 +2717,26 @@ async function main() {
       ),
     ),
   );
+  // The bug a dashboard found in the browser: `assignee` compiled to SQL
+  // naming a join the query never makes, and Postgres refused it at run time.
+  // Refused at the compiler now, so it cannot be written.
+  report(
+    "a chart grouped by a multi-valued field is refused, not left to Postgres",
+    await expectRejection(() =>
+      addCard(
+        board.id,
+        {
+          id: randomUUID(),
+          kind: "chart",
+          title: "By assignee",
+          scope: { kind: "list", id: sprint.id },
+          definition: DEFAULT_VIEW_DEFINITION,
+          groupBy: "assignee",
+        },
+        { actorId: viewer.id!, connection: pool },
+      ),
+    ),
+  );
   report(
     "a card kind nobody declared is refused too",
     await expectRejection(() =>

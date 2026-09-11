@@ -38,36 +38,43 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
    means the compiler grows (D-078), not that the renderer writes SQL (D-032).
    A goal's rollup obeys this too: `key_results.source` holds a view definition
    and `compileAggregate` shares `buildBase` with the row query, so a goal and a
-   list cannot disagree about what counts (D-101).
-3. **Every server action authorizes, not just authenticates.** `requireUser`
+   list cannot disagree about what counts (D-101). A dashboard card is the same
+   bet again, and its `kind` *is* which entry point it calls (D-104).
+3. **Whose permissions a number is computed with is a decision, not a default.**
+   A goal's rollup runs as the goal's **owner**, so a shared commitment reads
+   the same for everyone (D-102). A dashboard card runs as the **viewer**,
+   because a dashboard lives in a container and the tree's rule is that you see
+   what you have a grant on (D-105). Two readers disagreeing about a dashboard
+   is correct; two readers disagreeing about a goal would not be.
+4. **Every server action authorizes, not just authenticates.** `requireUser`
    says who; `requireTaskAccess` / `requireListAccess` / `requireViewAccess` /
    `requireWorkspaceRole` say whether (D-080, D-081).
-4. **Reads are permission-scoped by joining `access_index`.** Grants are truth;
+5. **Reads are permission-scoped by joining `access_index`.** Grants are truth;
    the index is what queries join (ADR 3). The detail page does this by hand
    because it does not go through the compiler.
-5. **Refusals never leak existence.** Unreachable reads as "no longer exists",
+6. **Refusals never leak existence.** Unreachable reads as "no longer exists",
    in the same words as genuinely missing. Insufficient permission says so.
-6. **One document format** for comments and descriptions — a block tree with
+7. **One document format** for comments and descriptions — a block tree with
    mention *nodes* carrying user ids, `packages/core/src/richtext.ts`. Never
    store a mention as the characters "@Name" (D-083).
-7. **Notifications: direct signals only.** Assigned, mentioned, replied write a
+8. **Notifications: direct signals only.** Assigned, mentioned, replied write a
    row inside the causing transaction. Everything ambient is aggregated at read
    time from `activity` (`loadAmbient`) — fanning out to watchers is the
    200-rows-per-edit mistake the table is shaped to avoid, and so is giving a
    watcher a read flag per event: the ambient half's read state is one mark per
    membership (D-088).
-8. **Dates**: a date-only value is midnight UTC and read in UTC (D-067).
+9. **Dates**: a date-only value is midnight UTC and read in UTC (D-067).
    `dueHasTime` decides. Never format one without asking.
-9. **An operation must survive JSON.** It is handed to the client as an
+10. **An operation must survive JSON.** It is handed to the client as an
    inverse and posted back by `undo`, so a `Date` on one arrives as a string and
    every helper that calls a date method on it throws. Instants on operations
    are ISO strings (D-097). Typechecks, unit tests and `db:smoke` all pass while
    this is wrong; `check:actions` is what catches it.
-10. **A control that shows a server value must follow it.** `useState(props.x)`
+11. **A control that shows a server value must follow it.** `useState(props.x)`
    takes the value once and never looks again, which no test in this repo can
    see — every check passed while a live rename left the old name on screen.
    Use `useServerValue` (D-090).
-11. **Announcing is `applyOperations`' job, once per batch.** Not
+12. **Announcing is `applyOperations`' job, once per batch.** Not
     `logActivity`'s any more (D-099): the nudge carries who the fan-out told,
     and the fan-out has not run when the activity row is written. A new
     operation still cannot forget to broadcast, because there is no way to apply
@@ -94,6 +101,8 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Duration rules and formatting (pure) | `packages/core/src/time.ts` |
 | Key-result kinds, progress arithmetic (pure) | `packages/core/src/goals.ts` |
 | Goals, key results, and running a rollup | `packages/db/src/goals.ts` |
+| Dashboard cards: what each kind compiles to | `packages/core/src/dashboards.ts` |
+| Running a dashboard's cards | `packages/db/src/dashboards.ts` |
 | Reading tracked time (writes are operations) | `packages/db/src/time.ts` |
 | The timer panel and the one in the shell | `apps/web/src/components/task-time.tsx`, `running-timer.tsx` |
 | The stream, and who may hear a nudge | `apps/web/src/app/api/live/route.ts` |
@@ -136,6 +145,12 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 - **A dev-server 503 on `/api/live` or an `?_rsc=` request** is Next compiling,
   not a bug in the stream. It resolves on the next attempt; check twice before
   chasing it.
+- **A `"use server"` file may only export async functions.** Exporting a
+  constant from one fails the whole module at build time, and it surfaces as a
+  server action returning `A "use server" file can only export async functions`
+  rather than as a compile error — so typecheck passes and only
+  `check:actions` catches it. Types are fine (they are erased); shared runtime
+  values go in a plain module, e.g. `components/card-options.ts`.
 - **Postgres's clock is not this machine's.** It runs in the Colima VM and
   drifts tens of milliseconds either way. A check that fences on `activity.at`
   with `new Date()` lets the previous section's writes through at random — take

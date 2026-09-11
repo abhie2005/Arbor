@@ -1888,6 +1888,192 @@ report(
 
 await db.query(`DELETE FROM goals WHERE workspace_id = $1`, [workspaceId]);
 
+// --- dashboards -------------------------------------------------------------
+//
+// The seam: a form posts a kind and a metric, the action turns them into a view
+// definition, and which compiler function runs is decided by the kind (D-104).
+// The number that comes back is the reader's, not the author's (D-105).
+console.log("\ndashboards \u2192 a card is a compiler call, run as the reader\n");
+
+await db.query(`DELETE FROM dashboards WHERE workspace_id = $1`, [workspaceId]);
+await warm("/dashboards");
+const DASH_URL = `http://localhost:${PORT}/dashboards`;
+const DASH_ACTIONS = actionIds("app/dashboards/page");
+
+const madeDash = await callOn(DASH_URL, DASH_ACTIONS.createWorkspaceDashboard!, [
+  "Sprint health",
+  sprintListId,
+  false,
+]);
+const dashRow = await one(
+  `SELECT id, container_id, owner_id, layout::text AS layout FROM dashboards WHERE workspace_id = $1`,
+  [workspaceId],
+);
+report(
+  "creating a dashboard puts it in the container it was given, with no cards",
+  dashRow?.container_id === sprintListId && dashRow.layout === "[]"
+    ? null
+    : `stored ${JSON.stringify(dashRow)} — response was ${madeDash.text.slice(-300)}`,
+);
+if (!dashRow) throw new Error("no dashboard to carry on with");
+
+await callOn(DASH_URL, DASH_ACTIONS.addDashboardCard!, [
+  dashRow.id,
+  { title: "Open now", kind: "stat", scopeId: sprintListId, scopeKind: "list", metric: "open" },
+]);
+await callOn(DASH_URL, DASH_ACTIONS.addDashboardCard!, [
+  dashRow.id,
+  { title: "By status", kind: "chart", scopeId: sprintListId, scopeKind: "list", axis: "status" },
+]);
+
+const layout = JSON.parse(
+  (await one(`SELECT layout::text AS layout FROM dashboards WHERE id = $1`, [dashRow.id])).layout,
+) as { kind: string; aggregate?: { fn: string }; groupBy?: string; definition?: unknown }[];
+
+report(
+  "a card stores its kind, which is what decides the compiler call",
+  layout.length === 2 && layout[0]?.kind === "stat" && layout[1]?.kind === "chart"
+    ? null
+    : `stored ${JSON.stringify(layout).slice(0, 160)}`,
+);
+report(
+  "a stat card carries an aggregate and a chart card carries an axis",
+  layout[0]?.aggregate?.fn === "count" && layout[1]?.groupBy === "status"
+    ? null
+    : `stored ${JSON.stringify(layout).slice(0, 200)}`,
+);
+report(
+  "and both carry a view definition rather than a query language of their own",
+  layout.every((card) => card.definition !== undefined)
+    ? null
+    : "a card was stored with no definition",
+);
+
+const openInSprint = Number(
+  (
+    await one(
+      `SELECT count(*) AS n FROM tasks t
+       JOIN access_index ax ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+       LEFT JOIN statuses s ON s.id = t.status_id
+       WHERE t.home_list_id = $1 AND t.deleted_at IS NULL AND t.archived_at IS NULL
+         AND (s.group IS NULL OR s.group <> 'closed')`,
+      [sprintListId, averyUserId],
+    )
+  ).n,
+);
+
+const dashPage = await (await fetch(DASH_URL, { headers: { Cookie: COOKIE } })).text();
+report(
+  "the page draws the number the compiler counted",
+  dashPage.includes(`>${openInSprint}<`) ? null : `expected ${openInSprint} on the page`,
+);
+report(
+  "and says whose numbers they are, because two readers can legitimately differ",
+  // React puts a comment separator between a text node and an expression, so a
+  // sentence that reads as one piece is never one piece in the HTML. Stripped
+  // rather than matched around, because the next assertion would hit it too.
+  dashPage.replaceAll("<!-- -->", "").includes("counted as Avery Mills")
+    ? null
+    : "the page did not say who it counted as",
+);
+report(
+  "a chart renders bars with words, not uuids",
+  /card-bar-label/.test(dashPage) && !/card-bar-label[^>]*>[0-9a-f]{8}-/.test(dashPage)
+    ? null
+    : "a chart printed an id",
+);
+
+// Refused on write, so a dashboard cannot be saved in a state that breaks it.
+const badCard = await callOn(DASH_URL, DASH_ACTIONS.addDashboardCard!, [
+  dashRow.id,
+  { title: "Nonsense", kind: "chart", scopeId: sprintListId, scopeKind: "list", axis: "made-up" },
+]);
+const cardCount = JSON.parse(
+  (await one(`SELECT layout::text AS layout FROM dashboards WHERE id = $1`, [dashRow.id])).layout,
+).length;
+report(
+  "an axis nobody declared is refused before anything is written",
+  cardCount === 2 && /grouped by that|cannot/i.test(badCard.text)
+    ? null
+    : `${cardCount} cards after a bad post`,
+);
+
+// The permission is the container's (D-105), not a rule of its own.
+//
+// On the private list rather than the sprint: the sharing checks above leave
+// every seeded user holding `edit` on Sprint 24, so a check pointed there would
+// pass on a fresh database and fail on the next run.
+await callOn(DASH_URL, DASH_ACTIONS.createWorkspaceDashboard!, ["Hiring board", hiringList, false]);
+const privateDash = await one(
+  `SELECT id, name FROM dashboards WHERE workspace_id = $1 AND name = 'Hiring board'`,
+  [workspaceId],
+);
+
+const notAllowed = await callOn(
+  DASH_URL,
+  DASH_ACTIONS.renameWorkspaceDashboard!,
+  [privateDash.id, "Hijacked"],
+  SAM,
+);
+const dashStillNamed = await one(`SELECT name FROM dashboards WHERE id = $1`, [privateDash.id]);
+report(
+  "somebody with no grant on the container cannot rename its dashboard",
+  dashStillNamed?.name === "Hiring board" && /permission|no longer exists/i.test(notAllowed.text)
+    ? null
+    : `name is now ${String(dashStillNamed?.name)}`,
+);
+report(
+  "and a dashboard on a list they cannot reach is not even listed for them",
+  !(await (await fetch(DASH_URL, { headers: { Cookie: SAM } })).text()).includes("Hiring board")
+    ? null
+    : "a dashboard on an unreachable list was rendered",
+);
+await callOn(DASH_URL, DASH_ACTIONS.removeWorkspaceDashboard!, [privateDash.id]);
+
+// Personal dashboards are the saved view rule verbatim (D-057).
+await callOn(DASH_URL, DASH_ACTIONS.createWorkspaceDashboard!, ["Just mine", sprintListId, true]);
+const personal = await one(
+  `SELECT id, owner_id FROM dashboards WHERE workspace_id = $1 AND name = 'Just mine'`,
+  [workspaceId],
+);
+report(
+  "a personal dashboard records its owner",
+  personal?.owner_id === averyUserId ? null : `owner was ${String(personal?.owner_id)}`,
+);
+const asRiley = await (await fetch(DASH_URL, { headers: { Cookie: RILEY } })).text();
+report(
+  "and does not render for anybody else",
+  !asRiley.includes("Just mine") ? null : "somebody else's personal dashboard was rendered",
+);
+
+const cardId = layout[0]!.kind === "stat" ? (layout[0] as { id: string }).id : "";
+await callOn(DASH_URL, DASH_ACTIONS.removeDashboardCard!, [dashRow.id, cardId]);
+report(
+  "removing a card leaves the others",
+  JSON.parse(
+    (await one(`SELECT layout::text AS layout FROM dashboards WHERE id = $1`, [dashRow.id])).layout,
+  ).length === 1
+    ? null
+    : "the wrong cards survived",
+);
+
+await callOn(DASH_URL, DASH_ACTIONS.removeWorkspaceDashboard!, [dashRow.id]);
+await callOn(DASH_URL, DASH_ACTIONS.removeWorkspaceDashboard!, [personal.id]);
+report(
+  "deleting a dashboard removes it",
+  // The two this section made, by id — not "how many exist", which anybody
+  // clicking around the screen while this runs would fail.
+  (
+    await one(`SELECT count(*) AS n FROM dashboards WHERE id = ANY($1::uuid[])`, [
+      [dashRow.id, personal.id],
+    ])
+  ).n === "0"
+    ? null
+    : "a dashboard survived being deleted",
+);
+
+await db.query(`DELETE FROM dashboards WHERE workspace_id = $1`, [workspaceId]);
+
 // --- what a nudge carries ---------------------------------------------------
 //
 // The nudge used to be three fields about *where* a change happened, and every

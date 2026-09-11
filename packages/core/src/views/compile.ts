@@ -699,5 +699,28 @@ function groupKeyExpr(
             FROM field_values fv
             WHERE fv.task_id = t.id AND fv.field_id = ${params.add(definition.id)})`;
   }
+
+  /**
+   * The same rule for the built-in multi-valued fields, which it did not used
+   * to have — and the gap was not cosmetic.
+   *
+   * `builtinSql("assignee")` is `ta.user_id`, an alias that exists only inside
+   * the EXISTS subquery a multi-value *filter* builds. Grouping by one put that
+   * alias in the SELECT and GROUP BY of a query that never joins
+   * `task_assignees`, so it compiled to syntactically valid SQL that Postgres
+   * refused with `missing FROM-clause entry for table "ta"`. Nothing caught it
+   * because the board — the only thing that grouped — groups by status, and
+   * compiling a query is not running it.
+   *
+   * Refused rather than joined, for the reason the custom-field case above is:
+   * a task with three assignees belongs to three groups, and a single group key
+   * cannot say that. A card appearing in several columns is a renderer feature.
+   */
+  if (MULTI_VALUE_FIELDS.has(field as BuiltinField)) {
+    throw new ViewCompileError(
+      `Cannot group by "${field}" — a task can hold several at once`,
+    );
+  }
+
   return builtinSql(field);
 }

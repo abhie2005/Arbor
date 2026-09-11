@@ -592,3 +592,44 @@ describe("compileAggregate", () => {
     expect(text).not.toContain(VIEWER);
   });
 });
+
+describe("grouping by a multi-valued field", () => {
+  function counts(field: string) {
+    return compileGroupCounts({
+      workspaceId: WORKSPACE,
+      viewerId: VIEWER,
+      scope: { kind: "list", id: LIST },
+      fields: CATALOG,
+      definition: {
+        ...DEFAULT_VIEW_DEFINITION,
+        grouping: { field: field as never, dir: "asc" },
+      },
+    });
+  }
+
+  /**
+   * The bug a dashboard found.
+   *
+   * `builtinSql("assignee")` is `ta.user_id`, an alias that only exists inside
+   * the EXISTS subquery a multi-value *filter* builds. Grouping by one used to
+   * put that alias in a SELECT and GROUP BY of a query with no such join — so
+   * it compiled to valid-looking SQL and Postgres refused it at run time with
+   * `missing FROM-clause entry for table "ta"`. Compiling is not running.
+   */
+  it("is refused for the built-in ones, not silently mis-aliased", () => {
+    for (const field of ["assignee", "watcher", "tag"]) {
+      expect(() => counts(field)).toThrow(ViewCompileError);
+      expect(() => counts(field)).toThrow(/several at once/);
+    }
+  });
+
+  it("still allows the single-valued ones the board actually uses", () => {
+    for (const field of ["status", "statusGroup", "priority", "list", "taskType"]) {
+      expect(() => counts(field)).not.toThrow();
+    }
+  });
+
+  it("refuses a multi-valued custom field the same way", () => {
+    expect(() => counts(`cf:${LABELS_FIELD}`)).toThrow(/several values at once/);
+  });
+});

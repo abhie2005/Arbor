@@ -3261,3 +3261,39 @@ to fix once rather than route around again.
 
 *In one sentence:* a goal has an owner so its number is the owner's; a dashboard
 has a container so its number is the reader's.
+
+### D-106
+**Grouping by a multi-valued field is refused, not joined** · 2026-09-11 · active
+
+`groupKeyExpr` now throws for `assignee`, `watcher` and `tag`, the same way it
+already did for multi-valued custom fields.
+
+**It used to emit SQL that named a table the query never joined.**
+`builtinSql("assignee")` is `ta.user_id` — an alias that exists only inside the
+EXISTS subquery a multi-value *filter* builds. Grouping by it put that alias in
+the SELECT and GROUP BY of a query with no `task_assignees` join at all, so
+`compileGroupCounts` returned syntactically valid SQL that Postgres refused with
+`missing FROM-clause entry for table "ta"`.
+
+**Nothing had ever run it.** `compileGroupCounts` existed for the board's column
+headers, and the board groups by status; the first thing to group by anything
+else was a dashboard chart, and it found this on the first card. The unit tests
+assert on SQL *text*, which was correct text for a query nobody could run.
+
+**The check that was supposed to catch it is the reason this is worth writing
+down.** `addCard` compiles a card before storing it, exactly as a saved view and
+a rollup key result are compiled before storing (D-058, D-101) — and it passed,
+because compiling is not running. That validation catches everything the
+compiler can refuse and nothing Postgres would. The fix is therefore in the
+compiler, where the refusal is a rule rather than a runtime surprise, and the
+check now bites.
+
+**Refused rather than made to work.** A task with three assignees belongs to
+three groups, and a single group key cannot say that — the same sentence the
+custom-field case has carried since Phase 4. "Tasks per person" is a real thing
+to want and it needs a renderer that can put one task in several bars, which is
+a different card kind rather than a different axis. So the form stops offering
+assignee, and `CHART_AXES` is single-valued fields only.
+
+*In one sentence:* the compiler could say something the database could not
+execute, and the gap was invisible because the only caller never asked.
