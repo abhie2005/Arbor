@@ -71,6 +71,14 @@ import {
 } from "./statuses";
 import { loadComments } from "./comments";
 import {
+  addCard,
+  createDashboard,
+  deleteDashboard,
+  listDashboards,
+  removeCard,
+  resolveCards,
+} from "./dashboards";
+import {
   addKeyResult,
   createGoal,
   deleteGoal,
@@ -2553,6 +2561,228 @@ async function main() {
   );
 
   await pool.query(`DELETE FROM goals WHERE workspace_id = $1`, [ws.id]);
+
+  // --- dashboards -----------------------------------------------------------
+  console.log("\ndashboards \u2192 a card is a compiler call, run as the reader\n");
+
+  await pool.query(`DELETE FROM dashboards WHERE workspace_id = $1`, [ws.id]);
+
+  const sprint = await one(`SELECT id FROM containers WHERE name = 'Sprint 24'`);
+  const board = await createDashboard(
+    { workspaceId: ws.id!, name: "Sprint health", containerId: sprint.id! },
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const statCard = await addCard(
+    board.id,
+    {
+      id: randomUUID(),
+      kind: "stat",
+      title: "Open tasks",
+      scope: { kind: "list", id: sprint.id },
+      definition: DEFAULT_VIEW_DEFINITION,
+      aggregate: { fn: "count" },
+      unit: "tasks",
+    },
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const chartCard = await addCard(
+    board.id,
+    {
+      id: randomUUID(),
+      kind: "chart",
+      title: "By status",
+      scope: { kind: "list", id: sprint.id },
+      definition: DEFAULT_VIEW_DEFINITION,
+      groupBy: "status",
+    },
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const boardActivity = await one(
+    `SELECT verb, object_kind FROM activity WHERE object_id = $1 ORDER BY at DESC LIMIT 1`,
+    [board.id],
+  );
+  report(
+    "adding a card is logged against the dashboard",
+    boardActivity?.verb === "dashboard.card_added" && boardActivity.object_kind === "dashboard"
+      ? null
+      : `logged ${JSON.stringify(boardActivity)}`,
+  );
+
+  const [storedBoard] = await listDashboards(ws.id!, viewer.id!, pool);
+  report(
+    "a dashboard comes back with its cards, in the order they were added",
+    storedBoard?.cards.length === 2 &&
+      storedBoard.cards[0]!.id === statCard &&
+      storedBoard.cards[1]!.id === chartCard
+      ? null
+      : `got ${storedBoard?.cards.length} cards`,
+  );
+
+  const statuses = new Map(
+    (
+      await pool.query<{ id: string; name: string; color: string }>(
+        `SELECT s.id, s.name, s.color FROM statuses s
+         JOIN status_sets ss ON ss.id = s.status_set_id WHERE ss.workspace_id = $1`,
+        [ws.id],
+      )
+    ).rows.map((row) => [row.id, { name: row.name, color: row.color }]),
+  );
+
+  const drawn = await resolveCards(
+    storedBoard!.cards,
+    { workspaceId: ws.id!, viewerId: viewer.id! },
+    { statuses },
+    pool,
+  );
+
+  const openCount = Number(
+    (
+      await one(
+        `SELECT count(*) AS n FROM tasks t
+         JOIN access_index ax ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+         LEFT JOIN statuses s ON s.id = t.status_id
+         WHERE t.home_list_id = $1 AND t.deleted_at IS NULL AND t.archived_at IS NULL
+           AND (s.group IS NULL OR s.group <> 'closed')`,
+        [sprint.id, viewer.id],
+      )
+    ).n,
+  );
+
+  const statResult = drawn.find((card) => card.id === statCard);
+  report(
+    "a stat card counts exactly what the same filter shows on a list",
+    statResult?.kind === "stat" && statResult.value === openCount
+      ? null
+      : `stat said ${JSON.stringify(statResult)}, the list has ${openCount}`,
+  );
+
+  const chartResult = drawn.find((card) => card.id === chartCard);
+  report(
+    "a chart card comes back one number per group, already in words",
+    chartResult?.kind === "chart" &&
+      chartResult.slices.length > 0 &&
+      chartResult.slices.every((slice) => slice.label !== "" && !/^[0-9a-f-]{36}$/.test(slice.label))
+      ? null
+      : `chart said ${JSON.stringify(chartResult).slice(0, 200)}`,
+  );
+  report(
+    "and its slices sum to what the stat counted",
+    chartResult?.kind === "chart" &&
+      chartResult.slices.reduce((total, slice) => total + slice.count, 0) === openCount
+      ? null
+      : "the chart and the stat disagree about the same filter",
+  );
+  report(
+    "bars are measured against the largest slice, so the biggest fills its row",
+    chartResult?.kind === "chart" && chartResult.slices.some((slice) => slice.fraction === 1)
+      ? null
+      : "no slice filled its row",
+  );
+
+  // The decision this feature turned on (D-104): a card is the *reader's*
+  // number, unlike a goal's rollup which is the owner's (D-102).
+  const drawnAsStranger = await resolveCards(
+    storedBoard!.cards,
+    { workspaceId: ws.id!, viewerId: (await one(`SELECT gen_random_uuid() AS id`)).id! },
+    { statuses },
+    pool,
+  );
+  const strangerStat = drawnAsStranger.find((card) => card.id === statCard);
+  report(
+    "the same card counts nothing for a reader with no grant",
+    strangerStat?.kind === "stat" && strangerStat.value === 0
+      ? null
+      : `a stranger counted ${JSON.stringify(strangerStat)}`,
+  );
+
+  // Refused on write, so a dashboard cannot be saved in a state that breaks the
+  // screen (D-058, and the same rule a rollup key result follows).
+  report(
+    "a card whose definition will not compile is refused when it is written",
+    await expectRejection(() =>
+      addCard(
+        board.id,
+        {
+          id: randomUUID(),
+          kind: "stat",
+          title: "Broken",
+          scope: { kind: "list", id: sprint.id },
+          definition: DEFAULT_VIEW_DEFINITION,
+          aggregate: { fn: "sum", field: "priority" },
+        },
+        { actorId: viewer.id!, connection: pool },
+      ),
+    ),
+  );
+  report(
+    "a card kind nobody declared is refused too",
+    await expectRejection(() =>
+      addCard(
+        board.id,
+        { id: randomUUID(), kind: "gauge", title: "Nope", scope: { kind: "list", id: sprint.id } },
+        { actorId: viewer.id!, connection: pool },
+      ),
+    ),
+  );
+
+  // One card whose storedBoard spec will not parse must not take the others with it.
+  await pool.query(
+    `UPDATE dashboards SET layout = layout || '[{"kind":"nonsense"}]'::jsonb WHERE id = $1`,
+    [board.id],
+  );
+  const [damaged] = await listDashboards(ws.id!, viewer.id!, pool);
+  report(
+    "a card that will not parse is dropped, counted, and does not take the screen",
+    damaged?.cards.length === 2 && damaged.dropped === 1
+      ? null
+      : `${damaged?.cards.length} cards, ${damaged?.dropped} dropped`,
+  );
+
+  await removeCard(board.id, statCard, { actorId: viewer.id!, connection: pool });
+  const [afterRemove] = await listDashboards(ws.id!, viewer.id!, pool);
+  report(
+    "removing a card leaves the others",
+    afterRemove?.cards.length === 1 && afterRemove.cards[0]!.id === chartCard
+      ? null
+      : "the wrong cards survived",
+  );
+  report(
+    "and removing one that is not there is refused rather than silently ignored",
+    await expectRejection(() =>
+      removeCard(board.id, randomUUID(), { actorId: viewer.id!, connection: pool }),
+    ),
+  );
+
+  // Personal dashboards are invisible to everyone else — the saved view rule,
+  // verbatim, because the two have the same columns (D-057).
+  const mine = await createDashboard(
+    { workspaceId: ws.id!, name: "Just mine", containerId: sprint.id!, ownerId: viewer.id! },
+    { actorId: viewer.id!, connection: pool },
+  );
+  report(
+    "a personal dashboard is listed for its owner",
+    (await listDashboards(ws.id!, viewer.id!, pool)).some((d) => d.id === mine.id)
+      ? null
+      : "the owner could not see their own dashboard",
+  );
+  report(
+    "and not for anybody else",
+    !(await listDashboards(ws.id!, owner.id!, pool)).some((d) => d.id === mine.id)
+      ? null
+      : "somebody else's personal dashboard was listed",
+  );
+
+  await deleteDashboard(board.id, { actorId: viewer.id!, connection: pool });
+  await deleteDashboard(mine.id, { actorId: viewer.id!, connection: pool });
+  report(
+    "deleting a dashboard removes it",
+    (await listDashboards(ws.id!, viewer.id!, pool)).length === 0 ? null : "a dashboard survived",
+  );
+
+  await pool.query(`DELETE FROM dashboards WHERE workspace_id = $1`, [ws.id]);
 
   // --- saved views ---------------------------------------------------------
   console.log("\nsaved views → validated on write\n");

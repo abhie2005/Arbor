@@ -55,7 +55,8 @@ export interface ConfigEvent {
     | "container"
     | "view"
     | "goal"
-    | "key_result";
+    | "key_result"
+    | "dashboard";
   objectId: string;
   verb: string;
   field?: string | null;

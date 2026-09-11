@@ -83,4 +83,5 @@ export const objectKind = pgEnum("object_kind", [
   "task_type",
   "goal",
   "key_result",
+  "dashboard",
 ]);

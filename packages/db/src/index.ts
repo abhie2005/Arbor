@@ -124,6 +124,22 @@ export {
   type ViewAccess,
 } from "./task-access";
 export {
+  addCard,
+  createDashboard,
+  dashboardOwnership,
+  deleteDashboard,
+  listDashboards,
+  removeCard,
+  renameDashboard,
+  resolveCards,
+  type CardLabels,
+  type CardSlice,
+  type CreateDashboardInput,
+  type DashboardOwnership,
+  type DashboardRecord,
+  type ResolvedCard,
+} from "./dashboards";
+export {
   addKeyResult,
   createGoal,
   deleteGoal,

@@ -57,6 +57,13 @@
       "when": 1788982602394,
       "tag": "0007_goal_activity_kinds",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789120544627,
+      "tag": "0008_dashboard_activity_kind",
+      "breakpoints": true
     }
   ]
 }

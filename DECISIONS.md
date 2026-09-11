@@ -3181,3 +3181,83 @@ gap instead.
 *In one sentence:* a goal has no task to be authorized against and does have an
 owner, so it is configuration whose permission is the one column it already
 needed for something else.
+
+### D-104
+**A card's kind is which compiler call it makes** · 2026-09-11 · active
+
+`dashboards.layout` holds an ordered list of cards. A `stat` is
+`compileAggregate` — one number. A `chart` is `compileGroupCounts` — one number
+per group. The kind names the entry point, and `resolveCards` switches on it
+exactly once.
+
+**The column comment posed the question and did not answer it.** "A grid of
+cards; each card is a saved query plus a chart spec" leaves open whether a card
+compiles to *rows* or to *one number* — and those are two functions with two
+different shapes coming back. A card that could be either is a card whose
+renderer has to inspect what it got to find out what it is, which is the kind of
+run-time question a discriminated union exists to make impossible. Naming the
+entry point in the type means adding a third card kind is adding a third
+compiler entry point, rather than teaching one of the existing two to sometimes
+return something else.
+
+**Both entry points already existed**, which is the strongest evidence the shape
+is right: `compileGroupCounts` was written for board column headers in Phase 4,
+and `compileAggregate` for goal rollups last week (D-101). Dashboards added no
+query code at all — they are two calls and a renderer.
+
+**The card carries a view definition**, for the reason a key result does: "which
+tasks" is a question the compiler answers, and a second way of asking it is a
+second set of answers. `chartDefinition` makes the card's own `groupBy` win over
+whatever the stored definition's `grouping` says, every time rather than at
+whichever call site remembered — a drifted grouping would otherwise make a chart
+group by something other than its own axis label, silently.
+
+**A broken card costs one card.** `parseLayout` returns what parsed and a count
+of what did not, rather than throwing; a card that fails to compile reports why
+in its own tile. A dashboard is independent pieces, and a filter that stopped
+compiling because somebody archived a custom field should not cost eleven other
+tiles. The write path still throws (`parseCard`), because that is the end where
+a broken card is still someone's mistake to fix (D-060).
+
+*In one sentence:* the type answers "what does this compile to" so the renderer
+never has to ask.
+
+### D-105
+**A dashboard card is the reader's number** · 2026-09-11 · active
+
+`resolveCards` runs every card with the **viewer** as the compiler's principal.
+Two people can open one dashboard and read different numbers.
+
+**This is the opposite of a goal's rollup (D-102), and the difference is the
+point.** A goal is a shared commitment with an owner named on the row, so one
+number for everybody is what makes it a commitment — computing it per reader
+would make "we are 60% there" stop being a fact about the team. A dashboard has
+no owner in that sense: it has a `container_id`, which is the schema saying it
+belongs somewhere in the tree, and the rule for everything that lives in the
+tree is that you see what you have a grant on (ADR 3). So the honest number is
+the one for the person reading.
+
+Two people disagreeing about a dashboard's total is therefore correct, and the
+footer says whose numbers are on screen so it does not look like a bug.
+
+**It also means dashboards needed no new permission rule.** The list query joins
+`access_index` for the viewer, and every card joins it again when it runs — a
+grant can go away between listing a dashboard and drawing its cards, and
+re-checking is what ADR 3 asks for rather than caching the answer.
+
+**Personal dashboards are the saved view rule verbatim** (D-057): `owner_id` set
+means one person's, invisible to everyone else. The two tables have the same
+columns — workspace, parent container, owner, name, a json blob — and inventing
+a second visibility rule for the same shape would be two rules to keep in step
+for no reason anyone could name.
+
+**What this does not solve.** A dashboard whose `container_id` is null is
+workspace-wide and visible to every member, the same gap goals have. And a card
+scoped to a *space* is checked against `access_index`, which holds lists — so
+the container test in `listDashboards` only bites for list-scoped dashboards,
+and a space-scoped one falls back to being workspace-wide. That is D-081's
+missing container permission showing up for the third time, and it is the thing
+to fix once rather than route around again.
+
+*In one sentence:* a goal has an owner so its number is the owner's; a dashboard
+has a container so its number is the reader's.
