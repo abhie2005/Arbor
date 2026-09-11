@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-09-10 (Phase 8: time tracking and goals). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-09-11 (Phase 8 complete). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
@@ -16,7 +16,7 @@ verification found in each phase, is in `docs/HISTORY.md`.
 
 | Area | State |
 |---|---|
-| **Schema** | 43 tables, 9 enums, 117 indexes. Migrated (0000–0007) and seeded. |
+| **Schema** | 43 tables, 9 enums, 117 indexes. Migrated (0000–0008) and seeded. |
 | **View compiler** | Definition → one parameterized SQL query. Filters, grouping, sorting, group counts, permission scoping. Custom fields resolve through a required field catalog. |
 | **Hierarchy** | Config inheritance, effective privacy, denormalized ancestors, move-legality. |
 | **Ordering** | Fractional indices — one row written per drag. |
@@ -48,9 +48,10 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Live updates** | Every screen holds an `EventSource` to `/api/live`. A change announces itself with `pg_notify` inside the transaction that made it, so a rollback announces nothing; the route handler checks each nudge against the viewer's access before it leaves, and the browser answers with `router.refresh()` (D-090). A nudge carries the workspace, list and actor — never what changed. |
 | **Time tracking** | Start and stop on the task page, an entry list, logging time after the fact, and tracked-against-estimate. Every write is an operation (D-093), so ⌘Z undoes a stop and restores a deleted entry. At most one running timer per person, held by a unique partial index (D-094). A readout in the shell of every screen, pushed down the live stream so a timer started in another tab appears in this one (D-098). |
 | **Goals** | `/goals` — goals with key results of four kinds. A *rollup* key result holds a view definition and is counted by the compiler (D-101), so a goal and a list can never disagree about what counts; it is computed as the goal's **owner** rather than the reader (D-102), which is what makes progress a shared fact. Manual, currency and yes/no key results are entered. Progress is the mean of the key results, each clamped; completion is a timestamp somebody set, not a number crossing 100%. |
+| **Dashboards** | `/dashboards` — a grid of cards, each a filter plus a way of drawing it. A card's `kind` *is* which compiler entry point it calls (D-104): a stat is `compileAggregate`, a chart is `compileGroupCounts`. Counted as the **viewer** (D-105), which is the opposite of a goal and for a reason. Scoped to a container, with personal dashboards following the saved view rule. Charts are HTML bars measured against the largest slice; no charting library. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 399 unit tests, 180 live-Postgres checks, 127 server-action checks,
+**Verified:** 418 unit tests, 196 live-Postgres checks, 141 server-action checks,
 four packages typechecking clean, and the interactions above driven in Chrome.
 
 ---
@@ -64,7 +65,7 @@ four packages typechecking clean, and the interactions above driven in Chrome.
   presence between them (D-100), all on one connection per process. `apps/worker`
   still has nothing to run.
 - `packages/sdk` — empty. Needed once there's an API worth a typed client.
-- Docs, chat, dashboards, automations, AI.
+- Docs, chat, automations, AI.
 - Derived field types (`formula`, `rollup`, `automatic_progress`) are declared
   and filterable, but nothing computes them yet. Time tracking did **not**
   change this: a tracked total is summed at read time, so the question of
@@ -75,139 +76,124 @@ four packages typechecking clean, and the interactions above driven in Chrome.
 
 ## Where to pick up
 
-**Phase 7 is closed** — both things it left behind are fixed (D-099, D-100).
+**Phase 8 is done.** Time tracking, goals and dashboards are all built, which is
+the last of the three tables that had been migrated in 0000 and never touched by
+code. Phase 7's two leftovers are fixed too (D-099, D-100).
 
-**Phase 8 has time tracking and goals.** Dashboards are the rest of it and have
-not been started.
+### Next — Phase 9, and the thing to settle before it
 
-### Next — dashboards
+Phase 9 is **Docs**, and the decision it turns on is already visible: comments
+and descriptions share one document format (`packages/core/src/richtext.ts`,
+D-083), and a collaborative editor is the first thing that needs *operations on
+a document* rather than a document as an operation's value. That is either a
+CRDT (ADR 4 refused one for records, deliberately, and said nothing about text)
+or operational transform over the existing block tree. Decide which before
+writing an editor, because the storage shape follows from it and `docs` already
+has a `content` column waiting.
 
-`dashboards` is the last of the three tables migrated in 0000 that nothing has
-ever written to. Its columns say more than the other two did:
+**The two things Phase 8 leaves that are worth doing first**, both small and
+both now cheap:
 
-- **It has a `container_id`, and `goals` deliberately does not.** That is the
-  schema saying a dashboard belongs somewhere in the tree while a goal belongs
-  to the workspace — so a dashboard has an obvious permission story (the
-  container's) that goals had to do without, and it should use it rather than
-  copying D-103's owner-or-admin rule.
-- **`layout` is "a grid of cards; each card is a saved query plus a chart
-  spec".** The saved-query half is settled by the same argument goals settled
-  (D-101): it is a view definition, compiled by the compiler, and `compileAggregate`
-  already exists for the cards that are one number. The part that is genuinely
-  new is the chart spec, and the question to answer first is whether a card
-  compiles to *rows* (a chart) or to *one number* (a stat), because those are
-  two different compiler calls and a card that could be either is a card whose
-  renderer has to ask.
+- **A tracked-time rollup.** `compileAggregate` totals `points` and
+  `timeEstimate`, not time actually tracked, because that needs the compiler to
+  reach `time_entries` — a correlated subquery, a few lines. It is the obvious
+  link between the two halves of Phase 8 and the first thing anyone will ask a
+  goal or a dashboard for.
+- **The container permission** (D-081). This is now the third feature to route
+  around it: sharing is a workspace role, goals have no privacy, and a
+  space-scoped dashboard falls back to workspace-wide because `access_index`
+  holds lists rather than containers. The fix is `resolveAccess` emitting
+  container rows alongside its list rows, which changes the pure rule and its 30
+  tests — worth doing deliberately, and worth doing before a fourth feature
+  needs it.
 
-**Do not let a dashboard card grow a second query language**, for exactly the
-reason a key result did not. If a card wants something the compiler cannot say,
-the compiler grows.
+### Done — dashboards
 
-The open question dashboards will force is **whose permissions a card reads
-with**. Goals answered it with the owner (D-102) because a goal is a shared
-commitment with an owner on the row. A dashboard sits in a container, so the
-viewer is the defensible answer there — which means two people can see different
-numbers on one dashboard, and that is correct rather than a bug. Decide it
-before the first card, and say it on screen.
+`dashboards` was the last untouched table.
+
+- **A card's kind is which compiler call it makes** (D-104). A `stat` is
+  `compileAggregate`, a `chart` is `compileGroupCounts`. Both entry points
+  already existed — group counts from the board's column headers in Phase 4,
+  aggregates from goal rollups — so dashboards added no query code at all.
+  Adding a third kind means adding a third entry point rather than teaching one
+  of these to sometimes return something else.
+- **Counted as the viewer** (D-105), the opposite of a goal's rollup and for a
+  reason: a goal has an owner on the row, a dashboard has a `container_id`, and
+  the rule for what lives in the tree is that you see what you have a grant on.
+  Two readers disagreeing is correct, and the footer says so.
+- **Personal dashboards are the saved view rule verbatim** (D-057) — same
+  columns, same rule, rather than a second one to keep in step.
+- **A broken card costs one card.** `parseLayout` returns what parsed plus a
+  count of what did not; the write path still throws.
+
+**It found a compiler bug** (D-106): grouping by `assignee` emitted `ta.user_id`
+into a query that never joins `task_assignees`, which compiled and then failed
+in Postgres. `compileGroupCounts` had existed since Phase 4 and the board only
+ever grouped by status. Grouping by a multi-valued field is now refused, and the
+form offers single-valued axes only.
 
 ### Done — goals
 
-Built this pass. `goals` and `key_results` had existed since migration 0000 with
-nothing touching them.
-
-The decisions, each logged:
-
-- **`source` is a view definition** (D-101). The column was asking for a small
-  query language and the compiler already is one, so it grew `compileAggregate`,
-  which shares `buildBase` with the row query and the group counts. A second
-  language would have been a second set of answers to "does this task count",
-  and the cost would have been the day a goal said 12 and the list showed 14.
-  Inline rather than bound to a saved view: a goal is a commitment, and a number
-  that moves because somebody tidied their saved views moved without anyone
-  deciding.
-- **A rollup is computed as the goal's owner** (D-102), so everyone reading a
-  goal reads the same number. The cost is real and named: an aggregate can
-  include tasks the reader cannot open, though it can never name one. Computing
-  it unscoped was rejected because the escape hatch is what the next caller
-  reaches for.
-- **A goal is configuration** (D-103), so it goes through the config services
-  rather than `applyOperations` — an operation carries a `taskId` and a goal has
-  no task. ⌘Z does not reach a goal, the same as it does not reach a status set.
-- **An ownerless goal reads as unmeasured, not as zero.** `owner_id` is `ON
-  DELETE SET NULL`, so it is reachable, and zero would be a claim that nothing
-  had been done.
+- **`key_results.source` is a view definition** (D-101), so the compiler grew
+  `compileAggregate` rather than the column growing a second query language.
+- **A rollup is computed as the goal's owner** (D-102), so a shared commitment
+  reads the same for everyone. An ownerless goal reads as unmeasured, not zero.
+- **A goal is configuration** (D-103): no operations, no ⌘Z, owner-or-admin.
 
 ### Done — time tracking
 
-Start, stop, log after the fact, correct, delete, and an estimate to measure
-against, on `/t/KEY` and in the chrome of every screen.
-
-- **It goes through `applyOperations`** (D-093), which bought the activity row,
-  undo and the live nudge for free.
-- **`duration_ms` is derived in SQL** from the two stored instants and is absent
-  from every operation.
-- **One running timer per person is a unique partial index** (D-094), migration
-  0006 — not the service-layer rule the table comment asked for, which two tabs
-  slip through.
+- **Through `applyOperations`** (D-093), which bought the activity row, undo and
+  the live nudge for free.
+- **One running timer per person is a unique partial index** (D-094).
 - **Stopping your own entry does not re-check task access** (D-095).
-- **The estimate is `tasks.time_estimate_ms`**; `task_estimates` stays empty
-  (D-096).
-- **An operation has to survive JSON** (D-097) — now an invariant in
-  `CLAUDE.md`, found by `check:actions` after passing everything else.
+- **The estimate is task-level** (D-096); `task_estimates` stays empty.
+- **An operation has to survive JSON** (D-097) — now an invariant.
 
 ### Done — the two things Phase 7 left
 
-- **Nudges can be ignored** (D-099). The nudge carries who the fan-out told, and
-  the announcement moved out of `logActivity` up to `applyOperations` to be able
-  to say it. The list-only filter would have quietly broken the inbox badge.
-- **Presence crosses processes** (D-100). Each process states its own set on a
-  second Postgres channel and holds everyone else's with a TTL. The check *is*
-  the second process, which is what answered D-092's objection to building it.
+- **Nudges can be ignored** (D-099). The announcement moved from `logActivity`
+  to `applyOperations` so the nudge could carry who the fan-out told.
+- **Presence crosses processes** (D-100), with the check acting as the second
+  process.
 
 ### Known gaps in what was just built
 
+**Dashboards**
+
+- **No list card.** A card that compiles to *rows* is the obvious third kind and
+  is not built; it is the table renderer in miniature, and the honest version
+  reuses `loadView`'s resolution rather than a third path.
+- **Cards cannot be reordered or resized.** `layout` is an ordered array and
+  order is the only layout; nothing moves an entry, and the grid auto-fits.
+- **Charts cannot group by assignee** (D-106) — refused rather than broken, and
+  "tasks per person" needs a renderer that can put one task in several bars.
+- **The card form is a subset of what `layout` can hold.** Five metrics, five
+  axes, one container. A filter builder would need no migration.
+- **Nothing caches a card.** Every render recompiles and re-runs every card;
+  twenty cards is twenty queries per page view.
+- **A space-scoped dashboard is effectively workspace-wide**, because
+  `access_index` holds lists. See the container permission above.
+- **No live updates.** A dashboard does not refresh when the tasks it counts
+  change; `/dashboards` passes no `lists` to `Live` so it refreshes on any nudge
+  the viewer can hear, which is accidentally almost right and not by design.
+
 **Goals**
 
-- **Goals have no privacy.** Every member sees every goal, because `goals` has
-  no container to scope to. Scoping them would mean adding a `container_id` —
-  which `dashboards` has and `goals` deliberately does not — so inventing one to
-  paper over this would be re-deciding the schema by accident.
-- **A rollup is one query per key result.** A screen of five goals with three
-  each is fifteen small indexed aggregates. One `UNION ALL` is the fix available
-  when that stops being cheap; it is not the shape to reach for first.
-- **Nothing caches a rollup.** Every render recounts. That is the same bet the
-  ambient inbox makes and it holds for the same reason, until a dashboard puts
-  twenty of them on one screen.
-- **Key results cannot be reordered.** `position` is written with a fractional
-  index and nothing moves one.
-- **The rollup form offers four metrics and a container.** `source` can express
-  any view definition the compiler can compile; the form cannot. A real filter
-  builder is the missing half, and the data model needs no migration for it.
-- **No history screen reads a goal's activity.** `goal.created`, `goal.updated`
-  and the key-result verbs are written and nothing displays them — the same gap
-  every other configuration verb has.
-- **Goals are workspace-scoped and the workspace is still the demo one.**
-  `requireWorkspace()` looks up a slug.
-- **A currency key result has no way to pick its currency in the UI.** The
-  column and the parser handle it; the form always sends the default.
+- No privacy (every member sees every goal); one query per rollup; nothing
+  cached; key results cannot be reordered; the rollup form is a subset; no
+  screen reads a goal's activity; currency cannot be picked in the UI.
 
-**Time tracking** (unchanged from the last pass)
+**Time tracking**
 
-- No timesheet screen; `is_billable` is collected and never read; time cannot be
-  tracked against anything but a task; no rollup of tracked time to a parent or
-  a list; editing an entry moves its start and holds its end; an entry spanning
-  midnight belongs to the day it stopped.
-- **A tracked-time rollup would be the obvious link between the two halves of
-  Phase 8** and does not exist: `compileAggregate` totals `points` and
-  `timeEstimate`, not time actually tracked, because that needs the compiler to
-  reach a table outside `tasks`.
+- No timesheet screen; `is_billable` collected and never read; time cannot be
+  tracked against anything but a task; no rollup of tracked time anywhere;
+  editing an entry moves its start and holds its end; an entry spanning midnight
+  belongs to the day it stopped.
 
 **Live and presence**
 
-- A nudge is still evaluated per viewer at the route, one indexed lookup each;
-  the D-099 filter is on the client.
-- Presence does not survive a partition, and does not say so.
-- Presence is only on the task page.
+- A nudge is still evaluated per viewer at the route; presence does not survive
+  a partition and does not say so; presence is only on the task page.
 
 ### Background — why notifications are shaped this way
 
@@ -245,9 +231,6 @@ it does not apply, because only *directly named* people get a row. Outside would
 need something to run it, and `apps/worker` does not exist.
 
 ### Known gaps from Phase 7, still open
-
-~~**Every nudge refreshes, whether or not it mattered.**~~ Fixed (D-099).
-~~**Presence is per-process.**~~ Fixed (D-100).
 
 - **Presence is only on the task page.** A list does not show who is looking at
   it, deliberately — but a *task row* could show who has that task open, and
