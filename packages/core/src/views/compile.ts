@@ -96,6 +96,21 @@ export const BUILTIN_SQL: Record<BuiltinField, string> = {
   createdBy: "t.created_by",
   points: "t.points",
   timeEstimate: "t.time_estimate_ms",
+  /**
+   * Tracked time, and the one built-in that is a subquery rather than a column.
+   *
+   * **It mirrors `recordDurationMs` exactly** (`packages/db/src/time.ts`): a
+   * stopped entry contributes its denormalized `duration_ms`, a running one is
+   * measured against the clock. Summing only the column would have been simpler
+   * and would have made a goal disagree with the task page it was counting —
+   * the detail page counts a running timer, so this has to.
+   *
+   * `now()` is transaction time, so the number is stable within a statement
+   * however many rows it touches.
+   */
+  trackedMs: `(SELECT COALESCE(SUM(
+       COALESCE(te.duration_ms, (EXTRACT(EPOCH FROM (now() - te.started_at)) * 1000)::bigint)
+     ), 0) FROM time_entries te WHERE te.task_id = t.id)`,
   list: "t.home_list_id",
   space: "t.space_id",
   folder: "t.folder_id",
@@ -588,7 +603,7 @@ export interface AggregateSpec {
  * with no meaning, and averaging `position` produces one with less. A goal is
  * measured in things somebody chose to count.
  */
-const SUMMABLE_BUILTINS = new Set<BuiltinField>(["points", "timeEstimate"]);
+const SUMMABLE_BUILTINS = new Set<BuiltinField>(["points", "timeEstimate", "trackedMs"]);
 
 /**
  * One number for a whole view: what a rollup key result is measured by.

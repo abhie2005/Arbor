@@ -99,6 +99,7 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Reading the activity log | `packages/db/src/history.ts` |
 | Live changes: publish and subscribe | `packages/db/src/live.ts` |
 | Duration rules and formatting (pure) | `packages/core/src/time.ts` |
+| Tracked time as a totalled field | `trackedMs` in `packages/core/src/views/compile.ts` |
 | Key-result kinds, progress arithmetic (pure) | `packages/core/src/goals.ts` |
 | Goals, key results, and running a rollup | `packages/db/src/goals.ts` |
 | Dashboard cards: what each kind compiles to | `packages/core/src/dashboards.ts` |

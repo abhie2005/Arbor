@@ -3967,3 +3967,11 @@ select.filter-add option {
 .dash-add {
   align-self: flex-start;
 }
+
+/* The unit a duration target is typed in. Said, because the stored value is
+   milliseconds and a target that silently meant those would be off by 3.6
+   million. */
+.kr-unit-hint {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}

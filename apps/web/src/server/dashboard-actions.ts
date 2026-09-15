@@ -125,6 +125,10 @@ const STAT_METRICS: Record<
   overdue: { aggregate: { fn: "count" }, showClosed: false, done: false, overdue: true, unit: "overdue" },
   points: { aggregate: { fn: "sum", field: "points" }, showClosed: false, done: false, overdue: false, unit: "points" },
   estimate: { aggregate: { fn: "sum", field: "timeEstimate" }, showClosed: false, done: false, overdue: false, unit: "estimated" },
+  // Closed work counts here, unlike everywhere else: time spent on a task that
+  // is now finished is still time spent, and a total that forgot it would fall
+  // every time somebody closed something.
+  tracked: { aggregate: { fn: "sum", field: "trackedMs" }, showClosed: true, done: false, overdue: false, unit: "tracked" },
 };
 
 export async function addDashboardCard(

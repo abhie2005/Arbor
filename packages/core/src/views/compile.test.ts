@@ -567,6 +567,25 @@ describe("compileAggregate", () => {
     expect(() => aggregate({ fn: "sum", field: `cf:${TEXT_FIELD}` })).toThrow(ViewCompileError);
   });
 
+  /**
+   * The link between the two halves of Phase 8, and the one built-in that is
+   * not a column on `tasks`.
+   */
+  it("totals tracked time through a subquery, not a column", () => {
+    const { text } = aggregate({ fn: "sum", field: "trackedMs" });
+    expect(text).toContain("FROM time_entries te");
+    expect(text).toContain("te.task_id = t.id");
+  });
+
+  it("counts a running timer the way the task page does", () => {
+    // A stopped entry contributes its denormalized duration_ms; a running one
+    // is measured against the clock. Summing only the column would make a goal
+    // disagree with the task it was counting.
+    const { text } = aggregate({ fn: "sum", field: "trackedMs" });
+    expect(text).toContain("te.duration_ms");
+    expect(text).toContain("now() - te.started_at");
+  });
+
   it("refuses a built-in that would total to something meaningless", () => {
     // Summing priority produces a number with no meaning, and averaging
     // position produces one with less.

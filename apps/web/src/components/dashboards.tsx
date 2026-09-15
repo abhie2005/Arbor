@@ -273,9 +273,11 @@ function Card({ card, onRemove }: { card: ResolvedCard; onRemove: () => void }) 
  * where somebody expected "9h" is the kind of thing nobody notices until a
  * screenshot goes in a deck.
  */
+const DURATION_UNITS = new Set(["estimated", "tracked"]);
+
 function formatStat(value: number | null, unit: string | null): string {
   if (value === null) return "—";
-  if (unit === "estimated") return formatDuration(value);
+  if (unit && DURATION_UNITS.has(unit)) return formatDuration(value);
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
 }
 

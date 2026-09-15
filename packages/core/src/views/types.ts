@@ -38,6 +38,17 @@ export type BuiltinField =
   | "createdBy"
   | "points"
   | "timeEstimate"
+  /**
+   * Time actually tracked, summed from `time_entries`.
+   *
+   * The only built-in that is not a column on `tasks` — it is an aggregate over
+   * a child table, so `builtinSql` returns a correlated subquery for it. It is
+   * deliberately absent from `BUILTIN_FILTERABLE`, which is an allowlist: the
+   * compiler can total it without the filter bar offering it, because "tasks
+   * with more than eight hours on them" is a sensible filter and not one
+   * anybody has asked for yet.
+   */
+  | "trackedMs"
   | "list"
   | "space"
   | "folder"

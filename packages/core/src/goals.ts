@@ -1,3 +1,4 @@
+import { formatDuration } from "./time";
 import { AGGREGATE_FNS, type AggregateSpec } from "./views/compile";
 import type { ViewDefinition, ViewScope } from "./views/types";
 
@@ -208,6 +209,11 @@ export function formatKeyResultValue(
 ): string {
   if (value === null) return "—";
   if (kind === "boolean") return value >= 1 ? "Done" : "Not done";
+
+  // A rollup over tracked time is milliseconds, and 32400000 on a goal screen
+  // is a number nobody can read. The unit is on the source rather than being a
+  // fifth `kind`, because what it measures has not changed — only how it reads.
+  if (source.unit === "duration") return formatDuration(value);
 
   if (kind === "currency") {
     try {

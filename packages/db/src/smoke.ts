@@ -2438,6 +2438,95 @@ async function main() {
       : `goal progress was ${String(loaded!.progress)}`,
   );
 
+  // The link between the two halves of Phase 8: a goal measured in time
+  // actually spent, counted by the same compiler as everything else.
+  const timedTask = await one(`SELECT id FROM tasks WHERE home_list_id = $1 LIMIT 1`, [
+    sprintList.id,
+  ]);
+  await pool.query(`DELETE FROM time_entries WHERE task_id = $1`, [timedTask.id]);
+  await applyOperations(
+    [
+      {
+        kind: "createTimeEntry",
+        entryId: randomUUID(),
+        taskId: timedTask.id!,
+        userId: viewer.id!,
+        values: {
+          startedAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+          endedAt: new Date(Date.now() - 1 * 3_600_000).toISOString(),
+          description: null,
+          isBillable: false,
+        },
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const trackedKr = await addKeyResult(
+    goal.id,
+    {
+      name: "Hours on the sprint",
+      kind: "rollup",
+      start: 0,
+      target: 10 * 3_600_000,
+      source: {
+        scope: { kind: "list", id: sprintList.id },
+        definition: DEFAULT_VIEW_DEFINITION,
+        aggregate: { fn: "sum", field: "trackedMs" },
+        unit: "duration",
+      },
+    },
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const [withTracked] = await listGoals(ws.id!, {}, pool);
+  const trackedResult = withTracked!.keyResults.find((kr) => kr.id === trackedKr)!;
+  report(
+    "a rollup can total time actually tracked, not only time estimated",
+    trackedResult.current === 2 * 3_600_000
+      ? null
+      : `totalled ${String(trackedResult.current)} rather than two hours`,
+  );
+  report(
+    "and reads as a duration rather than as a number of milliseconds",
+    trackedResult.currentLabel === "2h" && trackedResult.targetLabel === "10h"
+      ? null
+      : `read "${trackedResult.currentLabel}" of "${trackedResult.targetLabel}"`,
+  );
+
+  // A running timer counts, because the task page counts it — the two must not
+  // disagree about the same task.
+  const runningId = randomUUID();
+  await applyOperations(
+    [
+      {
+        kind: "createTimeEntry",
+        entryId: runningId,
+        taskId: timedTask.id!,
+        userId: viewer.id!,
+        values: {
+          startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+          endedAt: null,
+          description: null,
+          isBillable: false,
+        },
+      },
+    ],
+    { actorId: viewer.id!, connection: pool },
+  );
+
+  const [withRunning] = await listGoals(ws.id!, {}, pool);
+  const runningTotal = withRunning!.keyResults.find((kr) => kr.id === trackedKr)!.current ?? 0;
+  report(
+    "a running timer counts toward it, as it does on the task page",
+    runningTotal > 2.9 * 3_600_000 && runningTotal < 3.1 * 3_600_000
+      ? null
+      : `totalled ${runningTotal} rather than about three hours`,
+  );
+
+  await pool.query(`DELETE FROM time_entries WHERE task_id = $1`, [timedTask.id]);
+  await deleteKeyResult(trackedKr, { actorId: viewer.id!, connection: pool });
+
   // The decision this feature turned on (D-102): the number is the *owner's*.
   // Resolved directly against a principal holding no grant anywhere, rather
   // than by reassigning the goal to a seeded user — the sections above hand

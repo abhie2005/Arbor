@@ -94,11 +94,13 @@ has a `content` column waiting.
 **The two things Phase 8 leaves that are worth doing first**, both small and
 both now cheap:
 
-- **A tracked-time rollup.** `compileAggregate` totals `points` and
-  `timeEstimate`, not time actually tracked, because that needs the compiler to
-  reach `time_entries` — a correlated subquery, a few lines. It is the obvious
-  link between the two halves of Phase 8 and the first thing anyone will ask a
-  goal or a dashboard for.
+- ~~**A tracked-time rollup.**~~ Built (D-107). `trackedMs` is a `BuiltinField`
+  whose SQL is a correlated subquery over `time_entries`, summable like `points`
+  — so a goal can be "forty hours on this sprint" and a dashboard card can say
+  how many have been spent. It mirrors `recordDurationMs`: a stopped entry
+  contributes its denormalized column, a running one is measured against
+  `now()`, because the task page counts a running timer and the two must not
+  disagree.
 - **The container permission** (D-081). This is now the third feature to route
   around it: sharing is a workspace role, goals have no privacy, and a
   space-scoped dashboard falls back to workspace-wide because `access_index`
@@ -186,9 +188,13 @@ form offers single-valued axes only.
 **Time tracking**
 
 - No timesheet screen; `is_billable` collected and never read; time cannot be
-  tracked against anything but a task; no rollup of tracked time anywhere;
-  editing an entry moves its start and holds its end; an entry spanning midnight
-  belongs to the day it stopped.
+  tracked against anything but a task; editing an entry moves its start and holds
+  its end; an entry spanning midnight belongs to the day it stopped.
+- **A tracked-time total is not filterable or sortable**, only summable:
+  `trackedMs` is deliberately absent from `BUILTIN_FILTERABLE` (D-107), so
+  "tasks with more than eight hours on them" is one line away and not built.
+- **Tracked time still does not roll up the hierarchy.** A subtask's hours do
+  not reach its parent; that needs the hierarchy, not the compiler.
 
 **Live and presence**
 

@@ -139,13 +139,24 @@ export async function removeGoal(goalId: string): Promise<void> {
  * written by a future filter builder needs no migration, and a form covering
  * every case would be the filter bar again.
  */
-export type RollupMetric = "tasks" | "completed" | "points" | "estimate";
+export type RollupMetric = "tasks" | "completed" | "points" | "estimate" | "tracked";
 
-const METRICS: Record<RollupMetric, { aggregate: { fn: "count" | "sum"; field?: "points" | "timeEstimate" }; done: boolean }> = {
+const METRICS: Record<
+  RollupMetric,
+  {
+    aggregate: { fn: "count" | "sum"; field?: "points" | "timeEstimate" | "trackedMs" };
+    done: boolean;
+    /** Milliseconds, so the screen reads it as a duration rather than a count. */
+    duration?: boolean;
+  }
+> = {
   tasks: { aggregate: { fn: "count" }, done: false },
   completed: { aggregate: { fn: "count" }, done: true },
   points: { aggregate: { fn: "sum", field: "points" }, done: false },
   estimate: { aggregate: { fn: "sum", field: "timeEstimate" }, done: false },
+  // The link between the two halves of Phase 8: a goal measured in the time
+  // actually spent on it, counted by the same compiler as everything else.
+  tracked: { aggregate: { fn: "sum", field: "trackedMs" }, done: false, duration: true },
 };
 
 /** Turns the form's four choices into a definition the compiler validates. */
@@ -167,8 +178,16 @@ function rollupSource(scope: ViewScope, metric: RollupMetric): Record<string, un
     },
   };
 
-  return { scope, definition, aggregate: spec.aggregate };
+  return {
+    scope,
+    definition,
+    aggregate: spec.aggregate,
+    ...(spec.duration ? { unit: "duration" } : {}),
+  };
 }
+
+/** A duration target is typed in hours and stored in milliseconds. */
+const HOUR_MS = 3_600_000;
 
 export async function addGoalKeyResult(
   goalId: string,
@@ -199,13 +218,19 @@ export async function addGoalKeyResult(
         ? { currency: input.currency ?? "USD" }
         : {};
 
+  // Hours in, milliseconds stored. A person planning "forty hours on this"
+  // types 40, and the compiler totals a column measured in milliseconds; doing
+  // the conversion in the browser would put the arithmetic on the side of the
+  // wire that cannot be checked.
+  const scale = input.kind === "rollup" && input.metric === "tracked" ? HOUR_MS : 1;
+
   await addKeyResult(
     goalId,
     {
       name: input.name,
       kind: input.kind,
-      start: input.start,
-      target: input.target,
+      start: input.start === undefined ? undefined : Number(input.start) * scale,
+      target: input.target === undefined ? undefined : Number(input.target) * scale,
       current: input.current,
       source,
     },

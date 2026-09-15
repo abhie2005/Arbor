@@ -25,7 +25,14 @@ export const CHART_AXES = ["status", "statusGroup", "priority", "taskType", "lis
 
 export type ChartAxis = (typeof CHART_AXES)[number];
 
-export const STAT_METRICS = ["open", "done", "overdue", "points", "estimate"] as const;
+export const STAT_METRICS = [
+  "open",
+  "done",
+  "overdue",
+  "points",
+  "estimate",
+  "tracked",
+] as const;
 
 export type StatMetric = (typeof STAT_METRICS)[number];
 
@@ -35,6 +42,7 @@ export const METRIC_LABELS: Record<StatMetric, string> = {
   overdue: "Overdue tasks",
   points: "Story points",
   estimate: "Estimated time",
+  tracked: "Time tracked",
 };
 
 export const AXIS_LABELS: Record<ChartAxis, string> = {

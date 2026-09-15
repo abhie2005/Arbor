@@ -46,7 +46,11 @@ const METRIC_LABELS: Record<RollupMetric, string> = {
   completed: "Tasks done",
   points: "Story points",
   estimate: "Estimated time",
+  tracked: "Time tracked",
 };
+
+/** Metrics whose start and target are typed in hours rather than in units. */
+const IN_HOURS = new Set<RollupMetric>(["tracked"]);
 
 /**
  * Running a goal action.
@@ -498,6 +502,12 @@ function NewKeyResult({
             value={target}
             onChange={(event) => setTarget(event.target.value)}
           />
+          {/* Said rather than left to be guessed: the stored value is
+              milliseconds and the number here is hours, and a target that
+              silently meant milliseconds would be off by 3.6 million. */}
+          {kind === "rollup" && IN_HOURS.has(metric) ? (
+            <span className="kr-unit-hint">hours</span>
+          ) : null}
         </>
       )}
 

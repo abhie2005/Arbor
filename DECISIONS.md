@@ -3297,3 +3297,46 @@ assignee, and `CHART_AXES` is single-valued fields only.
 
 *In one sentence:* the compiler could say something the database could not
 execute, and the gap was invisible because the only caller never asked.
+
+### D-107
+**Tracked time is a built-in field that is a subquery** · 2026-09-15 · active
+
+`trackedMs` joins the `BuiltinField` union, and `builtinSql` returns a
+correlated subquery for it rather than a column on `tasks`. It is summable, so
+`compileAggregate` totals it — which is what lets a goal say "forty hours on
+this sprint" and a dashboard card say how many have been spent.
+
+**It is the link between the two halves of Phase 8**, and it was the obvious
+missing one: time tracking wrote `time_entries` and nothing could total it, so a
+goal could be measured in *estimated* time and not in time anybody actually
+spent. One expression closed that.
+
+**A field that is not a column is the new thing here.** Every other built-in
+maps to something on `tasks`, and the two that do not — assignee, tag — are
+child-table membership handled with an EXISTS wrapper. This is an *aggregate*
+over a child table, which is a third shape, and the honest place for it is the
+same map as the others: it works in a filter, in a sort and in a total, because
+a scalar subquery is valid in all three.
+
+**It mirrors `recordDurationMs` exactly**, and that is not a detail. A stopped
+entry contributes its denormalized `duration_ms`; a running one is measured
+against `now()`. Summing only the column would have been simpler and would have
+made a goal disagree with the task page it was counting — the detail page counts
+a running timer, so this has to, or the same question has two answers depending
+on which screen asks it. `now()` is transaction time, so the number is stable
+within a statement.
+
+**Deliberately absent from `BUILTIN_FILTERABLE`**, which is an allowlist rather
+than a derivation. The compiler can total it without the filter bar offering it.
+"Tasks with more than eight hours on them" is a sensible filter and nobody has
+asked for it; when somebody does, it is one line and the compiler already
+supports it.
+
+**The unit problem it created.** The number is milliseconds, and `32400000` on a
+goal screen is unreadable. Rather than a fifth key-result `kind`, the rollup's
+`source` carries `unit: "duration"` — what it measures has not changed, only how
+it reads — and the goal form takes its target in hours and scales on the server,
+because arithmetic on the browser's side of the wire cannot be checked.
+
+*In one sentence:* the thing a goal most wants to measure lived in another
+table, and the compiler already knew how to reach it.
