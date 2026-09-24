@@ -137,8 +137,13 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 - **Synthetic drags do not trigger HTML5 drag-and-drop.** `left_click_drag`
   fails on the board *and* the calendar — that is the tool, not the app. Verify
   drag by dispatching real `DragEvent`s and checking Postgres.
-- Port 3000 is another project. `check:actions` defaults to it and fails with a
-  404 that looks like a missing route.
+- **Ports 3000 and 3100 are both other projects on this machine**, and one of
+  them moves. `check:actions` fails with `GET /settings/statuses returned 404`,
+  which reads as a missing route and is really somebody else's server
+  answering. Check who owns the port before believing the 404:
+  `lsof -ti:3100 | xargs ps -o args=` — Arbor is Next 15.5.x, so a different
+  version in that output is the answer. Run on a free port and pass it:
+  `npx next dev -p 3101` with `PORT=3101 npm run check:actions`.
 - `npm run docker:up` fails — the Compose plugin is not installed. Use the
   `docker start arbor-pg` line above.
 - Deleting a `grants` row does **not** update `access_index`. Revoke properly or
