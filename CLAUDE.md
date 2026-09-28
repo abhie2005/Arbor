@@ -59,9 +59,11 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
    page does this by hand because it does not go through the compiler.
 6. **Refusals never leak existence.** Unreachable reads as "no longer exists",
    in the same words as genuinely missing. Insufficient permission says so.
-7. **One document format** for comments and descriptions — a block tree with
-   mention *nodes* carrying user ids, `packages/core/src/richtext.ts`. Never
-   store a mention as the characters "@Name" (D-083).
+7. **One document format** for comments, descriptions and docs — a block tree
+   with mention *nodes* carrying user ids, `packages/core/src/richtext.ts`.
+   Never store a mention as the characters "@Name" (D-083). A doc is that same
+   tree in Yjs types, and what every non-editor reads is the projection back to
+   it (ADR 6, D-110) — never the CRDT.
 8. **Notifications: direct signals only.** Assigned, mentioned, replied write a
    row inside the causing transaction. Everything ambient is aggregated at read
    time from `activity` (`loadAmbient`) — fanning out to watchers is the
@@ -94,6 +96,7 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Operations, invert, undo stack | `packages/core/src/mutations.ts` |
 | Permission rule (pure) | `packages/core/src/access.ts` |
 | Rich text / mentions | `packages/core/src/richtext.ts` |
+| A document as Yjs, and its projection back | `packages/core/src/documents.ts` |
 | Who gets notified (pure) | `packages/core/src/notifications.ts` |
 | The executor — all writes land here | `packages/db/src/mutations.ts` |
 | Authorization checks | `packages/db/src/task-access.ts` |

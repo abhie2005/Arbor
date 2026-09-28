@@ -3456,3 +3456,57 @@ holding a space had just disproved. Copy that states a rule is part of the rule.
 
 *In one sentence:* the question "may this person share this space" finally has a
 row to answer it, so it stopped being answered by "are they an admin".
+
+### D-110
+**A document is the block tree in Yjs types, and the projection is computed on write** · 2026-09-28 · active
+
+`packages/core/src/documents.ts`. A body is a `Y.Array` of blocks, a block is a
+`Y.Map` holding a `Y.Text`, and a mention is an embed inside that text carrying
+`userId` and `label`. `richTextFrom` projects it back to the `RichDoc` every
+other reader already understands, and `searchTextFrom` flattens that for
+`docs.search_text`. ADR 6 is the long version.
+
+**The alternative was a document format per surface**, which is what happens by
+default: the editor picks whatever its library likes — usually a ProseMirror
+`XmlFragment` — and comments keep the block tree. Then "turn this comment into a
+doc" is a rewrite, the fan-out has two ways to find a mention, and search has
+two things to index. One format was cheap to keep because `richtext.ts` was
+designed for it before anything needed it (D-083).
+
+**A mention had to stay a reference through concurrent editing.** This is the
+part with no second chance: a CRDT keeps history, so a mention stored as the
+characters "@Riley Kaur" cannot be migrated into a node afterwards the way a
+`jsonb` column could. An embed is Yjs's own answer for a non-text item in a text
+sequence, and it makes the mention one position — a cursor cannot land inside
+it and a backspace takes the whole thing, which is also what people expect.
+
+**Merging does not instantiate a document.** `Y.mergeUpdates` works on the
+binary format, so accepting an edit costs a merge and a write rather than a
+load, a parse and an encode. The projection does load one, which is why it is
+computed on write: a search that had to load every CRDT it might match is not a
+search, and `search_text` exists in the schema for exactly this reason.
+
+**Refusing beats storing.** `applyDocUpdate` throws on bytes that are not a
+readable update rather than merging them, because the stored state staying
+readable is the entire value of the thing. In the other direction
+`richTextFrom` returns null rather than throwing, which is `parseStoredDoc`'s
+doctrine (D-083): one unreadable document costs that document, not the page
+listing it.
+
+**The bug this cost, which no test in this repo would have caught.** A `Y.Text`
+that has not been integrated into a document yet buffers what it is told and
+replays it on integration — and a run of `insert` and `insertEmbed` calls does
+not come back out in the order it went in. "Owner: @Riley Kaur" round-tripped as
+"@Riley KaurOwner: ". Every character was present, the mention was still a node,
+and a check that asserted the document contained a mention and the right words
+would have passed. It surfaced only because the test asserted the *rendered
+string*. Build the structure, attach it to the document, then write into it.
+
+**What is deliberately not decided here.** Nothing about an editor. The format,
+the merge and the projection settle what is stored and what everyone reads;
+which control produces the updates is a separate question with a separate answer
+(D-111 onward), and it can be replaced without touching any of this.
+
+*In one sentence:* the collaborative document is the format the app already had,
+with the one detail — a mention as a reference — that a CRDT would never have let
+us add later.

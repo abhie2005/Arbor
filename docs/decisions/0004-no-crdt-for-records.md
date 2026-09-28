@@ -20,6 +20,13 @@ acceptable.
 Transport is shared: one WebSocket per client multiplexing record deltas,
 document updates, and presence. Fan-out is permission-filtered server-side.
 
+> **The transport paragraph above is superseded** by D-090 and ADR 6. There is
+> no WebSocket and no gateway service: changes are announced with `pg_notify`
+> inside the transaction that made them and reach browsers over one
+> `EventSource` per client, document updates included. Permission-filtered
+> fan-out survived the change; the protocol did not. The split between records
+> and rich text — the actual decision here — is unaffected.
+
 ## Consequences
 
 - Server-side validation stays possible for records. A CRDT would have made

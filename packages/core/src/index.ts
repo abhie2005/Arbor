@@ -4,6 +4,7 @@ export * from "./hierarchy";
 export * from "./access";
 export * from "./passwords";
 export * from "./richtext";
+export * from "./documents";
 export * from "./notifications";
 export * from "./activity";
 export * from "./fields";
