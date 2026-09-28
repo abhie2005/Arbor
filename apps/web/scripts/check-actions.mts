@@ -634,9 +634,10 @@ report(
 );
 await db.query(`UPDATE tasks SET name = $1 WHERE id = $2`, [reachable.name, reachable.id]);
 
-// Sharing and configuration are administered, not edited (D-081). Sam is a
-// member: the strongest thing he holds is `edit` on a container, and none of
-// these are scoped to a container at all.
+// Sharing is a permission on the container (D-109) and configuration is still
+// a workspace role. Sam is a member with no grant on Founders, so he holds
+// nothing on it at all — and the refusal says so in the words that do not
+// admit the space exists.
 const founders = await one(`SELECT id FROM containers WHERE name = 'Founders'`);
 
 const forgedGrant = await callOn(
@@ -651,11 +652,11 @@ const grantLanded = await one(
 );
 report(
   "a member cannot grant themselves access to a private space",
-  /admin/i.test(forgedGrant.text) && !grantLanded
+  /no longer exists/i.test(forgedGrant.text) && !grantLanded
     ? null
     : grantLanded
       ? "the grant was written — the escalation path is open"
-      : `refused, but not as an admin check: ${forgedGrant.text.slice(0, 140)}`,
+      : `refused, but not as a container check: ${forgedGrant.text.slice(0, 140)}`,
 );
 
 // The escalation this closes, end to end: with the grant refused, the task
@@ -683,10 +684,68 @@ const forgedPrivacy = await callOn(
 const stillPrivate = await one(`SELECT is_private FROM containers WHERE id = $1`, [founders.id]);
 report(
   "and cannot open a private space by turning privacy off",
-  /admin/i.test(forgedPrivacy.text) && stillPrivate.is_private === true
+  /no longer exists/i.test(forgedPrivacy.text) && stillPrivate.is_private === true
     ? null
     : "the space was opened",
 );
+
+// The case D-109 exists for, through the real boundary: the same member, the
+// same action, once somebody who may share the space has shared it with him.
+// He is still nobody's admin.
+const leadShare = await callOn(
+  SHARING_URL,
+  SHARING_ACTIONS.shareContainerAction!,
+  [founders.id, "user", samUserId, "manage"],
+);
+report(
+  "the owner can hand a member manage of a space",
+  leadShare.status === 200 &&
+    (await one(`SELECT 1 FROM access_index WHERE container_id = $1 AND principal_id = $2 AND permission = 'manage'`, [
+      founders.id,
+      samUserId,
+    ]))
+    ? null
+    : `the grant did not reach the index: ${leadShare.text.slice(0, 140)}`,
+);
+
+const jordanUserId = (await one(`SELECT id FROM users WHERE email = 'jordan@example.com'`)).id;
+const leadSharesOn = await callOn(
+  SHARING_URL,
+  SHARING_ACTIONS.shareContainerAction!,
+  [founders.id, "user", jordanUserId, "view"],
+  SAM,
+);
+const passedOn = await one(
+  `SELECT 1 FROM access_index WHERE container_id = $1 AND principal_id = $2`,
+  [founders.id, jordanUserId],
+);
+report(
+  "and that member — no admin anywhere — can then share it themselves",
+  leadSharesOn.status === 200 && passedOn
+    ? null
+    : `a lead holding manage was refused: ${leadSharesOn.text.slice(0, 140)}`,
+);
+
+// Configuration did not move with it: the role check is still the boundary for
+// anything the whole workspace shares.
+const leadStatusSet = await callOn(
+  PAGE,
+  IDS.createStatusSetAction!,
+  [`Forged by a lead ${Date.now()}`, "simple", null],
+  SAM,
+);
+report(
+  "but holding a space is not administering the workspace",
+  /admin/i.test(leadStatusSet.text) ? null : `got ${leadStatusSet.text.slice(0, 140)}`,
+);
+
+for (const principal of [jordanUserId, samUserId]) {
+  await callOn(SHARING_URL, SHARING_ACTIONS.unshareContainerAction!, [
+    founders.id,
+    "user",
+    principal,
+  ]);
+}
 
 const forgedStatus = await callOn(
   PAGE,

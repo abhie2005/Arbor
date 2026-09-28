@@ -3395,3 +3395,64 @@ a lie in the schema; the comment on the column said "always a container of kind
 
 *In one sentence:* the index answered "which lists" because tasks live in lists,
 and three features in a row actually needed "which containers".
+
+### D-109
+**Sharing is a permission on the container, not a workspace role** · 2026-09-28 · active
+
+`shareContainerAction`, `unshareContainerAction` and `setPrivacyAction` take
+`manage` on the container they name, through `requireContainerAccess`. The
+workspace role stays where it belongs: status sets, custom fields and task types
+are scoped to no container at all, so administering the workspace is the only
+honest boundary for them.
+
+**This is what D-081 was deferred against**, and it was deferred for a reason —
+the index had no row for a space, so "may this person manage this space" had no
+cheap answer. D-108 gave it one, and this spends it. A team lead can now share
+their own space without being handed the status sets as well.
+
+**It is narrower as well as wider.** An admin used to be able to share anything,
+including a private space they cannot open — administering was treated as
+reaching. Now an admin holds `manage` on open containers through the role
+baseline and nothing at all on a private space nobody granted them, so the
+escalation route "admin, therefore share it to myself, therefore read it" is
+closed by the same change that opened the lead's door. A member is unaffected:
+their baseline is `edit`, which does not satisfy `manage`.
+
+**Closing the door leaves you the key.** A private container is reachable only
+through an explicit grant, and the role baseline is how most people reach
+anything — so making your own space private would have locked you out of it in
+one click. `setContainerPrivacy` now writes the actor a `manage` grant in the
+same transaction, unless they own the workspace and reach everything anyway.
+A real grant, not an exception in the rule: it appears in the sharing panel, it
+can be revoked deliberately, and `resolveAccess` needs no special case for it.
+The alternative — an implicit "creator" or "closer" permission held somewhere
+other than `grants` — is a second source of truth for access, which is the thing
+ADR 3 exists to avoid.
+
+**The refusal says "container", always.** Naming what was found — "that space no
+longer exists" — would tell someone who cannot reach a space that a space is
+what they cannot reach, and a message that varies with what exists is an
+existence oracle (invariant 6). `requireListAccess` and `requireContainerAccess`
+are the same check with the word the calling screen uses, fixed per call site
+rather than per row.
+
+**It also fixed a view nobody had reported.** `requireViewAccess` checked a
+saved view's parent with `requireListAccess`, and a view can belong to a space
+or a folder — which found no row and refused as "no longer exists" for a view
+that was right there. It had been wrong since saved views were built and was
+invisible because the seed puts every view on a list.
+
+**Alternatives rejected.** Keeping the role check and adding a container
+override means two gates in front of one door, and the second one only ever
+loosens the first — the failure mode is forgetting which is authoritative. A
+`can_share` column on `memberships` is a third permission system beside grants
+and roles. Leaving privacy as admin-only while sharing became container-scoped
+splits one screen across two rules, and the screen would have to explain why the
+checkbox is heavier than the button next to it.
+
+**The banner on `/settings` had to change too**, and only the browser found it:
+it told every member that sharing is workspace configuration, which a member
+holding a space had just disproved. Copy that states a rule is part of the rule.
+
+*In one sentence:* the question "may this person share this space" finally has a
+row to answer it, so it stopped being answered by "are they an admin".

@@ -162,42 +162,75 @@ export async function requireTasksAccess(
 }
 
 /**
- * What the viewer may do in a list.
+ * What the viewer may do in a container.
  *
  * Creating a task names a container rather than a task, so it cannot go through
  * the checks above — and an unchecked create is how someone puts a row inside a
- * private list they cannot read.
+ * private list they cannot read. Sharing names one too, and until the index
+ * held container rows (D-108) there was nothing to look up for a space, which
+ * is why sharing was a workspace role instead (D-081).
  */
-export async function listAccess(
-  listId: string,
+export async function containerAccess(
+  containerId: string,
   viewerId: string,
   connection: Connection = pool(),
 ): Promise<Permission | null> {
-  if (!isId(listId) || !isId(viewerId)) return null;
+  if (!isId(containerId) || !isId(viewerId)) return null;
 
   const result = await connection.query<{ permission: Permission }>(
     `SELECT permission FROM access_index WHERE container_id = $1 AND principal_id = $2`,
-    [listId, viewerId],
+    [containerId, viewerId],
   );
 
   return result.rows[0]?.permission ?? null;
 }
 
+/**
+ * **The noun is the caller's, not the row's.** One rule, and two words for it:
+ * a screen about lists says "list" and a sharing panel says "container". Naming
+ * what was actually found — "that space no longer exists" — would tell someone
+ * who cannot reach a space that a space is what they cannot reach, and a
+ * refusal that varies with what exists is an existence oracle (invariant 6).
+ */
+async function requireAccess(
+  containerId: string,
+  viewerId: string,
+  need: Permission,
+  connection: Connection,
+  noun: "list" | "container",
+): Promise<Permission> {
+  const permission = await containerAccess(containerId, viewerId, connection);
+  if (!permission) throw new AccessDenied(`That ${noun} no longer exists`);
+
+  if (!satisfies(permission, need)) {
+    throw new AccessDenied(`You do not have permission to change this ${noun}`);
+  }
+
+  return permission;
+}
+
+/** For a list: creating a task in it, or editing the views that belong to it. */
 export async function requireListAccess(
   listId: string,
   viewerId: string,
   need: Permission,
   connection: Connection = pool(),
 ): Promise<Permission> {
-  const permission = await listAccess(listId, viewerId, connection);
-  if (!permission) throw new AccessDenied("That list no longer exists");
-
-  if (!satisfies(permission, need)) {
-    throw new AccessDenied("You do not have permission to change this list");
-  }
-
-  return permission;
+  return requireAccess(listId, viewerId, need, connection, "list");
 }
+
+/** For any container, including the spaces and folders sharing is about. */
+export async function requireContainerAccess(
+  containerId: string,
+  viewerId: string,
+  need: Permission,
+  connection: Connection = pool(),
+): Promise<Permission> {
+  return requireAccess(containerId, viewerId, need, connection, "container");
+}
+
+/** The old name for {@link containerAccess}, kept where a caller means a list. */
+export const listAccess = containerAccess;
 
 /**
  * Ordered by privilege, so a minimum can be expressed as an index.
@@ -230,16 +263,15 @@ export async function workspaceRole(
 /**
  * Workspace configuration is administered, not edited.
  *
- * Grants, container privacy, status sets, custom fields and task types all
- * change what *everyone* in the workspace sees, and none of them is scoped to a
- * container the way a task is. Until there is a rule that can answer "may this
- * person manage this space", the honest boundary is the workspace role.
+ * Status sets, custom fields and task types change what *everyone* in the
+ * workspace sees and are scoped to no container at all, so the honest boundary
+ * for them is the workspace role.
  *
- * **This is still blunter than it should be for sharing** (D-081), and the thing
- * it was waiting on now exists: the index holds a row per container rather than
- * per list (D-108), so "may this person manage this space" is answerable. Moving
- * the sharing actions onto it is the next step; until then, blunt and closed
- * beats precise and open.
+ * **Sharing is no longer one of them** (D-109). Grants and container privacy
+ * are about one container, and the index can now answer "may this person manage
+ * this space" (D-108), so they take `manage` on that container instead of
+ * admin over everything — which is what lets a team lead share their own space
+ * without being handed the status sets as well (D-081).
  */
 export async function requireWorkspaceRole(
   workspaceId: string,
@@ -279,6 +311,11 @@ export interface ViewAccess {
  *
  * A workspace-wide view has no parent container to check against, so it falls
  * back to the workspace role: there is no smaller thing to scope it to.
+ *
+ * **The parent is not always a list.** A view can belong to a space or a folder,
+ * and this checked it as a list — which found no row and refused as "no longer
+ * exists" for a view that was right there, since the index held lists only. It
+ * holds every container now (D-108).
  */
 export async function requireViewAccess(
   viewId: string,
@@ -313,6 +350,6 @@ export async function requireViewAccess(
     return access;
   }
 
-  await requireListAccess(row.parent_id, userId, "edit", connection);
+  await requireContainerAccess(row.parent_id, userId, "edit", connection);
   return access;
 }

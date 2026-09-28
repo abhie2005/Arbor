@@ -47,8 +47,11 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
    what you have a grant on (D-105). Two readers disagreeing about a dashboard
    is correct; two readers disagreeing about a goal would not be.
 4. **Every server action authorizes, not just authenticates.** `requireUser`
-   says who; `requireTaskAccess` / `requireListAccess` / `requireViewAccess` /
-   `requireWorkspaceRole` say whether (D-080, D-081).
+   says who; `requireTaskAccess` / `requireListAccess` / `requireContainerAccess`
+   / `requireViewAccess` / `requireWorkspaceRole` say whether (D-080, D-081).
+   **Which one is a decision**: sharing one container takes `manage` on it
+   (D-109), while status sets, custom fields and task types are scoped to no
+   container and take the workspace role.
 5. **Reads are permission-scoped by joining `access_index`.** Grants are truth;
    the index is what queries join (ADR 3). It holds a row per (person,
    **container**) — every kind, not only lists (D-108) — so "may this person

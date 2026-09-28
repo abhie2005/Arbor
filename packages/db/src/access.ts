@@ -284,6 +284,15 @@ export async function revokeAccess(
  * (`isEffectivelyPrivate`), so opening a folder inside a private space changes
  * nothing about who can reach it - which this refuses to pretend otherwise
  * about rather than silently accepting.
+ *
+ * **Closing the door leaves you the key** (D-109). Everything but an explicit
+ * grant stops reaching a private container, and the role baseline is what most
+ * people reach it by — so making your own space private, without this, is how
+ * you lock yourself out of it in one click. The actor gets a `manage` grant in
+ * the same transaction unless they are the workspace owner, who reaches
+ * everything anyway. It is a real grant rather than a special case in the rule:
+ * it shows up in the sharing panel, it can be revoked deliberately, and the
+ * index needs no exception for it.
  */
 export async function setContainerPrivacy(
   containerId: string,
@@ -307,6 +316,8 @@ export async function setContainerPrivacy(
       containerId,
     ]);
 
+    if (isPrivate) await keepActorIn(client, workspaceId, containerId, context.actorId);
+
     await logConfigChange(client, {
       workspaceId,
       actorId: context.actorId,
@@ -319,6 +330,56 @@ export async function setContainerPrivacy(
     });
 
     return rebuildAccessIndex(workspaceId, client);
+  });
+}
+
+/**
+ * Gives the actor an explicit grant on a container they have just made private,
+ * unless they already hold a stronger one or own the workspace.
+ *
+ * An existing weaker grant is raised to `manage` rather than left as the only
+ * thing standing between someone and the space they just closed. Someone who
+ * already holds `manage` explicitly needs nothing written, and writing anyway
+ * would put an activity row against a change that did not happen.
+ */
+async function keepActorIn(
+  client: PoolClient,
+  workspaceId: string,
+  containerId: string,
+  actorId: string,
+): Promise<void> {
+  const membership = await client.query<{ role: string }>(
+    `SELECT role FROM memberships WHERE workspace_id = $1 AND user_id = $2`,
+    [workspaceId, actorId],
+  );
+  if (membership.rows[0]?.role === "owner") return;
+
+  const previous = await client.query<{ permission: Permission }>(
+    `SELECT permission FROM grants
+     WHERE container_id = $1 AND principal_kind = 'user' AND principal_id = $2`,
+    [containerId, actorId],
+  );
+
+  // Already holds it explicitly: nothing to write, and nothing happened to log.
+  if (previous.rows[0]?.permission === "manage") return;
+
+  await client.query(
+    `INSERT INTO grants (container_id, principal_kind, principal_id, permission, granted_by)
+     VALUES ($1, 'user', $2, 'manage', $2)
+     ON CONFLICT (container_id, principal_kind, principal_id)
+     DO UPDATE SET permission = 'manage'`,
+    [containerId, actorId],
+  );
+
+  await logConfigChange(client, {
+    workspaceId,
+    actorId,
+    objectKind: "container",
+    objectId: containerId,
+    verb: previous.rows[0] ? "container.access_changed" : "container.shared",
+    field: `user:${actorId}`,
+    oldValue: previous.rows[0]?.permission ?? null,
+    newValue: "manage",
   });
 }
 

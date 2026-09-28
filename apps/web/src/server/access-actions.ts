@@ -4,6 +4,7 @@ import type { Permission } from "@arbor/core";
 import {
   grantAccess,
   rebuildAccessIndex,
+  requireContainerAccess,
   requireWorkspaceRole,
   revokeAccess,
   setContainerPrivacy,
@@ -30,12 +31,20 @@ import { requireWorkspace } from "./workspace";
  * could grant themselves `manage` on any container and then do legitimately
  * whatever the check had just refused. A gate beside an open door is not a
  * gate.
+ *
+ * **And they are scoped now** (D-109). Sharing one container is a permission on
+ * that container, not administration of the workspace, so `manage` on it is
+ * what these take. It is not looser: `manage` comes from a grant or from being
+ * an owner or admin of an open container, and a member still holds `edit` at
+ * most. It is narrower in the other direction too — an admin has no `manage` on
+ * a private space they were never granted, so they can no longer share one they
+ * cannot see.
  */
 
-/** Sharing is administration. See D-081 for why this is a role and not yet a permission. */
-async function admin() {
-  const [actor, workspace] = await Promise.all([requireUser(), requireWorkspace()]);
-  await requireWorkspaceRole(workspace.id, actor.id, "admin");
+/** Sharing one container takes `manage` on it (D-109). */
+async function managerOf(containerId: string) {
+  const actor = await requireUser();
+  await requireContainerAccess(containerId, actor.id, "manage");
   return actor;
 }
 
@@ -58,7 +67,7 @@ export async function shareContainerAction(
   permission: Permission,
 ): Promise<AccessResult> {
   try {
-    const actor = await admin();
+    const actor = await managerOf(containerId);
     await grantAccess(
       { containerId, principalKind, principalId, permission },
       { actorId: actor.id },
@@ -76,7 +85,7 @@ export async function unshareContainerAction(
   principalId: string,
 ): Promise<AccessResult> {
   try {
-    const actor = await admin();
+    const actor = await managerOf(containerId);
     await revokeAccess(containerId, principalKind, principalId, { actorId: actor.id });
     revalidateEverything();
     return { ok: true };
@@ -90,7 +99,7 @@ export async function setPrivacyAction(
   isPrivate: boolean,
 ): Promise<AccessResult> {
   try {
-    const actor = await admin();
+    const actor = await managerOf(containerId);
     await setContainerPrivacy(containerId, isPrivate, { actorId: actor.id });
     revalidateEverything();
     return { ok: true };

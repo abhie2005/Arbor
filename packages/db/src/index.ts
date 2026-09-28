@@ -111,7 +111,9 @@ export {
 } from "./mutations";
 export {
   AccessDenied,
+  containerAccess,
   listAccess,
+  requireContainerAccess,
   requireListAccess,
   requireTaskAccess,
   requireTasksAccess,

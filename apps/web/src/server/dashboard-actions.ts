@@ -8,7 +8,7 @@ import {
   createDashboard,
   dashboardOwnership,
   deleteDashboard,
-  listAccess,
+  containerAccess,
   removeCard,
   renameDashboard,
   requireWorkspaceRole,
@@ -52,7 +52,7 @@ async function requireDashboardEditor(dashboardId: string): Promise<void> {
     return;
   }
 
-  const permission = await listAccess(dashboard.containerId, actor.id);
+  const permission = await containerAccess(dashboard.containerId, actor.id);
   if (permission !== "edit" && permission !== "manage") {
     throw new Error("You do not have permission to change this dashboard");
   }
@@ -67,9 +67,10 @@ export async function createWorkspaceDashboard(
   const workspace = await requireWorkspace();
 
   if (containerId) {
-    // Creating a dashboard on a list you cannot edit is how one appears inside
-    // a container somebody else owns.
-    const permission = await listAccess(containerId, actor.id);
+    // Creating a dashboard on a container you cannot edit is how one appears
+    // inside a container somebody else owns. A space is a real answer here now
+    // that the index has a row for one (D-108).
+    const permission = await containerAccess(containerId, actor.id);
     if (permission !== "edit" && permission !== "manage") {
       throw new Error("You do not have permission to add a dashboard here");
     }

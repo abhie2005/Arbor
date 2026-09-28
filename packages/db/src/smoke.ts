@@ -100,7 +100,9 @@ import {
 import { loadTaskHistory } from "./history";
 import { type Change, subscribeToChanges } from "./live";
 import {
+  containerAccess,
   listAccess,
+  requireContainerAccess,
   requireListAccess,
   requireTaskAccess,
   requireTasksAccess,
@@ -1403,6 +1405,109 @@ async function main() {
     "creating in a private list is refused for someone with no grant",
     await expectRejection(() => requireListAccess(hiring.id!, outsider.id!, "edit", pool)),
   );
+
+  // --- sharing is a permission on the container ------------------------------
+  console.log("\npermissions → who may share a container, and who may close one\n");
+
+  // What D-081 was waiting for: the index has a row for a space (D-108), so the
+  // question "may this person manage this space" has an answer that is not
+  // "are they a workspace admin".
+  const engineering = await one("SELECT id FROM containers WHERE name='Engineering'");
+
+  report(
+    "a member holds their role's permission on an open space, not manage",
+    (await containerAccess(engineering.id!, outsider.id!, pool)) === "edit"
+      ? null
+      : `member holds ${String(await containerAccess(engineering.id!, outsider.id!, pool))}`,
+  );
+
+  report(
+    "so a member cannot share a space their role only lets them edit",
+    await expectRejection(() =>
+      requireContainerAccess(engineering.id!, outsider.id!, "manage", pool),
+    ),
+  );
+
+  await grantAccess(
+    {
+      containerId: founders.id!,
+      principalKind: "user",
+      principalId: outsider.id!,
+      permission: "manage",
+    },
+    accessConfig,
+  );
+
+  report(
+    "a grant of manage on a private space is what lets its lead share it",
+    await expectNoRejection(() =>
+      requireContainerAccess(founders.id!, outsider.id!, "manage", pool),
+    ),
+  );
+
+  // D-109 is narrower than the role check it replaced, and this is the half
+  // that proves it: an admin could share anything, including a private space
+  // they cannot see. Nobody is seeded as an admin, so one is made and unmade.
+  const promoted = await one("SELECT id FROM users WHERE email='jordan@example.com'");
+  await pool.query(`UPDATE memberships SET role = 'admin' WHERE workspace_id = $1 AND user_id = $2`, [
+    ws.id,
+    promoted.id,
+  ]);
+  await rebuildAccessIndex(ws.id!, pool);
+
+  report(
+    "an admin may share an open space, which their role reaches",
+    await expectNoRejection(() =>
+      requireContainerAccess(engineering.id!, promoted.id!, "manage", pool),
+    ),
+  );
+
+  report(
+    "and may no longer share a private space nobody granted them",
+    await expectRejection(() =>
+      requireContainerAccess(founders.id!, promoted.id!, "manage", pool),
+    ),
+  );
+
+  await pool.query(`UPDATE memberships SET role = 'member' WHERE workspace_id = $1 AND user_id = $2`, [
+    ws.id,
+    promoted.id,
+  ]);
+  await rebuildAccessIndex(ws.id!, pool);
+
+  await revokeAccess(founders.id!, "user", outsider.id!, accessConfig);
+
+  // Closing the door leaves you the key (D-109): a container's baseline stops
+  // applying the moment it is private, so without a grant the person who made
+  // it private is locked out of it.
+  const closable = await one("SELECT id FROM containers WHERE name='Platform'");
+  await setContainerPrivacy(closable.id!, true, { actorId: outsider.id!, connection: pool });
+
+  report(
+    "making a container private leaves the person who did it a way back in",
+    (await containerAccess(closable.id!, outsider.id!, pool)) === "manage"
+      ? null
+      : `the actor was left with ${String(await containerAccess(closable.id!, outsider.id!, pool))}`,
+  );
+
+  report(
+    "as a real grant, visible where every other grant is",
+    (await listGrants(closable.id!, pool)).some(
+      (grant) => grant.principalId === outsider.id && !grant.inherited,
+    )
+      ? null
+      : "the actor's access is not a grant anybody can see or revoke",
+  );
+
+  report(
+    "and it does not hand the container to everyone else",
+    (await containerAccess(closable.id!, viewer.id!, pool)) === null
+      ? null
+      : "a private container stayed reachable by someone with no grant",
+  );
+
+  await setContainerPrivacy(closable.id!, false, { actorId: owner.id!, connection: pool });
+  await revokeAccess(closable.id!, "user", outsider.id!, accessConfig);
 
   // --- comments -------------------------------------------------------------
   console.log("\ncomments → operations, not a comment service\n");
