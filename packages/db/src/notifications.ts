@@ -51,7 +51,7 @@ async function reachable(
 
   const result = await client.query<{ principal_id: string }>(
     `SELECT principal_id FROM access_index
-     WHERE list_id = $1 AND principal_id = ANY($2::uuid[])`,
+     WHERE container_id = $1 AND principal_id = ANY($2::uuid[])`,
     [listId, [...userIds]],
   );
 
@@ -275,7 +275,7 @@ export async function loadInbox(
      FROM notifications n
      JOIN tasks t ON t.id = n.task_id
      JOIN access_index ax
-       ON ax.list_id = t.home_list_id AND ax.principal_id = n.user_id
+       ON ax.container_id = t.home_list_id AND ax.principal_id = n.user_id
      WHERE n.user_id = $1
        AND n.cleared_at IS NULL
        AND t.deleted_at IS NULL
@@ -311,7 +311,7 @@ export async function unreadCount(
      FROM notifications n
      JOIN tasks t ON t.id = n.task_id
      JOIN access_index ax
-       ON ax.list_id = t.home_list_id AND ax.principal_id = n.user_id
+       ON ax.container_id = t.home_list_id AND ax.principal_id = n.user_id
      WHERE n.user_id = $1 AND n.is_read = false AND n.cleared_at IS NULL
        AND t.deleted_at IS NULL`,
     [userId],
@@ -412,7 +412,7 @@ export async function loadAmbient(
        JOIN task_watchers w ON w.task_id = a.object_id AND w.user_id = $1
        JOIN tasks t ON t.id = a.object_id AND t.deleted_at IS NULL
        JOIN access_index ax
-         ON ax.list_id = t.home_list_id AND ax.principal_id = $1
+         ON ax.container_id = t.home_list_id AND ax.principal_id = $1
        LEFT JOIN users u ON u.id = a.actor_id
        WHERE a.object_kind = 'task'
          AND a.workspace_id = $2

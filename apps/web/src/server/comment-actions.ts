@@ -74,7 +74,7 @@ export async function postComment(
   const reachable = new Set(
     (
       await pool().query<{ principal_id: string }>(
-        `SELECT principal_id FROM access_index WHERE list_id = $1 AND principal_id = ANY($2::uuid[])`,
+        `SELECT principal_id FROM access_index WHERE container_id = $1 AND principal_id = ANY($2::uuid[])`,
         [access.homeListId, mentioned],
       )
     ).rows.map((row) => row.principal_id),

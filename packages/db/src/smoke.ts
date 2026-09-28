@@ -1093,13 +1093,13 @@ async function main() {
   );
 
   const savedHistoryIndex = await pool.query<Record<string, string>>(
-    `SELECT workspace_id, principal_id, list_id, permission FROM access_index
-     WHERE principal_id = $1 AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+    `SELECT workspace_id, principal_id, container_id, permission FROM access_index
+     WHERE principal_id = $1 AND container_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
     [outsider.id, historyTask.id],
   );
   await pool.query(
     `DELETE FROM access_index WHERE principal_id = $1
-       AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+       AND container_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
     [outsider.id, historyTask.id],
   );
   report(
@@ -1110,9 +1110,9 @@ async function main() {
   );
   for (const row of savedHistoryIndex.rows) {
     await pool.query(
-      `INSERT INTO access_index (workspace_id, principal_id, list_id, permission)
+      `INSERT INTO access_index (workspace_id, principal_id, container_id, permission)
        VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-      [row.workspace_id, row.principal_id, row.list_id, row.permission],
+      [row.workspace_id, row.principal_id, row.container_id, row.permission],
     );
   }
 
@@ -1274,7 +1274,7 @@ async function main() {
   // the one where an incremental rebuild would be most likely to miss a list.
   await setContainerPrivacy(space.id!, true, accessConfig);
   const closedOff = await pool.query(
-    `SELECT 1 FROM access_index WHERE principal_id = $1 AND list_id = $2`,
+    `SELECT 1 FROM access_index WHERE principal_id = $1 AND container_id = $2`,
     [outsider.id, list.id],
   );
   report(
@@ -1284,7 +1284,7 @@ async function main() {
 
   await setContainerPrivacy(space.id!, false, accessConfig);
   const openedAgain = await pool.query(
-    `SELECT 1 FROM access_index WHERE principal_id = $1 AND list_id = $2`,
+    `SELECT 1 FROM access_index WHERE principal_id = $1 AND container_id = $2`,
     [outsider.id, list.id],
   );
   report(
@@ -1806,13 +1806,13 @@ async function main() {
   // A notification row records that something happened; it is not a licence to
   // see it. Access revoked after the write must take it out of the inbox.
   const savedIndex = await pool.query<Record<string, string>>(
-    `SELECT workspace_id, principal_id, list_id, permission FROM access_index
-     WHERE principal_id = $1 AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+    `SELECT workspace_id, principal_id, container_id, permission FROM access_index
+     WHERE principal_id = $1 AND container_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
     [viewer.id, commentTask.id],
   );
   await pool.query(
     `DELETE FROM access_index WHERE principal_id = $1
-       AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+       AND container_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
     [viewer.id, commentTask.id],
   );
   report(
@@ -1824,9 +1824,9 @@ async function main() {
   );
   for (const row of savedIndex.rows) {
     await pool.query(
-      `INSERT INTO access_index (workspace_id, principal_id, list_id, permission)
+      `INSERT INTO access_index (workspace_id, principal_id, container_id, permission)
        VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-      [row.workspace_id, row.principal_id, row.list_id, row.permission],
+      [row.workspace_id, row.principal_id, row.container_id, row.permission],
     );
   }
 
@@ -1967,13 +1967,13 @@ async function main() {
   // Watching is not permission. Same join as every other read, on each row's
   // own list, so a revoked grant stops the feed immediately.
   const revokedIndex = await pool.query<Record<string, string>>(
-    `SELECT workspace_id, principal_id, list_id, permission FROM access_index
-     WHERE principal_id = $1 AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+    `SELECT workspace_id, principal_id, container_id, permission FROM access_index
+     WHERE principal_id = $1 AND container_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
     [viewer.id, commentTask.id],
   );
   await pool.query(
     `DELETE FROM access_index WHERE principal_id = $1
-       AND list_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
+       AND container_id = (SELECT home_list_id FROM tasks WHERE id = $2)`,
     [viewer.id, commentTask.id],
   );
   report(
@@ -1982,9 +1982,9 @@ async function main() {
   );
   for (const row of revokedIndex.rows) {
     await pool.query(
-      `INSERT INTO access_index (workspace_id, principal_id, list_id, permission)
+      `INSERT INTO access_index (workspace_id, principal_id, container_id, permission)
        VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-      [row.workspace_id, row.principal_id, row.list_id, row.permission],
+      [row.workspace_id, row.principal_id, row.container_id, row.permission],
     );
   }
 
@@ -2399,7 +2399,7 @@ async function main() {
     (
       await one(
         `SELECT count(*) AS n FROM tasks t
-         JOIN access_index ax ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+         JOIN access_index ax ON ax.container_id = t.home_list_id AND ax.principal_id = $2
          LEFT JOIN statuses s ON s.id = t.status_id
          WHERE t.home_list_id = $1 AND t.deleted_at IS NULL AND t.archived_at IS NULL
            AND (s.group IS NULL OR s.group <> 'closed')`,
@@ -2731,7 +2731,7 @@ async function main() {
     (
       await one(
         `SELECT count(*) AS n FROM tasks t
-         JOIN access_index ax ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+         JOIN access_index ax ON ax.container_id = t.home_list_id AND ax.principal_id = $2
          LEFT JOIN statuses s ON s.id = t.status_id
          WHERE t.home_list_id = $1 AND t.deleted_at IS NULL AND t.archived_at IS NULL
            AND (s.group IS NULL OR s.group <> 'closed')`,

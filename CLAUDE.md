@@ -50,8 +50,10 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
    says who; `requireTaskAccess` / `requireListAccess` / `requireViewAccess` /
    `requireWorkspaceRole` say whether (D-080, D-081).
 5. **Reads are permission-scoped by joining `access_index`.** Grants are truth;
-   the index is what queries join (ADR 3). The detail page does this by hand
-   because it does not go through the compiler.
+   the index is what queries join (ADR 3). It holds a row per (person,
+   **container**) — every kind, not only lists (D-108) — so "may this person
+   manage this space" is the same join as "may they see this task". The detail
+   page does this by hand because it does not go through the compiler.
 6. **Refusals never leak existence.** Unreachable reads as "no longer exists",
    in the same words as genuinely missing. Insufficient permission says so.
 7. **One document format** for comments and descriptions — a block tree with

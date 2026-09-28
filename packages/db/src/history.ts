@@ -67,7 +67,7 @@ export async function loadTaskHistory(
      FROM activity a
      JOIN tasks t ON t.id = a.object_id AND t.deleted_at IS NULL
      JOIN access_index ax
-       ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+       ON ax.container_id = t.home_list_id AND ax.principal_id = $2
      LEFT JOIN users u ON u.id = a.actor_id
      WHERE a.object_kind = 'task' AND a.object_id = $1
        AND a.verb <> 'task.position_changed'

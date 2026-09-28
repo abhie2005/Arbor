@@ -99,7 +99,7 @@ export async function listDashboards(
          d.container_id IS NULL
          OR EXISTS (
            SELECT 1 FROM access_index ax
-           WHERE ax.list_id = d.container_id AND ax.principal_id = $2
+           WHERE ax.container_id = d.container_id AND ax.principal_id = $2
          )
        )
      ORDER BY d.owner_id NULLS FIRST, d.created_at`,

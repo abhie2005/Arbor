@@ -47,7 +47,7 @@ function compile(overrides: Partial<ViewDefinition> = {}, scopeId = LIST) {
 describe("compileViewQuery", () => {
   it("joins the access index before anything else", () => {
     const { text, params } = compile();
-    expect(text).toContain("JOIN access_index ax ON ax.list_id = t.home_list_id");
+    expect(text).toContain("JOIN access_index ax ON ax.container_id = t.home_list_id");
     // The viewer is the first bound parameter, so the join is the leading predicate.
     expect(params[0]).toBe(VIEWER);
   });
@@ -520,7 +520,7 @@ describe("compileAggregate", () => {
 
   it("scopes by the access index, exactly as the row query does", () => {
     const { text, params } = aggregate({ fn: "count" });
-    expect(text).toContain("JOIN access_index ax ON ax.list_id = t.home_list_id");
+    expect(text).toContain("JOIN access_index ax ON ax.container_id = t.home_list_id");
     expect(params[0]).toBe(VIEWER);
   });
 

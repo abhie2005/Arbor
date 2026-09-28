@@ -64,6 +64,13 @@
       "when": 1789120544627,
       "tag": "0008_dashboard_activity_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790000000000,
+      "tag": "0009_access_index_containers",
+      "breakpoints": true
     }
   ]
 }

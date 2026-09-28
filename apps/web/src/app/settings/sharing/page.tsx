@@ -45,15 +45,18 @@ export default async function SharingPage({
   const reachRows = await pool().query<{ container_id: string; reach: string }>(
     `SELECT c.id AS container_id, COUNT(DISTINCT ai.principal_id) AS reach
      FROM containers c
-     LEFT JOIN access_index ai ON ai.list_id = c.id
+     LEFT JOIN access_index ai ON ai.container_id = c.id
      WHERE c.workspace_id = $1
      GROUP BY c.id`,
     [workspace.id],
   );
   const reachByList = new Map(reachRows.rows.map((row) => [row.container_id, Number(row.reach)]));
 
-  // A space's reach is the people who can see anything inside it, which is the
-  // union over its lists — not a number the index holds directly.
+  // A space's reach is the people who can see anything inside it, which is still
+  // the union over its lists. The index holds a row for the space itself now
+  // (D-108), and it is deliberately not this number: it says who may act on the
+  // space, and somebody granted one list inside a private space sees something
+  // in there without holding the space.
   const listsUnder = (id: string): string[] =>
     nodes
       .filter((node) => node.parentId === id)

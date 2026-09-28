@@ -539,7 +539,7 @@ async function revokeHiring(userId: string) {
     hiring.id,
     userId,
   ]);
-  await db.query(`DELETE FROM access_index WHERE list_id = $1 AND principal_id = $2`, [
+  await db.query(`DELETE FROM access_index WHERE container_id = $1 AND principal_id = $2`, [
     hiring.id,
     userId,
   ]);
@@ -1806,7 +1806,7 @@ const doneInSprint = Number(
   (
     await one(
       `SELECT count(*) AS n FROM tasks t
-       JOIN access_index ax ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+       JOIN access_index ax ON ax.container_id = t.home_list_id AND ax.principal_id = $2
        JOIN statuses s ON s.id = t.status_id
        WHERE t.home_list_id = $1 AND t.deleted_at IS NULL AND t.archived_at IS NULL
          AND s.group IN ('done','closed')`,
@@ -1953,7 +1953,7 @@ const openInSprint = Number(
   (
     await one(
       `SELECT count(*) AS n FROM tasks t
-       JOIN access_index ax ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+       JOIN access_index ax ON ax.container_id = t.home_list_id AND ax.principal_id = $2
        LEFT JOIN statuses s ON s.id = t.status_id
        WHERE t.home_list_id = $1 AND t.deleted_at IS NULL AND t.archived_at IS NULL
          AND (s.group IS NULL OR s.group <> 'closed')`,

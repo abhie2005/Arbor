@@ -126,7 +126,7 @@ export async function GET(request: Request): Promise<Response> {
        */
       const mayHear = async (change: Change): Promise<boolean> => {
         const result = await pool().query(
-          `SELECT 1 FROM access_index WHERE list_id = $1 AND principal_id = $2`,
+          `SELECT 1 FROM access_index WHERE container_id = $1 AND principal_id = $2`,
           [change.l, viewer.id],
         );
         return result.rowCount === 1;

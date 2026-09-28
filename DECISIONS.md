@@ -3340,3 +3340,58 @@ because arithmetic on the browser's side of the wire cannot be checked.
 
 *In one sentence:* the thing a goal most wants to measure lived in another
 table, and the compiler already knew how to reach it.
+
+### D-108
+**The access index holds containers, not just lists** · 2026-09-27 · active
+
+`access_index.list_id` is `container_id`, and `resolveAccess` emits a row for
+every container rather than only the lists. Task queries join exactly the same
+way they always did — a list is a container — and three things that had been
+routing around the table's shape now have a row to join for.
+
+**It was a list-only table because it was built for task queries** (ADR 3, D-019),
+and every early caller asked "can this viewer see this task", which is always a
+question about a list. The shape only became a problem when features started
+asking about the *container* instead: sharing a space, counting a space, and
+saying who may administer one.
+
+**The bill arrived three times before it was paid** (D-081). Sharing became a
+workspace role, so a team lead who makes a private space cannot share it without
+being a workspace admin — wrong, and wrong in the safe direction. A goal got no
+privacy at all. A space-scoped dashboard card silently counted the whole
+workspace, because `ax.list_id = d.container_id` matches nothing when the
+container is a space, and a LEFT JOIN turns "no permission row" into "no
+restriction". Docs would have been the fourth: a doc hangs off a container, and
+the first private space with a doc in it asks this question again.
+
+**What a container row means is the part worth being precise about.** It says
+*may act on this container* — not *may see it in the tree*. Grants reach
+downward only, so being given one list inside a private space opens that list and
+confers nothing on the space above it. The alternative, adding ancestors so a
+shared list is reachable through its parents, would hand `manage` of a private
+space to everyone who was ever shared one list in it, and it would do it
+invisibly. Rendering a sidebar path to a list you can reach is a real problem
+with a different answer, and it does not belong in the permission rule.
+
+**The cost is rows, and it is small.** One per (member, space or folder) — a
+workspace with 5 spaces, 10 folders and 20 members adds 300 rows to a table that
+already holds a row per (member, list). The rebuild was already whole-workspace
+and idempotent (D-071), so nothing about *when* it runs changed.
+
+**`affectedLists` became `affectedContainers`** and now includes the container
+that changed, not only the lists beneath it. Nothing calls it yet — it exists for
+the day the whole-workspace rebuild stops being cheap — but a helper that returns
+the wrong set is worse than no helper, and the set it has to return grew with the
+table.
+
+**Alternatives rejected.** A second table, `container_access_index`, keeps the
+hot path untouched and means two tables that must agree, computed by one rule
+with two outputs — the drift is a matter of time. Resolving container permission
+at query time by walking parents is what ADR 3 exists to avoid, and it would put
+the walk back on the sharing screen, which is where the tree is widest. Keeping
+`list_id` as the column name and putting spaces in it is the cheapest change and
+a lie in the schema; the comment on the column said "always a container of kind
+`list`" and would have had to be deleted rather than corrected.
+
+*In one sentence:* the index answered "which lists" because tasks live in lists,
+and three features in a row actually needed "which containers".

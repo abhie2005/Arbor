@@ -71,7 +71,7 @@ export async function taskAccess(
     `SELECT t.workspace_id, t.home_list_id, ax.permission
      FROM tasks t
      JOIN access_index ax
-       ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+       ON ax.container_id = t.home_list_id AND ax.principal_id = $2
      WHERE t.id = $1 AND t.deleted_at IS NULL`,
     [taskId, viewerId],
   );
@@ -145,7 +145,7 @@ export async function requireTasksAccess(
     `SELECT t.id, ax.permission
      FROM tasks t
      JOIN access_index ax
-       ON ax.list_id = t.home_list_id AND ax.principal_id = $2
+       ON ax.container_id = t.home_list_id AND ax.principal_id = $2
      WHERE t.id = ANY($1) AND t.deleted_at IS NULL`,
     [wanted, viewerId],
   );
@@ -176,7 +176,7 @@ export async function listAccess(
   if (!isId(listId) || !isId(viewerId)) return null;
 
   const result = await connection.query<{ permission: Permission }>(
-    `SELECT permission FROM access_index WHERE list_id = $1 AND principal_id = $2`,
+    `SELECT permission FROM access_index WHERE container_id = $1 AND principal_id = $2`,
     [listId, viewerId],
   );
 
@@ -235,12 +235,11 @@ export async function workspaceRole(
  * container the way a task is. Until there is a rule that can answer "may this
  * person manage this space", the honest boundary is the workspace role.
  *
- * **This is deliberately blunter than it should be** (D-081). The right answer
- * is a per-container permission that a space's owner also holds, so a team lead
- * can share their own space without being a workspace admin. That needs
- * `resolveAccess` to emit container rows as well as list rows, which is a
- * change to the pure rule and its tests. Blunt and closed beats precise and
- * open.
+ * **This is still blunter than it should be for sharing** (D-081), and the thing
+ * it was waiting on now exists: the index holds a row per container rather than
+ * per list (D-108), so "may this person manage this space" is answerable. Moving
+ * the sharing actions onto it is the next step; until then, blunt and closed
+ * beats precise and open.
  */
 export async function requireWorkspaceRole(
   workspaceId: string,

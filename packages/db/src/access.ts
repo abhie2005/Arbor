@@ -113,9 +113,9 @@ export async function loadAccessInputs(
  * Whole-workspace rather than incremental on purpose. A workspace's container
  * tree is small - hundreds of rows, not millions - and an incremental rebuild
  * has to work out what a change implies, which is exactly the reasoning that
- * goes wrong quietly. `affectedLists` exists for when that becomes worth doing;
- * until a workspace is big enough to notice, recomputing everything is the
- * version that cannot drift.
+ * goes wrong quietly. `affectedContainers` exists for when that becomes worth
+ * doing; until a workspace is big enough to notice, recomputing everything is
+ * the version that cannot drift.
  */
 export async function rebuildAccessIndex(
   workspaceId: string,
@@ -132,14 +132,14 @@ export async function rebuildAccessIndex(
     // workspace rebuild is a few thousand rows and this is the difference
     // between one round trip and a few thousand.
     await client.query(
-      `INSERT INTO access_index (workspace_id, principal_id, list_id, permission)
-       SELECT $1, p.principal_id, p.list_id, p.permission::permission
+      `INSERT INTO access_index (workspace_id, principal_id, container_id, permission)
+       SELECT $1, p.principal_id, p.container_id, p.permission::permission
        FROM unnest($2::uuid[], $3::uuid[], $4::text[])
-         AS p(principal_id, list_id, permission)`,
+         AS p(principal_id, container_id, permission)`,
       [
         workspaceId,
         rows.map((row) => row.principalId),
-        rows.map((row) => row.listId),
+        rows.map((row) => row.containerId),
         rows.map((row) => row.permission),
       ],
     );

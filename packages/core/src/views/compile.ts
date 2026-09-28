@@ -466,7 +466,7 @@ function buildBase(options: CompileOptions): QueryBase {
   // 1. Permission first — the most selective predicate in the query.
   const viewerParam = params.add(viewerId);
   joins.push(
-    `JOIN access_index ax ON ax.list_id = t.home_list_id AND ax.principal_id = ${viewerParam}`,
+    `JOIN access_index ax ON ax.container_id = t.home_list_id AND ax.principal_id = ${viewerParam}`,
   );
 
   // Status is joined unconditionally: `showClosed` and status grouping both

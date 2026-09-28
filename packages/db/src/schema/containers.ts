@@ -84,7 +84,7 @@ export const grants = pgTable(
 );
 
 /**
- * Materialized "which user can reach which list, at what permission".
+ * Materialized "which user can reach which container, at what permission".
  *
  * Resolving access by walking parents at query time costs one join per level of
  * nesting on every single view query. Instead a background job flattens grants +
@@ -92,6 +92,11 @@ export const grants = pgTable(
  * every task query becomes one inner join against it.
  *
  * Rebuild is idempotent: delete by (principal, workspace) and re-insert.
+ *
+ * **Every container kind, not only lists** (D-108). Task queries join the list
+ * rows; sharing, a space-scoped dashboard and anything else that needs "may this
+ * person manage this space" joins the rows for spaces and folders, instead of
+ * falling back to a workspace role (D-081).
  */
 export const accessIndex = pgTable(
   "access_index",
@@ -101,17 +106,17 @@ export const accessIndex = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     /** A user id. Group grants are expanded into per-user rows during the rebuild. */
     principalId: uuid("principal_id").notNull(),
-    /** Always a container of kind `list` — tasks only ever live in lists. */
-    listId: uuid("list_id")
+    /** Any container. A task query joins the `list` rows; sharing joins the rest. */
+    containerId: uuid("container_id")
       .notNull()
       .references(() => containers.id, { onDelete: "cascade" }),
     permission: permission("permission").notNull(),
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
-    primaryKey({ columns: [t.principalId, t.listId] }),
+    primaryKey({ columns: [t.principalId, t.containerId] }),
     index("access_index_lookup").on(t.principalId, t.workspaceId),
-    index("access_index_list_idx").on(t.listId),
+    index("access_index_container_idx").on(t.containerId),
   ],
 );
 

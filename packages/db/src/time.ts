@@ -103,7 +103,7 @@ export async function runningEntryFor(
       AND t.deleted_at IS NULL
       AND EXISTS (
         SELECT 1 FROM access_index ax
-        WHERE ax.list_id = t.home_list_id AND ax.principal_id = e.user_id
+        WHERE ax.container_id = t.home_list_id AND ax.principal_id = e.user_id
       )
      WHERE e.user_id = $1 AND e.ended_at IS NULL
      ORDER BY e.started_at DESC

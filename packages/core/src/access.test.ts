@@ -4,7 +4,7 @@ import {
   type AccessGrant,
   type AccessInputs,
   ROLE_BASELINE,
-  affectedLists,
+  affectedContainers,
   resolveAccess,
   satisfies,
   strongest,
@@ -54,11 +54,25 @@ function resolve(overrides: Partial<AccessInputs> = {}) {
   });
 }
 
-const listsFor = (rows: ReturnType<typeof resolveAccess>, userId: string) =>
-  rows.filter((row) => row.principalId === userId).map((row) => row.listId).sort();
+const LISTS = new Set(["sprint", "backlog", "plans"]);
 
-const permissionOn = (rows: ReturnType<typeof resolveAccess>, userId: string, listId: string) =>
-  rows.find((row) => row.principalId === userId && row.listId === listId)?.permission ?? null;
+/** Only the list rows, which is what every assertion written before D-108 meant. */
+const listsFor = (rows: ReturnType<typeof resolveAccess>, userId: string) =>
+  rows
+    .filter((row) => row.principalId === userId && LISTS.has(row.containerId))
+    .map((row) => row.containerId)
+    .sort();
+
+const reachableFor = (rows: ReturnType<typeof resolveAccess>, userId: string) =>
+  rows.filter((row) => row.principalId === userId).map((row) => row.containerId).sort();
+
+const permissionOn = (
+  rows: ReturnType<typeof resolveAccess>,
+  userId: string,
+  containerId: string,
+) =>
+  rows.find((row) => row.principalId === userId && row.containerId === containerId)?.permission ??
+  null;
 
 describe("an open list", () => {
   it("is reachable by every member, at the permission their role implies", () => {
@@ -182,7 +196,7 @@ describe("a grant", () => {
         { containerId: "plans", principalKind: "group", principalId: GROUP, permission: "manage" },
       ],
     });
-    expect(rows.every((row) => row.listId !== "plans" || row.principalId === OWNER)).toBe(true);
+    expect(rows.every((row) => row.containerId !== "plans" || row.principalId === OWNER)).toBe(true);
   });
 });
 
@@ -228,40 +242,89 @@ describe("the strongest permission wins", () => {
 });
 
 describe("the index itself", () => {
-  it("holds only lists, because tasks only ever live in lists", () => {
-    const listIds = new Set(["sprint", "backlog", "plans"]);
-    expect(resolve().every((row) => listIds.has(row.listId))).toBe(true);
+  it("holds every container kind, not only lists (D-108)", () => {
+    // Task queries join the list rows; sharing and a space-scoped dashboard join
+    // the rest, instead of falling back to a workspace role (D-081).
+    expect(reachableFor(resolve(), MEMBER)).toEqual(["backlog", "folder", "space", "sprint"]);
   });
 
   it("is stable, so a rebuild that changes nothing produces the same rows", () => {
     expect(resolve()).toEqual(resolve());
   });
 
-  it("has one row per user and list", () => {
+  it("has one row per user and container", () => {
     const rows = resolve({
       grants: [
         { containerId: "space", principalKind: "user", principalId: MEMBER, permission: "manage" },
         { containerId: "folder", principalKind: "user", principalId: MEMBER, permission: "view" },
       ],
     });
-    const keys = rows.map((row) => `${row.principalId} ${row.listId}`);
+    const keys = rows.map((row) => `${row.principalId} ${row.containerId}`);
     expect(new Set(keys).size).toBe(keys.length);
   });
 });
 
 describe("what a change forces a rebuild of", () => {
-  it("is every list beneath the container that changed", () => {
-    expect(affectedLists("space", containers)).toEqual(["backlog", "sprint"]);
-    expect(affectedLists("folder", containers)).toEqual(["sprint"]);
-    expect(affectedLists("secret", containers)).toEqual(["plans"]);
+  it("is every container beneath the one that changed, itself included", () => {
+    expect(affectedContainers("space", containers)).toEqual([
+      "backlog",
+      "folder",
+      "space",
+      "sprint",
+    ]);
+    expect(affectedContainers("folder", containers)).toEqual(["folder", "sprint"]);
+    expect(affectedContainers("secret", containers)).toEqual(["plans", "secret"]);
   });
 
-  it("is the list itself when the change is on a list", () => {
-    expect(affectedLists("sprint", containers)).toEqual(["sprint"]);
+  it("is the container itself when it has nothing beneath it", () => {
+    expect(affectedContainers("sprint", containers)).toEqual(["sprint"]);
   });
 
   it("is nothing for a container that no longer exists", () => {
-    expect(affectedLists("deleted", containers)).toEqual([]);
+    expect(affectedContainers("deleted", containers)).toEqual([]);
+  });
+});
+
+describe("a container row", () => {
+  it("gives a member of an open workspace their role's permission on a space", () => {
+    // This is the row sharing needs: "may this person manage this space" is now
+    // a question the index can answer (D-081).
+    const rows = resolve();
+    expect(permissionOn(rows, ADMIN, "space")).toBe("manage");
+    expect(permissionOn(rows, MEMBER, "space")).toBe("edit");
+    expect(permissionOn(rows, MEMBER, "folder")).toBe("edit");
+    expect(permissionOn(rows, GUEST, "space")).toBeNull();
+  });
+
+  it("is absent for a private space nobody granted, and present for its owner", () => {
+    const rows = resolve();
+    expect(permissionOn(rows, ADMIN, "secret")).toBeNull();
+    expect(permissionOn(rows, MEMBER, "secret")).toBeNull();
+    expect(permissionOn(rows, OWNER, "secret")).toBe("manage");
+  });
+
+  it("lets a grant on a private space carry manage of the space itself", () => {
+    // The D-081 case: a lead holding the space can share it without being a
+    // workspace admin, because the permission is on the container.
+    const rows = resolve({
+      grants: [
+        { containerId: "secret", principalKind: "user", principalId: MEMBER, permission: "manage" },
+      ],
+    });
+    expect(permissionOn(rows, MEMBER, "secret")).toBe("manage");
+    expect(permissionOn(rows, MEMBER, "plans")).toBe("manage");
+  });
+
+  it("does not appear for an ancestor just because a list below it was shared", () => {
+    // Grants reach downward only. Being given one list inside a private space
+    // must not confer anything on the space — see the note in access.ts.
+    const rows = resolve({
+      grants: [
+        { containerId: "plans", principalKind: "user", principalId: GUEST, permission: "edit" },
+      ],
+    });
+    expect(reachableFor(rows, GUEST)).toEqual(["plans"]);
+    expect(permissionOn(rows, GUEST, "secret")).toBeNull();
   });
 });
 
