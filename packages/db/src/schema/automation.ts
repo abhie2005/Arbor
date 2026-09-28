@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  customType,
   index,
   integer,
   jsonb,
@@ -119,10 +120,24 @@ export const templates = pgTable(
 );
 
 /**
- * Yjs document state for descriptions, docs, and whiteboards.
+ * Postgres `bytea`, which drizzle has no built-in for.
+ *
+ * `Buffer` in both directions: `pg` hands back a Buffer and accepts one, and a
+ * `Uint8Array` view over it is free — so callers work in the type Yjs speaks
+ * without a copy.
+ */
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+  dataType: () => "bytea",
+});
+
+/**
+ * A Yjs update holding one document's whole state.
  *
  * Structured records are server-authoritative and do not belong here; only
- * genuinely concurrent character-level editing needs a CRDT.
+ * genuinely concurrent character-level editing needs a CRDT (ADR 4). What the
+ * update *contains* is the block tree `richtext.ts` describes, in Yjs types —
+ * ADR 6, and the reason `search_text` beside it is a projection rather than a
+ * second copy of the prose.
  */
 export const docs = pgTable(
   "docs",
@@ -134,8 +149,14 @@ export const docs = pgTable(
     containerId: uuid("container_id").references(() => containers.id, { onDelete: "cascade" }),
     parentPageId: uuid("parent_page_id"),
     title: text("title").notNull().default("Untitled"),
-    /** Binary Yjs state vector + updates. */
-    ydoc: text("ydoc"),
+    /**
+     * The merged Yjs update, as bytes.
+     *
+     * `bytea` rather than `text` (D-111): a Yjs update is binary, and base64 in
+     * a text column costs a third more space plus an encode and a decode on
+     * every read of something that is only ever handed to a merge.
+     */
+    ydoc: bytea("ydoc"),
     /** Plain-text projection, maintained on save, for full-text search. */
     searchText: text("search_text"),
     position: text("position").notNull(),

@@ -29,10 +29,13 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 
 ## Invariants — breaking these silently is the main risk
 
-1. **`applyOperations` is the only thing that writes.** Every mutation is an
-   `Operation` (`packages/core/src/mutations.ts`), so the activity log and undo
-   come free. A service with its own INSERT is the second writer, and the second
-   writer is the one that forgets to log (D-083).
+1. **`applyOperations` is the only thing that writes task data.** Every mutation
+   is an `Operation` (`packages/core/src/mutations.ts`), so the activity log and
+   undo come free. A service with its own INSERT is the second writer, and the
+   second writer is the one that forgets to log (D-083). Configuration is the
+   documented exception — statuses, fields, types, grants, goals, dashboards and
+   a document's place in the tree write through `logConfigChange` instead, which
+   gets the activity row without the undo entry (D-103, D-111).
 2. **No renderer has a query of its own.** Every view reads through
    `compileViewQuery`. A renderer needing something the compiler cannot say
    means the compiler grows (D-078), not that the renderer writes SQL (D-032).
@@ -97,6 +100,7 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Permission rule (pure) | `packages/core/src/access.ts` |
 | Rich text / mentions | `packages/core/src/richtext.ts` |
 | A document as Yjs, and its projection back | `packages/core/src/documents.ts` |
+| Documents: the page tree and the bytes | `packages/db/src/documents.ts` |
 | Who gets notified (pure) | `packages/core/src/notifications.ts` |
 | The executor — all writes land here | `packages/db/src/mutations.ts` |
 | Authorization checks | `packages/db/src/task-access.ts` |

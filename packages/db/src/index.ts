@@ -110,6 +110,18 @@ export {
   type ApplyResult,
 } from "./mutations";
 export {
+  applyDocumentUpdate,
+  archiveDoc,
+  createDoc,
+  listDocs,
+  loadDoc,
+  loadDocContent,
+  moveDoc,
+  renameDoc,
+  type DocRecord,
+  type DocWithState,
+} from "./documents";
+export {
   AccessDenied,
   containerAccess,
   listAccess,

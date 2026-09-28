@@ -3510,3 +3510,60 @@ which control produces the updates is a separate question with a separate answer
 *In one sentence:* the collaborative document is the format the app already had,
 with the one detail — a mention as a reference — that a CRDT would never have let
 us add later.
+
+### D-111
+**A document's body is a CRDT write; its place in the tree is configuration** · 2026-09-28 · active
+
+`packages/db/src/documents.ts` has two kinds of write. A Yjs update is merged
+into `docs.ydoc` and is not an operation. A title, a parent, a container and an
+archived flag go through `logConfigChange`, the way `goals.ts` and `statuses.ts`
+do — an activity row, no undo entry.
+
+**⌘Z decided this, not the plumbing.** The plumbing argument is the same one
+goals had (D-103): every operation carries a `taskId` because that is what
+`undo` authorizes a client-supplied batch against (D-080), and a document has a
+container instead. But the real reason is what ⌘Z has to mean *inside a
+document*, which is the text somebody just typed. That undo is the editor's own
+history over the CRDT, and a second, workspace-wide stack reaching into the same
+keystroke is worse than a rename that has to be undone by renaming. The change
+is still accountable: the activity row is written either way, which is the
+property D-016 actually cares about.
+
+**No activity row per edit.** A row per keystroke batch would bury everything
+else that happened to a workspace under one person typing, and "a paragraph
+changed four hundred times" does not answer the question the log exists for.
+`updated_at` says a document changed; the document's own history is the CRDT.
+
+**The merge takes a row lock.** `SELECT ... FOR UPDATE` before merging, because
+two updates landing together would otherwise both read the old state, merge
+their own change into it, and the second write would drop the first. A CRDT
+makes concurrent *edits* safe; it does nothing about two concurrent
+read-modify-writes of one column. This is the failure that would have looked
+exactly like "Yjs lost an edit".
+
+**`ydoc` is `bytea`, not `text`.** A Yjs update is binary, and base64 in a text
+column costs a third more space plus an encode and a decode on every read of
+something that is only ever handed to a merge. Migration 0010, done while the
+table was empty and the conversion was free.
+
+**A document is capped at a megabyte.** A CRDT only grows — every edit adds to
+the history and nothing collects a document nobody is editing. A refusal is
+recoverable and a row that can no longer be read is not. The fix when it bites
+is re-encoding a fresh document to drop tombstones, not a bigger number.
+
+**Mentions are resolved in the service, not by the caller.** `parseRichText`
+only makes a mention a reference if it is given the person it could mean, so a
+caller that forgets the candidate list does not get an error — it gets a
+document where "@Riley Kaur" is prose and nothing on any screen says so. That is
+exactly what happened while writing this, and `db:smoke` caught it. The service
+has the workspace, so the service asks — and it asks for *members of that
+workspace*, where the comment path still asks for every user in the database.
+
+**A document on no container is workspace-wide**, readable by every member, the
+same rule a workspace-wide saved view and dashboard follow (D-057, D-105). A
+document on a container joins `access_index` for that container, which is a
+question the index could only answer from D-108 onward. Docs are the first
+reader of those container rows.
+
+*In one sentence:* the CRDT owns the prose and its undo; everything else about a
+document is ordinary configuration with an activity row.

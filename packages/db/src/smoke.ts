@@ -18,6 +18,7 @@ import {
   parseRichText,
   parseStoredDoc,
   renderPlain,
+  searchTextFrom,
   type Operation,
 } from "@arbor/core";
 import { createHash, randomUUID } from "node:crypto";
@@ -99,6 +100,18 @@ import {
 } from "./notifications";
 import { loadTaskHistory } from "./history";
 import { type Change, subscribeToChanges } from "./live";
+import * as Y from "yjs";
+
+import {
+  applyDocumentUpdate,
+  archiveDoc,
+  createDoc,
+  listDocs,
+  loadDoc,
+  loadDocContent,
+  moveDoc,
+  renameDoc,
+} from "./documents";
 import {
   containerAccess,
   listAccess,
@@ -3189,6 +3202,171 @@ async function main() {
       applyOperations([change], { actorId: "", connection: pool }),
     ),
   );
+
+  // --- documents -----------------------------------------------------------
+  console.log("\ndocuments → a CRDT in a column, and a projection beside it\n");
+
+  await pool.query(`DELETE FROM docs WHERE workspace_id = $1`, [ws.id]);
+  const docConfig = { actorId: owner.id!, connection: pool };
+
+  const hiringDoc = await createDoc(
+    {
+      workspaceId: ws.id!,
+      containerId: founders.id!,
+      title: "Hiring plan",
+      text: "Staff engineer first.\n\nAsk @Riley Kaur to draft the offer.",
+    },
+    docConfig,
+  );
+
+  report(
+    "a document stores a projection of itself, not a second copy of the prose",
+    (await loadDoc(hiringDoc.id, owner.id!, pool))?.searchText ===
+      "Staff engineer first.\n\nAsk @Riley Kaur to draft the offer."
+      ? null
+      : `search text reads ${JSON.stringify((await loadDoc(hiringDoc.id, owner.id!, pool))?.searchText)}`,
+  );
+
+  report(
+    "and the mention in it is a reference, through the database and back",
+    (await loadDocContent(hiringDoc.id, owner.id!, pool))?.content[1]?.content.some(
+      (node) => node.type === "mention",
+    )
+      ? null
+      : "the mention came back as text",
+  );
+
+  // The reason docs are the first feature that could ask this: a doc hangs off
+  // any container, and the index held only lists until D-108.
+  report(
+    "a document in a private space is invisible to someone with no grant",
+    (await listDocs(ws.id!, outsider.id!, {}, pool)).every((doc) => doc.id !== hiringDoc.id)
+      ? null
+      : "a private space's document was listed to an outsider",
+  );
+
+  report(
+    "and visible to the owner, who reaches everything",
+    (await listDocs(ws.id!, owner.id!, {}, pool)).some((doc) => doc.id === hiringDoc.id)
+      ? null
+      : "the owner could not see a document in their own workspace",
+  );
+
+  const openDoc = await createDoc(
+    { workspaceId: ws.id!, containerId: null, title: "Handbook" },
+    docConfig,
+  );
+
+  report(
+    "a document on no container is workspace-wide, like a workspace-wide view",
+    (await listDocs(ws.id!, outsider.id!, {}, pool)).some((doc) => doc.id === openDoc.id)
+      ? null
+      : "a workspace-wide document was not listed to a member",
+  );
+
+  // Two editors who both loaded the same state, neither having seen the other.
+  const openedAt = (await loadDoc(openDoc.id, owner.id!, pool))!.state;
+  const editorA = new Y.Doc();
+  const editorB = new Y.Doc();
+  Y.applyUpdate(editorA, openedAt);
+  Y.applyUpdate(editorB, openedAt);
+
+  const blocksA = editorA.getArray<Y.Map<unknown>>("blocks");
+  const blockA = new Y.Map<unknown>();
+  blockA.set("type", "paragraph");
+  blockA.set("text", new Y.Text());
+  blocksA.push([blockA]);
+  (blocksA.get(0).get("text") as Y.Text).insert(0, "Written by A");
+
+  const blocksB = editorB.getArray<Y.Map<unknown>>("blocks");
+  const blockB = new Y.Map<unknown>();
+  blockB.set("type", "paragraph");
+  blockB.set("text", new Y.Text());
+  blocksB.push([blockB]);
+  (blocksB.get(0).get("text") as Y.Text).insert(0, "Written by B");
+
+  const vector = Y.encodeStateVectorFromUpdate(openedAt);
+  await applyDocumentUpdate(openDoc.id, Y.encodeStateAsUpdate(editorA, vector), docConfig);
+  await applyDocumentUpdate(openDoc.id, Y.encodeStateAsUpdate(editorB, vector), docConfig);
+
+  const merged = (await loadDoc(openDoc.id, owner.id!, pool))!;
+  report(
+    "two people who never saw each other's edit both keep theirs",
+    merged.searchText.includes("Written by A") && merged.searchText.includes("Written by B")
+      ? null
+      : `the document reads ${JSON.stringify(merged.searchText)}`,
+  );
+
+  report(
+    "and the projection was rewritten by the write that caused it",
+    merged.searchText === searchTextFrom(merged.state)
+      ? null
+      : "search text and state disagree",
+  );
+
+  const beforeJunk = (await loadDoc(openDoc.id, owner.id!, pool))!.state;
+  report(
+    "an update that is not a document change is refused",
+    await expectRejection(() =>
+      applyDocumentUpdate(openDoc.id, new Uint8Array([7, 7, 7, 7, 7, 200, 255]), docConfig),
+    ),
+  );
+
+  report(
+    "and the stored document is exactly what it was before the refusal",
+    Buffer.compare(
+      Buffer.from(beforeJunk),
+      Buffer.from((await loadDoc(openDoc.id, owner.id!, pool))!.state),
+    ) === 0
+      ? null
+      : "a refused update changed the document anyway",
+  );
+
+  await renameDoc(hiringDoc.id, "Hiring plan — Q4", docConfig);
+  const renameLogged = await one(
+    `SELECT verb, old_value, new_value FROM activity
+     WHERE object_kind = 'doc' AND object_id = $1 ORDER BY at DESC LIMIT 1`,
+    [hiringDoc.id],
+  );
+  report(
+    "renaming writes an activity row, which is what makes it accountable",
+    renameLogged?.verb === "doc.renamed" && renameLogged.new_value === "Hiring plan — Q4"
+      ? null
+      : `the log says ${JSON.stringify(renameLogged)}`,
+  );
+
+  const child = await createDoc(
+    {
+      workspaceId: ws.id!,
+      containerId: founders.id!,
+      parentPageId: hiringDoc.id,
+      title: "Interview loop",
+    },
+    docConfig,
+  );
+
+  report(
+    "a page cannot be its own parent",
+    await expectRejection(() => moveDoc(child.id, { parentPageId: child.id }, docConfig)),
+  );
+
+  report(
+    "nor be moved inside one of its own pages",
+    await expectRejection(() => moveDoc(hiringDoc.id, { parentPageId: child.id }, docConfig)),
+  );
+
+  await archiveDoc(hiringDoc.id, true, docConfig);
+  report(
+    "archiving hides a document from the list without deleting it",
+    (await listDocs(ws.id!, owner.id!, {}, pool)).every((doc) => doc.id !== hiringDoc.id) &&
+      (await listDocs(ws.id!, owner.id!, { includeArchived: true }, pool)).some(
+        (doc) => doc.id === hiringDoc.id,
+      )
+      ? null
+      : "archiving either did not hide it or did not keep it",
+  );
+
+  await pool.query(`DELETE FROM docs WHERE workspace_id = $1`, [ws.id]);
 
   console.log(failures === 0 ? "\nall checks passed\n" : `\n${failures} check(s) failed\n`);
   await pool.end();
