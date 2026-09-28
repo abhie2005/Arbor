@@ -3975,3 +3975,199 @@ select.filter-add option {
   font-size: var(--text-meta);
   color: var(--text-3);
 }
+
+/* --- docs (ADR 6, D-110, D-111, D-112) ------------------------------------- */
+
+/* The tree and the page, side by side. The tree is fixed because a page of
+   prose wants a measure, not the rest of the window. */
+.docs {
+  display: grid;
+  grid-template-columns: 16rem minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+}
+
+.docs-tree {
+  border-right: 1px solid var(--line);
+  padding: var(--space-4) 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.docs-new {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+}
+
+.docs-new input,
+.docs-new select {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 4px 6px;
+}
+
+.docs-group-name {
+  padding: 0 var(--space-3);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.docs-page {
+  display: block;
+  padding: 4px var(--space-3);
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: var(--text-meta);
+  border-left: 2px solid transparent;
+}
+
+.docs-page:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.docs-page.is-open {
+  color: var(--text);
+  border-left-color: var(--accent);
+  background: var(--raised);
+}
+
+.docs-none {
+  padding: 0 var(--space-3);
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.docs-page-body {
+  padding: var(--space-5) var(--space-6);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  /* A measure, not a window width: prose past about 70 characters is harder to
+     read, and the editor is the one screen in this app that is prose. */
+  max-width: 52rem;
+}
+
+.docs-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.docs-title {
+  font: inherit;
+  font-size: var(--text-title);
+  font-weight: 600;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: 2px 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.docs-title:focus {
+  border-color: var(--line);
+  background: var(--raised);
+  outline: none;
+}
+
+.docs-head-controls {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.docs-error {
+  margin: 0;
+  color: var(--priority-urgent);
+  font-size: var(--text-meta);
+}
+
+.doc-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.doc-para {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.doc-para textarea {
+  flex: 1;
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: 4px 6px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.doc-para textarea:focus {
+  border-color: var(--line);
+  background: var(--raised);
+  outline: none;
+}
+
+/* A paragraph holding a mention. Shown rather than edited, with the reason in
+   its title — the same choice the task page makes for the field types it
+   cannot edit yet. */
+.doc-para-locked {
+  padding: 4px 6px;
+  line-height: 1.6;
+  color: var(--text-2);
+  border-left: 2px solid var(--line);
+}
+
+.doc-para-remove {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: var(--text-body);
+  line-height: 1;
+  padding: 4px;
+}
+
+.doc-para-remove:hover {
+  color: var(--text);
+}
+
+.doc-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.doc-empty {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--text-meta);
+}
+
+.doc-status {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+.doc-status-error {
+  color: var(--priority-urgent);
+}

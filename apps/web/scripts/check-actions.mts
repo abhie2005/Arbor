@@ -29,6 +29,7 @@ import { UndoStack } from "@arbor/core";
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { Client } from "pg";
+import * as Y from "yjs";
 
 // Defaults to the port `npm run dev` uses, so the two commands compose without
 // anyone having to know a second number.
@@ -2256,6 +2257,125 @@ timerStream.close();
 bystander.close();
 await db.query(`DELETE FROM time_entries`);
 
+
+// --- documents ---------------------------------------------------------------
+console.log("\ndocuments → a page, a permission, and a Yjs update over a POST\n");
+
+await db.query(`DELETE FROM docs WHERE workspace_id = $1`, [workspaceId]);
+
+await warm("/docs");
+const DOCS_URL = `http://localhost:${PORT}/docs`;
+const DOC_ACTIONS = actionIds("app/docs/page");
+
+const madeDoc = await callOn(DOCS_URL, DOC_ACTIONS.createDocAction!, [sprintListId, "Retro"]);
+const docRow = await one(
+  `SELECT id, container_id, title, ydoc, search_text FROM docs WHERE workspace_id = $1`,
+  [workspaceId],
+);
+report(
+  "creating a page puts it in the container it was given",
+  docRow?.container_id === sprintListId && docRow.title === "Retro"
+    ? null
+    : `stored ${JSON.stringify({ ...docRow, ydoc: undefined })} — response was ${madeDoc.text.slice(-200)}`,
+);
+if (!docRow) throw new Error("no document to carry on with");
+
+// The private space Sam has no grant on. A page there is the permission check
+// the whole screen rests on.
+const hiddenSpace = await one(`SELECT id FROM containers WHERE name = 'Hiring'`);
+const refusedCreate = await callOn(
+  DOCS_URL,
+  DOC_ACTIONS.createDocAction!,
+  [hiddenSpace.id, "Somebody else's page"],
+  SAM,
+);
+report(
+  "a member cannot create a page in a container they cannot reach",
+  /no longer exists|permission/i.test(refusedCreate.text) &&
+    !(await one(`SELECT id FROM docs WHERE title = $1`, ["Somebody else's page"]))
+    ? null
+    : "the page was created in a container the caller has no grant on",
+);
+
+// A real Yjs update, built the way the editor builds one: a paragraph added to
+// the state the server already has.
+const stored = await one(`SELECT ydoc FROM docs WHERE id = $1`, [docRow.id]);
+const ydoc = new Y.Doc();
+Y.applyUpdate(ydoc, new Uint8Array(stored.ydoc as Buffer));
+const vector = Y.encodeStateVector(ydoc);
+const blocks = ydoc.getArray<Y.Map<unknown>>("blocks");
+const paragraph = new Y.Map<unknown>();
+paragraph.set("type", "paragraph");
+paragraph.set("text", new Y.Text());
+blocks.push([paragraph]);
+(blocks.get(blocks.length - 1).get("text") as Y.Text).insert(0, "Shipped the board.");
+
+const update = Buffer.from(Y.encodeStateAsUpdate(ydoc, vector)).toString("base64");
+const pushed = await callOn(DOCS_URL, DOC_ACTIONS.pushDocUpdate!, [docRow.id, update]);
+const afterPush = await one(`SELECT search_text FROM docs WHERE id = $1`, [docRow.id]);
+report(
+  "an update posted as base64 is merged, and the projection is rewritten with it",
+  afterPush?.search_text === "Shipped the board."
+    ? null
+    : `search text is ${JSON.stringify(afterPush?.search_text)} — response was ${pushed.text.slice(-200)}`,
+);
+
+// The invariant an operation learned by breaking (D-097), in the other
+// direction: bytes that are not a Yjs update must not reach the column.
+const refusedUpdate = await callOn(DOCS_URL, DOC_ACTIONS.pushDocUpdate!, [
+  docRow.id,
+  Buffer.from([7, 7, 7, 7, 7, 200, 255]).toString("base64"),
+]);
+const afterJunk = await one(`SELECT search_text FROM docs WHERE id = $1`, [docRow.id]);
+report(
+  "bytes that are not a document change are refused, and change nothing",
+  afterJunk?.search_text === "Shipped the board." && /not readable|update/i.test(refusedUpdate.text)
+    ? null
+    : `the document now reads ${JSON.stringify(afterJunk?.search_text)}`,
+);
+
+const pulled = await callOn(DOCS_URL, DOC_ACTIONS.pullDocUpdate!, [
+  docRow.id,
+  Buffer.from(Y.encodeStateVector(new Y.Doc())).toString("base64"),
+]);
+report(
+  "a client that has nothing is sent the whole document, not nothing",
+  /"update":"[A-Za-z0-9+/]{20,}/.test(pulled.text)
+    ? null
+    : `pull returned ${pulled.text.slice(-200)}`,
+);
+
+// Moved somewhere Sam cannot reach, so the next two checks are about the
+// document rather than about which container the caller named.
+await db.query(`UPDATE docs SET container_id = $2 WHERE id = $1`, [docRow.id, hiddenSpace.id]);
+
+const refusedPush = await callOn(
+  DOCS_URL,
+  DOC_ACTIONS.pushDocUpdate!,
+  [docRow.id, update],
+  SAM,
+);
+report(
+  "a member cannot write to a page in a space they cannot reach",
+  /no longer exists/i.test(refusedPush.text)
+    ? null
+    : `the refusal said ${refusedPush.text.slice(-200)}`,
+);
+
+const refusedPull = await callOn(
+  DOCS_URL,
+  DOC_ACTIONS.pullDocUpdate!,
+  [docRow.id, Buffer.from(Y.encodeStateVector(new Y.Doc())).toString("base64")],
+  SAM,
+);
+report(
+  "nor read one, and the refusal does not admit it exists",
+  /no longer exists/i.test(refusedPull.text) && !/"update"/.test(refusedPull.text)
+    ? null
+    : `the refusal said ${refusedPull.text.slice(-200)}`,
+);
+
+await db.query(`DELETE FROM docs WHERE workspace_id = $1`, [workspaceId]);
 
 await db.query(`DELETE FROM comments WHERE object_id = ANY($1::uuid[])`, [
   [commentedTask.id, privateTask.id],

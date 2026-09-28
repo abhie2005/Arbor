@@ -125,6 +125,18 @@ export async function GET(request: Request): Promise<Response> {
        * for a keep-alive.
        */
       const mayHear = async (change: Change): Promise<boolean> => {
+        // A change with no container is workspace-wide — today, a document that
+        // lives on no container (D-112). There is no index row to check, so the
+        // question becomes the one the index would have been answering anyway:
+        // is this viewer a member of the workspace it happened in.
+        if (!change.l) {
+          const member = await pool().query(
+            `SELECT 1 FROM memberships WHERE workspace_id = $1 AND user_id = $2`,
+            [change.w, viewer.id],
+          );
+          return member.rowCount === 1;
+        }
+
         const result = await pool().query(
           `SELECT 1 FROM access_index WHERE container_id = $1 AND principal_id = $2`,
           [change.l, viewer.id],

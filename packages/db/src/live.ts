@@ -37,10 +37,27 @@ export const PRESENCE_CHANNEL = "arbor_presence";
 export interface Change {
   /** Workspace the change happened in. */
   w: string;
-  /** The list it happened in — what a subscriber's access is checked against. */
-  l: string;
+  /**
+   * The container it happened in — what a subscriber's access is checked
+   * against. A list for anything about a task; a doc's container for a doc.
+   *
+   * **Absent means workspace-wide** (D-112), which today is a document on no
+   * container: there is no row to check, so the route falls back to membership
+   * of `w`. Every task change has one, because a task is always in a list.
+   */
+  l?: string;
   /** Who did it, so a client can ignore its own echo. */
   a: string;
+  /**
+   * The document that changed, when that is what this change was.
+   *
+   * A document nudge is not answered by re-rendering: the editor holds the
+   * CRDT and a `router.refresh()` would throw away what the person is typing.
+   * The client pulls the difference for its own state vector instead, which is
+   * the one place in this system where a nudge is followed by a fetch rather
+   * than by a render.
+   */
+  d?: string;
   /**
    * Whose timers started or stopped, when that is what this change was.
    *

@@ -3567,3 +3567,55 @@ reader of those container rows.
 
 *In one sentence:* the CRDT owns the prose and its undo; everything else about a
 document is ordinary configuration with an activity row.
+
+### D-112
+**A document nudge is answered by a fetch, not by a re-render** · 2026-09-28 · active
+
+Every other change in this app is announced with `pg_notify` and answered by the
+browser calling `router.refresh()` (D-090): the server knows the new value, so
+re-rendering *is* the update. A document is the one place that breaks. Its new
+value is a CRDT the editor is holding, and a refresh would replace the editor —
+the cursor with it, and anything typed since the last save. So a doc nudge
+carries `d`, the document id, and the editor answers it by asking for the
+difference against its own state vector and applying that.
+
+**The transport did not change**, which is the point. One `EventSource` per
+client, one `pg_notify` inside the transaction that made the change, the same
+permission filter at the route. ADR 4 said document updates would ride a
+WebSocket gateway; there is no gateway, and there did not need to be — a nudge
+plus a pull is two round trips for something that happens when *somebody else*
+types, not when you do.
+
+**The route learned one new rule, and the index had already learned the hard
+one.** A nudge is checked against `access_index` for the container it happened
+in, and a doc's container is a space as often as a list — which the index can
+answer since D-108, with no change to the route at all. What did change: a
+document on *no* container has nothing to check, so an absent `l` now means
+workspace-wide and falls back to membership. That is the only new branch.
+
+**The editor pushes on a timer, not on a keystroke.** A write re-derives the
+projection and the search text, so a character-by-character push would be write
+amplification for no gain — nobody is reading a paragraph 400ms behind. The
+state vector of what was last sent is what makes the next push a difference
+rather than the whole document.
+
+**A textarea per paragraph, and the diff is what makes it a CRDT edit.** The
+alternative to a contenteditable is not "no editor" — it is letting the browser
+do selection, composition and paste correctly and reading the result. What
+matters is not replacing the paragraph: the text before and after are compared
+from both ends, which yields one replaced range, and that range is applied to
+the `Y.Text`. Replacing the whole paragraph would also *look* right and would
+make every concurrent edit in that paragraph clobber the other — the exact
+failure the CRDT was chosen to prevent, reintroduced above it.
+
+**A paragraph with a mention is read-only, and says why.** A mention is an embed
+occupying one position and a textarea holds only text, so the offsets a diff
+produces would be wrong the moment one is in the line. It renders instead, with
+the reason in its `title` — the same choice the task page makes for the nine
+custom field types it cannot edit yet. Making it editable needs a surface that
+can draw an embed, which is a different piece of work and not a different
+storage format.
+
+*In one sentence:* everything else answers "something changed" by re-rendering,
+and a document answers it by asking what changed — because the thing that knows
+the current value is the browser, not the server.

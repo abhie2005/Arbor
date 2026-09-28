@@ -112,10 +112,30 @@ export function Live({
     };
 
     source.onmessage = (event) => {
-      let change: { a?: string; l?: string; n?: string[] };
+      let change: { a?: string; l?: string; n?: string[]; d?: string };
       try {
-        change = JSON.parse(event.data) as { a?: string; l?: string; n?: string[] };
+        change = JSON.parse(event.data) as { a?: string; l?: string; n?: string[]; d?: string };
       } catch {
+        return;
+      }
+
+      /**
+       * A document is the one thing a refresh would damage.
+       *
+       * Every other nudge is answered by re-rendering, because the server is
+       * what knows the new value. A document's new value is a CRDT the editor
+       * is holding, and `router.refresh()` would replace the editor — and the
+       * cursor, and anything typed since the last save. So a doc nudge is
+       * forwarded as an event instead, and the editor answers it by pulling the
+       * difference (D-112). Forwarded before the echo filter, because the
+       * editor has its own reason to care who made the change.
+       */
+      if (change.d) {
+        window.dispatchEvent(
+          new CustomEvent("arbor:doc", {
+            detail: { docId: change.d, actorId: change.a ?? "" },
+          }),
+        );
         return;
       }
 

@@ -88,7 +88,13 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
     `logActivity`'s any more (D-099): the nudge carries who the fan-out told,
     and the fan-out has not run when the activity row is written. A new
     operation still cannot forget to broadcast, because there is no way to apply
-    one except through `applyOperations`.
+    one except through `applyOperations`. Configuration services announce for
+    themselves — `documents.ts` does, because a page appearing in somebody
+    else's tree is news (D-112).
+13. **A nudge is answered by re-rendering, except for a document.** The server
+    knows every other new value; a document's lives in the editor's CRDT, and a
+    `router.refresh()` there throws away the cursor and anything unsaved. A doc
+    nudge carries `d` and the editor pulls the difference (D-112).
 
 ## Where things are
 
@@ -101,6 +107,7 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Rich text / mentions | `packages/core/src/richtext.ts` |
 | A document as Yjs, and its projection back | `packages/core/src/documents.ts` |
 | Documents: the page tree and the bytes | `packages/db/src/documents.ts` |
+| The editor, and the diff that makes a keystroke a CRDT edit | `apps/web/src/components/doc-editor.tsx` |
 | Who gets notified (pure) | `packages/core/src/notifications.ts` |
 | The executor — all writes land here | `packages/db/src/mutations.ts` |
 | Authorization checks | `packages/db/src/task-access.ts` |

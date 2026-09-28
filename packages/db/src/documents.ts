@@ -11,6 +11,7 @@ import type { Pool, PoolClient } from "pg";
 
 import { pool } from "./client";
 import { type ConfigContext, ConfigError, inTransaction, logConfigChange, requireName } from "./config";
+import { announceChange } from "./live";
 
 /**
  * Documents: the page tree, and the bytes each page is.
@@ -229,6 +230,8 @@ export async function createDoc(input: CreateDocInput, context: ConfigContext): 
       newValue: title,
     });
 
+    await announce(client, input.workspaceId, input.containerId, row.id, context.actorId);
+
     return toRecord(row);
   });
 }
@@ -260,6 +263,8 @@ export async function renameDoc(
       oldValue: previous.title,
       newValue: next,
     });
+
+    await announce(client, previous.workspace_id, previous.container_id, docId, context.actorId);
   });
 }
 
@@ -292,6 +297,8 @@ export async function archiveDoc(
       oldValue: previous.archived_at,
       newValue: archived,
     });
+
+    await announce(client, previous.workspace_id, previous.container_id, docId, context.actorId);
   });
 }
 
@@ -348,6 +355,13 @@ export async function moveDoc(
       oldValue: previous.container_id,
       newValue: containerId,
     });
+
+    // Announced where it came from as well as where it went: a page vanishing
+    // from one tree is news to whoever is looking at that tree.
+    await announce(client, previous.workspace_id, previous.container_id, docId, context.actorId);
+    if (containerId !== previous.container_id) {
+      await announce(client, previous.workspace_id, containerId, docId, context.actorId);
+    }
   });
 }
 
@@ -393,11 +407,13 @@ export async function applyDocumentUpdate(
 
     const searchText = searchTextFrom(merged);
 
-    const written = await client.query<{ updated_at: Date }>(
+    const written = await client.query<{ updated_at: Date; container_id: string | null }>(
       `UPDATE docs SET ydoc = $2, search_text = $3, updated_at = now()
-       WHERE id = $1 RETURNING updated_at`,
+       WHERE id = $1 RETURNING updated_at, container_id`,
       [docId, Buffer.from(merged), searchText],
     );
+
+    await announce(client, row.workspace_id, written.rows[0]!.container_id, docId, context.actorId);
 
     return { searchText, updatedAt: written.rows[0]!.updated_at };
   });
@@ -411,6 +427,29 @@ export async function loadDocContent(
 ): Promise<ReturnType<typeof richTextFrom>> {
   const doc = await loadDoc(docId, viewerId, connection);
   return doc ? richTextFrom(doc.state) : null;
+}
+
+/**
+ * Tells everyone who may hear it that a document changed.
+ *
+ * Inside the transaction like every other announcement (D-090), so a rolled
+ * back edit announces nothing. The container is what the route checks a
+ * listener's access against; a document on none is workspace-wide and the route
+ * falls back to membership (D-112).
+ */
+async function announce(
+  client: PoolClient,
+  workspaceId: string,
+  containerId: string | null,
+  docId: string,
+  actorId: string,
+): Promise<void> {
+  await announceChange(client, {
+    w: workspaceId,
+    ...(containerId ? { l: containerId } : {}),
+    a: actorId,
+    d: docId,
+  });
 }
 
 async function one(client: PoolClient, docId: string): Promise<DocRow> {
