@@ -1,6 +1,7 @@
 # Status — resume here
 
-Last updated 2026-09-11 (Phase 8 complete). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-09-28 (Phase 9 in progress — documents are built and
+editable). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
@@ -35,8 +36,8 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Custom fields** | CRUD, per-type config, placement down the tree, task-type scoping, archive, and type change with a real value migration. |
 | **Task types** | CRUD, one default per workspace, deletion with reassignment. |
 | **Settings UI** | `/settings` — statuses, custom fields, task types. |
-| **Permissions** | Grants are the source of truth; a pure rule in `@arbor/core` flattens them plus inheritance into the access index every query joins against. Private containers, inherited grants, group grants, role baselines. Rebuilt inside the transaction that changed the grant, so a revocation has no stale window. |
-| **Sharing UI** | `/settings/sharing` — the container tree with how many people each one reaches, a private toggle, and share/unshare. Inherited grants are shown with their source and are not removable there. |
+| **Permissions** | Grants are the source of truth; a pure rule in `@arbor/core` flattens them plus inheritance into the access index every query joins against. Private containers, inherited grants, group grants, role baselines. Rebuilt inside the transaction that changed the grant, so a revocation has no stale window. The index holds a row per **container**, not only per list (D-108), so "may this person manage this space" is the same join as "may they see this task". |
+| **Sharing UI** | `/settings/sharing` — the container tree with how many people each one reaches, a private toggle, and share/unshare. Inherited grants are shown with their source and are not removable there. **Sharing is a permission on the container now, not a workspace role** (D-109): a lead holding `manage` on their space can share it while staying a plain member, and an admin can no longer share a private space nobody granted them. Making a container private leaves the actor a `manage` grant, so closing the door does not lock you out. |
 | **Identity** | Real sessions: scrypt password hashes, a `sessions` row per sign-in with the token stored only as a hash, an httpOnly cookie, and a login screen. Every screen redirects to `/login` without one. The dev user switcher survives *underneath* sessions and applies only when explicitly set. |
 | **Authorization** | Every server action authorizes as well as authenticates. Task writes join `access_index` for the actor; `undo` checks every task its client-supplied batch names; sharing and configuration need an owner or admin; a saved view is the container's `edit`, unless it is personal, in which case only its owner. |
 | **Task detail** | `/t/ENG-402` — a page, keyed by the human key with a uuid fallback. Status, priority, dates, type, assignees, watchers, eleven editable custom-field types and a description. Subtasks are listed here and nowhere else in the UI. A viewer without `edit` gets values, not disabled controls. |
@@ -49,10 +50,14 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Time tracking** | Start and stop on the task page, an entry list, logging time after the fact, and tracked-against-estimate. Every write is an operation (D-093), so ⌘Z undoes a stop and restores a deleted entry. At most one running timer per person, held by a unique partial index (D-094). A readout in the shell of every screen, pushed down the live stream so a timer started in another tab appears in this one (D-098). |
 | **Goals** | `/goals` — goals with key results of four kinds. A *rollup* key result holds a view definition and is counted by the compiler (D-101), so a goal and a list can never disagree about what counts; it is computed as the goal's **owner** rather than the reader (D-102), which is what makes progress a shared fact. Manual, currency and yes/no key results are entered. Progress is the mean of the key results, each clamped; completion is a timestamp somebody set, not a number crossing 100%. |
 | **Dashboards** | `/dashboards` — a grid of cards, each a filter plus a way of drawing it. A card's `kind` *is* which compiler entry point it calls (D-104): a stat is `compileAggregate`, a chart is `compileGroupCounts`. Counted as the **viewer** (D-105), which is the opposite of a goal and for a reason. Scoped to a container, with personal dashboards following the saved view rule. Charts are HTML bars measured against the largest slice; no charting library. |
+| **Documents** | `/docs` — a page tree scoped by the same `access_index` join everything else uses, and an editor. A document's body is a Yjs CRDT holding the *same block tree* comments and descriptions use (ADR 6, D-110), so a mention is a reference rather than the characters "@Name", and `search_text` beside it is a projection recomputed on every write. The editor is a textarea per paragraph with the change applied as a diff (D-112), so two people typing in one paragraph merge instead of clobbering. Updates POST as base64 and arrive as a nudge on the existing stream; the editor answers by pulling the difference rather than re-rendering. Creating, renaming, moving and archiving are configuration writes with an activity row and no ⌘Z (D-111). |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 418 unit tests, 196 live-Postgres checks, 140 server-action checks,
-four packages typechecking clean, and the interactions above driven in Chrome.
+**Verified:** 437 unit tests, 220 live-Postgres checks, 151 server-action
+checks, four packages typechecking clean, and the interactions above driven in
+Chrome — most recently a member creating a page, typing in it, and watching
+somebody else's paragraph arrive in the open editor with their own cursor
+untouched.
 
 ---
 
@@ -61,11 +66,14 @@ four packages typechecking clean, and the interactions above driven in Chrome.
 - `apps/realtime` and `apps/worker` — **not even directories any more.** The
   README names them; that is the shape being decided, not code that exists.
   The transport question is now settled and settled against `apps/realtime`:
-  Postgres carries changes (D-090), presence within a process (D-092) and
-  presence between them (D-100), all on one connection per process. `apps/worker`
-  still has nothing to run.
+  Postgres carries changes (D-090), presence within a process (D-092), presence
+  between them (D-100) and now **document updates** (D-112), all on one
+  connection per process. A collaborative editor was the last thing that might
+  have required a gateway and it did not. `apps/worker` still has nothing to
+  run.
 - `packages/sdk` — empty. Needed once there's an API worth a typed client.
-- Docs, chat, automations, AI.
+- Chat, automations, AI. **Docs are built** — see the table above and the gaps
+  below for what that does and does not mean.
 - Derived field types (`formula`, `rollup`, `automatic_progress`) are declared
   and filterable, but nothing computes them yet. Time tracking did **not**
   change this: a tracked total is summed at read time, so the question of
@@ -76,38 +84,95 @@ four packages typechecking clean, and the interactions above driven in Chrome.
 
 ## Where to pick up
 
-**Phase 8 is done.** Time tracking, goals and dashboards are all built, which is
-the last of the three tables that had been migrated in 0000 and never touched by
-code. Phase 7's two leftovers are fixed too (D-099, D-100).
+**Phase 9 is part-built.** Documents exist, are permission-scoped, and can be
+written in by more than one person at a time. What is missing is everything a
+document eventually needs *around* the writing — see the gaps below, which are
+the honest list of what a reviewer will ask about first.
 
-### Next — Phase 9, and the thing to settle before it
+Two things that were owed before Phase 9 are done and are why the docs screen
+was short rather than long:
 
-Phase 9 is **Docs**, and the decision it turns on is already visible: comments
-and descriptions share one document format (`packages/core/src/richtext.ts`,
-D-083), and a collaborative editor is the first thing that needs *operations on
-a document* rather than a document as an operation's value. That is either a
-CRDT (ADR 4 refused one for records, deliberately, and said nothing about text)
-or operational transform over the existing block tree. Decide which before
-writing an editor, because the storage shape follows from it and `docs` already
-has a `content` column waiting.
+- **The container permission** (D-081), closed by D-108 and D-109. The access
+  index holds a row per container, sharing is a permission on the container
+  rather than a workspace role, and `requireViewAccess` stopped checking a
+  space as if it were a list — a bug that had been there since saved views were
+  built and was invisible because the seed puts every view on a list.
+- ~~**A tracked-time rollup.**~~ Built earlier (D-107).
 
-**The two things Phase 8 leaves that are worth doing first**, both small and
-both now cheap:
+### Next — what Phase 9 still owes
 
-- ~~**A tracked-time rollup.**~~ Built (D-107). `trackedMs` is a `BuiltinField`
-  whose SQL is a correlated subquery over `time_entries`, summable like `points`
-  — so a goal can be "forty hours on this sprint" and a dashboard card can say
-  how many have been spent. It mirrors `recordDurationMs`: a stopped entry
-  contributes its denormalized column, a running one is measured against
-  `now()`, because the task page counts a running timer and the two must not
-  disagree.
-- **The container permission** (D-081). This is now the third feature to route
-  around it: sharing is a workspace role, goals have no privacy, and a
-  space-scoped dashboard falls back to workspace-wide because `access_index`
-  holds lists rather than containers. The fix is `resolveAccess` emitting
-  container rows alongside its list rows, which changes the pure rule and its 30
-  tests — worth doing deliberately, and worth doing before a fourth feature
-  needs it.
+In the order that buys the most:
+
+1. **Nothing reads `search_text`.** It is maintained on every write and there is
+   no search box anywhere in the app. One screen, one `ILIKE` or one
+   `tsvector`, and the column stops being speculative. This is the cheapest
+   large-looking feature left in the product.
+2. **An editor that can hold a mention.** A paragraph containing one is
+   read-only today, because a textarea has no way to draw an embed and the
+   diff's offsets would be wrong. This is the piece that needs a real editing
+   surface, and it is worth deciding deliberately: a small contenteditable that
+   understands one embed type, or a library. Note what is *not* at stake — the
+   storage format is settled and does not move either way (ADR 6).
+3. **⌘Z in a document is the browser's, not the CRDT's.** Yjs has
+   `Y.UndoManager`, and it is not wired up: undo inside a textarea is that
+   textarea's own history, which knows nothing about a remote change that
+   arrived between two keystrokes. D-111 says ⌘Z in a document means the text
+   somebody typed; making that true needs the undo manager.
+4. **A page tree that is only indentation.** `parent_page_id` is stored, moving
+   between containers works, and there is no drag, no collapse, and no reorder
+   among siblings — `position` is fractional and written only on create.
+
+### Known gaps in what was just built
+
+**Documents**
+
+- **Two tabs of the same person do not sync.** The editor ignores nudges whose
+  actor is the viewer, which is right for avoiding an echo of your own save and
+  wrong for a second tab — the same shape D-098 hit with timers, and the fix is
+  the same: the stream already knows who, so the client can distinguish "me
+  elsewhere" from "me here".
+- **Nothing garbage-collects a document's history.** A CRDT only grows; the
+  column is capped at a megabyte (D-111) and the answer when it bites is
+  re-encoding a fresh document to drop tombstones, which nothing does yet.
+- **No presence and no cursors.** Presence exists on the task page and is not
+  wired to documents, which is where it would matter most — two people in one
+  paragraph currently discover each other by watching words appear.
+- **A document on no container takes the workspace role to edit**, following the
+  workspace-wide saved view rule. For a handbook page that is probably wrong,
+  and it is the same "blunt in the safe direction" trade D-081 made.
+- **No comments on a document**, no links between a document and a task, no
+  templates, no export, no archive screen — archived pages are only reachable by
+  asking `listDocs` for them.
+- **A new page is always created at the container root.** `parentPageId` is
+  supported by the service and the screen never sends one, so subpages exist in
+  the data model and cannot be made from the UI.
+- **The editor sends on a 400ms timer** and shows "Saving…" / "Saved" with no
+  conflict state, because there is no conflict to show — but a failed push
+  leaves the text on screen and the error beside it, and nothing retries.
+
+**Two things older than this phase, found while building it**
+
+- **`/settings/sharing` lists every container in the workspace to anybody who
+  opens it**, private ones included, with how many people reach them. The
+  actions are correctly scoped; the page is not. It predates this phase and is
+  now the most visible thing the container rows make fixable.
+- **A comment's mention candidates are every user in the database**, not the
+  members of that workspace (`comment-actions.ts`). `documents.ts` asks for
+  members; the older path did not, and with one workspace nobody can tell.
+
+### Done — the decision Phase 9 turned on
+
+It was already made. ADR 4 chose a CRDT for rich text and named Yjs; what it did
+not say was what the Yjs document *contains*, and that is the part with no
+second chance, because a CRDT keeps history and cannot be migrated the way a
+`jsonb` column can. ADR 6 records it: a document is the block tree `richtext.ts`
+already describes, in Yjs types, with a mention as an embed carrying the user id
+(D-110). The projection back to that tree is what every non-editor reads.
+
+ADR 4's transport paragraph is annotated as superseded rather than deleted. It
+said one WebSocket per client; there is no WebSocket, `apps/realtime` does not
+exist, and document updates ride the same `pg_notify` and `EventSource` as
+everything else (D-090, D-112).
 
 ### Done — dashboards
 
@@ -369,11 +434,12 @@ the ones it does not cover, because they are reading rather than reference:
   days, which have one right answer. A due date *with* a time is rendered in the
   server's zone during SSR and the browser's afterwards, and users carry no
   timezone. Identity is real now, so this has run out of excuses.
-- **Sharing is a workspace role, and should be a container permission.** A team
-  lead who makes a private space cannot share it without being a workspace
-  admin (D-081). That is wrong, and wrong in the safe direction. The fix is for
-  `resolveAccess` to emit container permissions alongside its list rows, which
-  changes the pure rule and its 30 tests — worth doing deliberately.
+- ~~**Sharing is a workspace role, and should be a container permission.**~~
+  Done (D-108, D-109). `resolveAccess` emits a row per container, the sharing
+  actions take `manage` on the one they name, and making a container private
+  leaves the actor a grant so closing the door does not lock them out. What is
+  still open is the *screen*: `/settings/sharing` shows every container in the
+  workspace to anybody who opens it.
 - ~~**Notifications inside the transaction, or outside it?**~~ Inside, decided
   before the fan-out was written: only directly named people get a row, so the
   cost is proportional to who was named rather than to who is watching. What is
