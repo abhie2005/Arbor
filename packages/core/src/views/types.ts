@@ -111,7 +111,15 @@ export function isFilterClause(node: FilterNode): node is FilterClause {
  * `showClosed`.
  */
 export interface FilterGroup extends FilterClause {
-  /** Free-text search across name and description. */
+  /**
+   * Free-text search across a task's **name**. Case-insensitive substring, the
+   * same rule `contains` uses, and the same rule search uses for pages (D-113).
+   *
+   * Not the description, though this said so for a long time: a description is
+   * a block tree in `jsonb` with no plain-text projection beside it, and
+   * matching prose inside one needs the column `docs.search_text` is — which is
+   * a schema change and a backfill, not a wider `ILIKE`.
+   */
   search?: string;
   /** Closed-group tasks are hidden unless this is true. */
   showClosed?: boolean;

@@ -111,6 +111,7 @@ import {
   loadDocContent,
   moveDoc,
   renameDoc,
+  searchDocs,
 } from "./documents";
 import {
   containerAccess,
@@ -3364,6 +3365,111 @@ async function main() {
       )
       ? null
       : "archiving either did not hide it or did not keep it",
+  );
+
+  // --- search ---------------------------------------------------------------
+  console.log("\nsearch → the column that was maintained and never read\n");
+
+  // `openDoc` is workspace-wide and its text is "Written by A" / "Written by B"
+  // from the merge above; `child` ("Interview loop") is in the private space;
+  // `hiringDoc` was just archived.
+  const bodyHit = await searchDocs(ws.id!, owner.id!, "Written by A", 20, pool);
+  report(
+    "a page is found by its text, which is what `search_text` was always for",
+    bodyHit.some((hit) => hit.id === openDoc.id && !hit.titleMatched)
+      ? null
+      : `matched ${JSON.stringify(bodyHit.map((hit) => hit.title))}`,
+  );
+
+  const titleHit = await searchDocs(ws.id!, owner.id!, "handbook", 20, pool);
+  report(
+    "and by its title, case-insensitively, with the match reported as the title's",
+    titleHit.some((hit) => hit.id === openDoc.id && hit.titleMatched)
+      ? null
+      : `matched ${JSON.stringify(titleHit.map((hit) => [hit.title, hit.titleMatched]))}`,
+  );
+
+  // The check the whole screen rests on: search is a read, and a read that
+  // forgot the reachability clause would be the widest leak in the app —
+  // it would show a private page's prose to anybody who guessed a word in it.
+  report(
+    "a page in a private space is not findable by someone with no grant",
+    (await searchDocs(ws.id!, outsider.id!, "Interview loop", 20, pool)).every(
+      (hit) => hit.id !== child.id,
+    )
+      ? null
+      : "search returned a private space's page to an outsider",
+  );
+
+  report(
+    "and is findable by the owner, so the empty result was the permission",
+    (await searchDocs(ws.id!, owner.id!, "Interview loop", 20, pool)).some(
+      (hit) => hit.id === child.id,
+    )
+      ? null
+      : "the owner could not find a page in their own workspace",
+  );
+
+  report(
+    "an archived page does not surface in a search of live content",
+    (await searchDocs(ws.id!, owner.id!, "Hiring", 20, pool)).every(
+      (hit) => hit.id !== hiringDoc.id,
+    )
+      ? null
+      : "an archived page was returned",
+  );
+
+  // Ordering: a title match is the stronger signal, and `ILIKE` gives no rank
+  // to say so, so `searchDocs` says it in the ORDER BY instead.
+  const rankTitle = await createDoc(
+    { workspaceId: ws.id!, containerId: null, title: "Rollout", text: "Nothing to see." },
+    docConfig,
+  );
+  const rankBody = await createDoc(
+    { workspaceId: ws.id!, containerId: null, title: "Notes", text: "The rollout is 100% done." },
+    docConfig,
+  );
+
+  const ranked = await searchDocs(ws.id!, owner.id!, "rollout", 20, pool);
+  report(
+    "a title match sorts above a page that only mentions it in the text",
+    ranked[0]?.id === rankTitle.id && ranked.some((hit) => hit.id === rankBody.id)
+      ? null
+      : `the order was ${JSON.stringify(ranked.map((hit) => hit.title))}`,
+  );
+
+  // Escaping, which has no other test: the term is a bound parameter either
+  // way, so this is not about injection — it is about `%` and `_` meaning
+  // themselves. Both halves of search share `escapeLike` so that one box
+  // cannot answer this two ways (D-113).
+  report(
+    "a per-cent sign in a query matches a per-cent sign",
+    (await searchDocs(ws.id!, owner.id!, "100%", 20, pool)).some(
+      (hit) => hit.id === rankBody.id,
+    )
+      ? null
+      : "a literal % did not match the text containing one",
+  );
+
+  report(
+    "and an underscore is a character, not a single-character wildcard",
+    (await searchDocs(ws.id!, owner.id!, "10_", 20, pool)).length === 0
+      ? null
+      : "`10_` matched `100`, so the term reached ILIKE unescaped",
+  );
+
+  report(
+    "a term matching nothing returns nothing rather than everything",
+    (await searchDocs(ws.id!, owner.id!, "zzzznotaword", 20, pool)).length === 0
+      ? null
+      : "a query for a word in no document matched something",
+  );
+
+  report(
+    "the limit is a limit",
+    (await searchDocs(ws.id!, owner.id!, "o", 2, pool)).length <= 2
+      ? null
+      : "more rows came back than were asked for",
   );
 
   await pool.query(`DELETE FROM docs WHERE workspace_id = $1`, [ws.id]);

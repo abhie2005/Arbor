@@ -3619,3 +3619,86 @@ storage format.
 *In one sentence:* everything else answers "something changed" by re-rendering,
 and a document answers it by asking what changed — because the thing that knows
 the current value is the browser, not the server.
+
+### D-113
+**Search matches with `ILIKE`, because the compiler already does** · 2026-09-30 · active
+
+`docs.search_text` has been written on every save since D-111 and read by
+nothing. `STATUS.md` framed closing that as a choice — "one `ILIKE` or one
+`tsvector`" — and the choice is not really about search quality. It is about
+whether one search box can have two ideas of what matches.
+
+The view compiler has matched `filters.search` with `t.name ILIKE '%term%'`
+since the beginning, and `contains` in the filter bar is the same expression.
+A `tsvector` half for documents would stem and the task half would not: typing
+`design` would find a page that says *designing* and not a task called
+**Designing the board**, and typing `desig` would find the task and not the
+page. Both answers are defensible in isolation and together they are a bug
+report — "search doesn't find my page" — with no wrong line of code in it. So
+documents match the way tasks already match, `escapeLike` moved from private to
+exported so there is literally one function deciding whether `100%` means a
+per-cent sign, and the compiler did not change at all.
+
+**What that costs, stated plainly.** No stemming: `run` does not find
+`running`. No ranking: Postgres returns a yes or a no, not a score. A one- or
+two-character query still scans, because trigrams need three. These are real,
+and the first two are the reason `tsvector` exists. The bet is that substring
+matching is what a person reaching for a search box in a work tool actually
+expects — they are looking for a task they know exists, by a fragment of its
+name — and that stemming matters at the scale where you are searching prose you
+have not read. Arbor is not there. When it is, the move is `tsvector` on *both*
+halves in one change, which is why the term is parsed in one place
+(`parseQuery`) rather than at each call site.
+
+**Ranking is refused rather than invented.** Two queries, not a `UNION`: a task
+has a status and a key, a page has a snippet, and a union would widen each to
+the other's columns and then sort a result set whose halves have no comparable
+score. So the screen has a Tasks section and a Pages section, and nothing claims
+a task is a better match than a page. Within the pages half there *is* an order
+worth asserting, and `ILIKE` cannot assert it, so the `ORDER BY` does:
+`(title ILIKE $3) DESC, updated_at DESC` — a title match above a body match,
+then most recently edited. A relevance number here would have been a number I
+made up, which is worse than a grouping, because it looks like ranking.
+
+**Neither half got a permission rule of its own**, and that is the part that was
+cheap only because two earlier decisions had been paid for. The task half is
+`compileViewQuery` with scope `everything`, so it inherits the `access_index`
+join the compiler puts first (invariant 2, D-032) — there is no task SQL in the
+search loader. The page half is `searchDocs`, sharing the `REACHABLE` clause
+with `listDocs` verbatim, which is only expressible because the index holds a
+row per container rather than per list (D-108). A search that filtered its own
+results afterwards would have been a third copy of the rule, and the copy that
+forgets.
+
+**A GET, not a server action.** The query is in the URL, so a search is a link
+somebody can send and the back button works (D-049); the box in the shell is a
+plain `<form action="/search">` with no JavaScript, no debounce and no
+`search-actions.ts`. A `"use server"` function here would be a POST returning
+what a URL already describes. The one thing the screen must do is refuse an
+empty term: `ILIKE '%%'` is true of every non-null value, so a blank query is
+not the cheapest search in the app but the most expensive one — `parseQuery`
+returns null for it and the page renders a prompt.
+
+**The index is the reason the simple choice is affordable.** `ILIKE '%term%'`
+has no prefix for a btree to descend, so migration 0011 adds `pg_trgm` and GIN
+trigram indexes on `docs.search_text` and `docs.title`. Measured on 80,000
+pages: 142ms sequential scan, 17ms through a `BitmapOr` of the two indexes.
+Deliberately nothing on `tasks.name` — the compiler joins `access_index` first
+and that join is the most selective predicate in the query by design, so the
+name test is a filter over rows the viewer can already reach rather than a table
+scan, and an index the planner has no reason to choose is a write cost on every
+task edit for nothing.
+
+**Rejected:** search-as-you-type over an endpoint (a keystroke is a query
+against every document in the workspace, and the URL stops being the state);
+searching comments and task descriptions in this pass (both are block trees with
+no projection beside them — `search_text` exists on `docs` precisely because
+somebody decided to maintain one, and doing the same for comments is a schema
+change, not a screen); a global ⌘K palette (that is navigation wearing search's
+clothes, and it wants the results to already be fast).
+
+*In one sentence:* the column was maintained for a reader that never came, and
+the reader that came matches the same way the compiler always has — because the
+expensive mistake here was never a slow query, it was two halves of one search
+box disagreeing about what the word means.
+

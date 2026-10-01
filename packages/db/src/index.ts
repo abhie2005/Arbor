@@ -118,6 +118,8 @@ export {
   loadDocContent,
   moveDoc,
   renameDoc,
+  searchDocs,
+  type DocHit,
   type DocRecord,
   type DocWithState,
 } from "./documents";

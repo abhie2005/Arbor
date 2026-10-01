@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 import { containers } from "./containers";
 import { users, workspaces } from "./workspaces";
@@ -168,6 +169,14 @@ export const docs = pgTable(
   (t) => [
     index("docs_container_idx").on(t.containerId, t.position),
     index("docs_parent_idx").on(t.parentPageId),
+    /**
+     * Trigram GIN, because search matches with `ILIKE '%term%'` (D-113) and a
+     * leading wildcard gives a btree no prefix to descend on. These are the two
+     * columns `searchDocs` tests, and they are the reason the ILIKE decision is
+     * affordable rather than only simple.
+     */
+    index("docs_search_text_trgm_idx").using("gin", sql`${t.searchText} gin_trgm_ops`),
+    index("docs_title_trgm_idx").using("gin", sql`${t.title} gin_trgm_ops`),
   ],
 );
 

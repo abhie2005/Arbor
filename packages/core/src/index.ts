@@ -5,6 +5,7 @@ export * from "./access";
 export * from "./passwords";
 export * from "./richtext";
 export * from "./documents";
+export * from "./search";
 export * from "./notifications";
 export * from "./activity";
 export * from "./fields";

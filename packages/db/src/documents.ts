@@ -3,6 +3,7 @@ import {
   applyDocUpdate,
   docStateFromText,
   emptyDocState,
+  escapeLike,
   positionBetween,
   richTextFrom,
   searchTextFrom,
@@ -145,6 +146,57 @@ export async function listDocs(
   );
 
   return result.rows.map(toRecord);
+}
+
+/** A document that matched a search, with the text that matched it. */
+export interface DocHit extends DocRecord {
+  /** True when the title matched, which is why the row sorts where it does. */
+  titleMatched: boolean;
+}
+
+/**
+ * Documents in this workspace whose title or text matches `term`.
+ *
+ * **The reachability clause is the same one `listDocs` uses**, which is the
+ * whole reason search did not need a permission rule of its own: a doc on a
+ * container needs a row in the index for it, a doc on no container is
+ * workspace-wide (D-111). A search that filtered its own results afterwards
+ * would be a second rule to keep in step, and the one that forgets.
+ *
+ * **`ILIKE`, not `to_tsquery`** (D-113). The view compiler already matches
+ * `filters.search` with `ILIKE`, and one search box cannot have two notions of
+ * what matches — a query that found a task and not an equally matching document
+ * would read as a missing document. The cost is no ranking from Postgres, so
+ * the order is decided here instead: a title match first, then most recently
+ * edited.
+ *
+ * **Archived pages are excluded**, following `listDocs`. An archived page is
+ * reachable by asking for it, and surfacing one in a search of live content
+ * would make "archived" mean nothing.
+ */
+export async function searchDocs(
+  workspaceId: string,
+  viewerId: string,
+  term: string,
+  limit = 20,
+  connection: Connection = pool(),
+): Promise<DocHit[]> {
+  // `$2` is the viewer, because REACHABLE says so — the clause is shared text
+  // and its parameter positions come with it.
+  const like = `%${escapeLike(term)}%`;
+
+  const result = await connection.query<DocRow & { title_matched: boolean }>(
+    `${SELECT_DOC.replace("d.archived_at", "d.archived_at, (d.title ILIKE $3) AS title_matched")}
+      WHERE d.workspace_id = $1
+        AND ${REACHABLE}
+        AND d.archived_at IS NULL
+        AND (d.title ILIKE $3 OR d.search_text ILIKE $3)
+      ORDER BY (d.title ILIKE $3) DESC, d.updated_at DESC
+      LIMIT $4`,
+    [workspaceId, viewerId, like, limit],
+  );
+
+  return result.rows.map((row) => ({ ...toRecord(row), titleMatched: row.title_matched }));
 }
 
 /**

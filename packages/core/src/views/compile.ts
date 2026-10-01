@@ -230,7 +230,12 @@ function comparisonSql(expr: string, condition: FilterCondition, params: ParamBa
   }
 }
 
-function escapeLike(input: string): string {
+/**
+ * Exported because the docs half of search has to escape a term identically
+ * (D-113). A second copy of this is a second answer to "does `100%` match a
+ * literal per-cent sign", and one search box cannot have two.
+ */
+export function escapeLike(input: string): string {
   return input.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 

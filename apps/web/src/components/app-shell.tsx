@@ -54,7 +54,13 @@ export interface ShellChrome {
    */
   location?: ShellLocation;
   /** Which top-level entry is the current screen, when the screen is one of them. */
-  active?: "inbox" | "goals" | "dashboards" | "docs";
+  active?: "inbox" | "goals" | "dashboards" | "docs" | "search";
+  /**
+   * What the search box should show. Set only by `/search`, because that is the
+   * only screen whose URL holds a query — every other screen shows an empty box
+   * rather than a stale term from wherever the person came from.
+   */
+  query?: string;
   /**
    * The lists whose contents this screen shows, when it knows.
    *
@@ -124,9 +130,28 @@ export function AppShell({
               )}
             </div>
             <div className="header-right">
-              {/* First in the row, and the only thing here that moves. A timer
-                  running is a state you are in, not an action you could take —
-                  the controls beside it are the actions. */}
+              {/* A plain GET form, not a client component with a debounce. The
+                  query belongs in the URL (D-049, D-113), and a form whose
+                  action is a URL gets Enter, the back button and a sendable
+                  link without a line of JavaScript. */}
+              <form className="search-box" action="/search" role="search">
+                <input
+                  type="search"
+                  name="q"
+                  // Uncontrolled and keyed on the term: the box is not a
+                  // control following a server value (D-090) — it is an input
+                  // whose value the person owns while they are typing. The key
+                  // makes a new search from a link reset it, which is the one
+                  // time the server's value should win.
+                  key={chrome.query ?? ""}
+                  defaultValue={chrome.query ?? ""}
+                  placeholder="Search tasks and pages"
+                  aria-label="Search this workspace"
+                  autoComplete="off"
+                />
+              </form>
+              {/* A timer running is a state you are in, not an action you could
+                  take — the controls beside it are the actions. */}
               <TimerSlot viewerId={chrome.viewer.id} />
               <a className="settings-link" href="/settings/statuses" title="Workspace settings">
                 Settings
@@ -218,6 +243,13 @@ async function Sidebar({ chrome }: { chrome: ShellChrome }) {
           aria-current={chrome.active === "docs" ? "page" : undefined}
         >
           <span className="ic">▤</span>Docs
+        </a>
+        <a
+          className="nav"
+          href="/search"
+          aria-current={chrome.active === "search" ? "page" : undefined}
+        >
+          <span className="ic">⌕</span>Search
         </a>
       </nav>
 

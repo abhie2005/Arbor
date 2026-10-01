@@ -4171,3 +4171,188 @@ select.filter-add option {
 .doc-status-error {
   color: var(--priority-urgent);
 }
+
+/* --- search -------------------------------------------------------------
+   The box lives in the shell header, so it is sized against --control-h like
+   every other control in that row rather than against the results it opens. */
+
+.search-box {
+  display: flex;
+}
+
+.search-box input {
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  width: 190px;
+}
+
+.search-box input::placeholder {
+  color: var(--text-3);
+}
+
+.search-box input:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -1px;
+}
+
+.search-results {
+  padding: var(--space-5) var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  overflow-y: auto;
+}
+
+.search-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.search-heading {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+.search-count {
+  font-size: var(--text-mono);
+  font-family: var(--font-mono);
+  letter-spacing: 0;
+  color: var(--text-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-chip);
+  padding: 0 4px;
+}
+
+/* Says the list is cut off rather than implying it is complete. */
+.search-more {
+  font-size: var(--text-mono);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-3);
+}
+
+.search-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+}
+
+.search-hit + .search-hit {
+  border-top: 1px solid var(--line);
+}
+
+.search-hit-link {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: var(--space-3) var(--space-4);
+  text-decoration: none;
+  color: inherit;
+  background: var(--panel);
+}
+
+.search-hit-link:hover {
+  background: var(--hover);
+}
+
+.search-hit-link:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.search-hit-title {
+  font-size: var(--text-row);
+  color: var(--text);
+}
+
+/* A closed task is still a result (a search is a lookup, not a work queue) —
+   struck through so it does not read as open. */
+.search-hit-title[data-closed] {
+  color: var(--text-2);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-3);
+}
+
+.search-snippet {
+  font-size: var(--text-meta);
+  color: var(--text-2);
+  line-height: 1.5;
+}
+
+.search-hit-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
+.search-status {
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent-contrast);
+  border-radius: var(--radius-chip);
+  padding: 1px 5px;
+}
+
+.search-key {
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  color: var(--text-3);
+}
+
+.search-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-when {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.search-mark {
+  background: var(--accent-dim);
+  color: var(--text);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
+.search-empty {
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-body);
+  color: var(--text-2);
+}
+
+.search-empty p {
+  margin: 0;
+}
+
+.search-empty-hint {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  max-width: 48ch;
+}
