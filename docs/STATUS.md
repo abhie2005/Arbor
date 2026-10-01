@@ -1,7 +1,8 @@
 # Status — resume here
 
-Last updated 2026-09-28 (Phase 9 in progress — documents are built and
-editable). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-09-30 (Phase 9 in progress — documents are built and
+editable, search reads them, and there is now an AWS path). Repo:
+https://github.com/abhie2005/Arbor (`main`).
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
@@ -17,7 +18,7 @@ verification found in each phase, is in `docs/HISTORY.md`.
 
 | Area | State |
 |---|---|
-| **Schema** | 43 tables, 9 enums, 117 indexes. Migrated (0000–0008) and seeded. |
+| **Schema** | 43 tables, 9 enums, 119 indexes. Migrated (0000–0011) and seeded. `pg_trgm` is required from 0011 (D-113). |
 | **View compiler** | Definition → one parameterized SQL query. Filters, grouping, sorting, group counts, permission scoping. Custom fields resolve through a required field catalog. |
 | **Hierarchy** | Config inheritance, effective privacy, denormalized ancestors, move-legality. |
 | **Ordering** | Fractional indices — one row written per drag. |
@@ -51,6 +52,8 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Goals** | `/goals` — goals with key results of four kinds. A *rollup* key result holds a view definition and is counted by the compiler (D-101), so a goal and a list can never disagree about what counts; it is computed as the goal's **owner** rather than the reader (D-102), which is what makes progress a shared fact. Manual, currency and yes/no key results are entered. Progress is the mean of the key results, each clamped; completion is a timestamp somebody set, not a number crossing 100%. |
 | **Dashboards** | `/dashboards` — a grid of cards, each a filter plus a way of drawing it. A card's `kind` *is* which compiler entry point it calls (D-104): a stat is `compileAggregate`, a chart is `compileGroupCounts`. Counted as the **viewer** (D-105), which is the opposite of a goal and for a reason. Scoped to a container, with personal dashboards following the saved view rule. Charts are HTML bars measured against the largest slice; no charting library. |
 | **Documents** | `/docs` — a page tree scoped by the same `access_index` join everything else uses, and an editor. A document's body is a Yjs CRDT holding the *same block tree* comments and descriptions use (ADR 6, D-110), so a mention is a reference rather than the characters "@Name", and `search_text` beside it is a projection recomputed on every write. The editor is a textarea per paragraph with the change applied as a diff (D-112), so two people typing in one paragraph merge instead of clobbering. Updates POST as base64 and arrive as a nudge on the existing stream; the editor answers by pulling the difference rather than re-rendering. Creating, renaming, moving and archiving are configuration writes with an activity row and no ⌘Z (D-111). |
+| **Search** | `/search` — the screen that finally reads `docs.search_text`. Two halves, each through the permission path it already had: tasks are `compileViewQuery` with scope `everything` and `filters.search` set (which had existed since the beginning and been set by nothing), pages are `searchDocs` sharing `listDocs`' reachability clause. Matching is `ILIKE`, the same rule the compiler has always used, so one box cannot have two ideas of what matches (D-113); trigram GIN indexes make that affordable. A GET with the query in the URL, so a search is a sendable link — no action, no debounce. Snippets are anchored on the match and the term is marked. |
+| **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
 **Verified:** 437 unit tests, 220 live-Postgres checks, 151 server-action
@@ -103,10 +106,10 @@ was short rather than long:
 
 In the order that buys the most:
 
-1. **Nothing reads `search_text`.** It is maintained on every write and there is
-   no search box anywhere in the app. One screen, one `ILIKE` or one
-   `tsvector`, and the column stops being speculative. This is the cheapest
-   large-looking feature left in the product.
+1. ~~**Nothing reads `search_text`.**~~ Built (D-113). `/search` reads it, the
+   task half goes through the compiler's `filters.search`, and both halves match
+   with `ILIKE` so one box cannot have two ideas of what matches. What it does
+   *not* cover is below, under "Known gaps".
 2. **An editor that can hold a mention.** A paragraph containing one is
    read-only today, because a textarea has no way to draw an embed and the
    diff's offsets would be wrong. This is the piece that needs a real editing
@@ -123,6 +126,53 @@ In the order that buys the most:
    among siblings — `position` is fractional and written only on create.
 
 ### Known gaps in what was just built
+
+**Deployment (D-114)**
+
+- **It has never been applied.** `terraform validate` passes and `plan` reports
+  45 resources against the real provider, which is not the same as having run.
+  The first apply is the test.
+- **No HTTPS until `certificate_arn` is set**, and `arbor_session` is a bearer
+  token in a cookie — over plain HTTP it is readable by anything on the path.
+- **`allowed_ingress_cidrs` defaults to the whole internet.**
+- **The database connection is encrypted but unverified.** `sslmode=require`
+  with no CA bundle means `rejectUnauthorized: false`. Shipping the Amazon RDS
+  CA bundle and moving to `verify-full` is the fix.
+- **Terraform state is local**, so two operators would race. The S3 backend is
+  written and commented out in `versions.tf`.
+- **Still no CI.** Nothing builds or pushes the images; `compose.yml` used to
+  claim a CI that does not exist, and now says so.
+- **No autoscaling**, and no alarms on anything.
+- **Migrations are additive-only by assumption.** Running them before the new
+  image serves is safe for added tables, columns and indexes. The first
+  migration that drops or narrows something needs an expand/contract rule,
+  which is a paragraph in the runbook rather than a mechanism.
+- **`npm audit` reports 11 vulnerabilities (1 critical) inside the image**,
+  inherited from the dependency tree rather than introduced here — but the image
+  is the thing that would ship them.
+
+**Search**
+
+- **No stemming and no ranking**, which is what `ILIKE` buys and costs (D-113).
+  `run` does not find `running`, and Postgres returns a yes rather than a score.
+  The move when this bites is `tsvector` on *both* halves in one change — the
+  term is parsed in one place (`parseQuery`) so there is one call site to change.
+- **A one- or two-character query still scans.** Trigrams need three characters,
+  so the index cannot help `os` — and the screen runs the query anyway rather
+  than imposing a minimum, because a two-letter task name is a real thing.
+- **Comments and task descriptions are not searched.** Both are block trees with
+  no plain-text projection beside them; `docs.search_text` exists because
+  somebody decided to maintain one. Doing the same for comments is a schema
+  change and a backfill, not a screen.
+- **Nothing is paginated.** Each half stops at 25 and the heading says "first
+  25" when it did. The compiler supports keyset pagination through `after` and
+  the screen does not use it.
+- **A task matches on its name only.** The compiler's `filters.search` has always
+  been `t.name ILIKE`, though its own doc comment claims "name and description"
+  — the comment was aspirational and is now corrected to what the code does.
+- **No ⌘K.** The box is in the header and needs a click or a tab; there is no
+  keyboard route to it, which is conspicuous in an app whose whole pitch is
+  keyboard-driven.
 
 **Documents**
 

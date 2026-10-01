@@ -1,9 +1,14 @@
 # The self-host path. `docker compose up` must work on a clean machine — it is
 # the project's first impression, and a broken quickstart is the most expensive
-# bug an open-source project can have. CI runs this on every PR.
+# bug an open-source project can have. There is no CI running it yet.
 #
-# Every service here has an AWS counterpart in infra/terraform:
-#   postgres → RDS · redis → ElastiCache · minio → S3 · mailpit → SES
+# Two of these four have a counterpart in infra/terraform, and two do not:
+#   postgres → RDS  (provisioned)
+#   redis, minio, mailpit → ElastiCache, S3, SES  (designed for, not built)
+#
+# The app reads exactly one of the variables in .env — DATABASE_URL. Redis,
+# storage and mail are in this file because the reference design accommodates
+# them, and nothing in the application has asked for them yet (D-114).
 
 name: arbor
 

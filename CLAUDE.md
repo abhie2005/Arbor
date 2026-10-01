@@ -27,6 +27,18 @@ npm run typecheck
 `db:generate` then `db:migrate` for schema changes; rename the generated
 migration to something descriptive and update `migrations/meta/_journal.json`.
 
+```bash
+# The container image. Two targets; --platform matters on Apple Silicon because
+# the Fargate task definition declares X86_64 (D-114).
+docker build --platform linux/amd64 --target runner   -t arbor-web .
+docker build --platform linux/amd64 --target migrator -t arbor-migrator .
+
+cd infra/terraform && terraform validate   # no credentials needed
+```
+
+Deploying is `infra/terraform/README.md`, not guesswork — the first deploy is
+two applies, because the registry must exist before an image can be pushed.
+
 ## Invariants — breaking these silently is the main risk
 
 1. **`applyOperations` is the only thing that writes task data.** Every mutation
@@ -95,6 +107,19 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
     knows every other new value; a document's lives in the editor's CRDT, and a
     `router.refresh()` there throws away the cursor and anything unsaved. A doc
     nudge carries `d` and the editor pulls the difference (D-112).
+14. **The app reads three environment variables**, and that is what makes it
+    deployable anywhere: `DATABASE_URL`, `NODE_ENV`, `PORT`. Everything else in
+    `.env` — `STORAGE_*`, `SMTP_*`, `QUEUE_*`, `LLM_*`, `REDIS_URL` — is read by
+    nothing and describes an intention, not a wiring (D-114). Adding a fourth is
+    a real decision: it is a new thing every environment has to supply, and the
+    Fargate task definition, the Compose file and `.env.example` all have to
+    learn it together.
+15. **One rule for what "matches".** Search is case-insensitive substring via
+    `ILIKE`, in both halves — the compiler's `filters.search` for tasks and
+    `searchDocs` for pages — and they share `escapeLike` so `100%` cannot mean a
+    wildcard in one and a per-cent sign in the other (D-113). A `tsvector` on one
+    half only is the bug this forbids: it looks like a missing document, not like
+    two matchers. Moving to full-text search means moving both, in one change.
 
 ## Where things are
 
@@ -131,11 +156,17 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
 | Schema | `packages/db/src/schema/` |
 | Seed — the demo workspace | `packages/db/src/seed.ts` |
 | Loading a view for any renderer | `apps/web/src/server/views.ts` |
+| Search: the term, the snippet, the marks (pure) | `packages/core/src/search.ts` |
+| Search: the two halves and their permissions | `apps/web/src/server/search.ts` |
 | Task detail loader | `apps/web/src/server/task.ts` |
 | Server actions (the API boundary) | `apps/web/src/server/*-actions.ts`, `actions.ts` |
 | Shared page chrome | `apps/web/src/components/app-shell.tsx` |
 | The one hook every writing control uses | `apps/web/src/components/use-task-action.ts` |
 | All styles | `apps/web/src/app/app.css` (tokens in `packages/ui/src/tokens.css`) |
+| The container image — two targets, app and migrator | `Dockerfile` |
+| AWS: VPC, RDS, Fargate, ALB, ECR (D-114) | `infra/terraform/` |
+| How to deploy it, and what is not done | `infra/terraform/README.md` |
+| The load balancer's health check | `apps/web/src/app/api/health/route.ts` |
 
 ## Conventions
 
@@ -165,6 +196,31 @@ migration to something descriptive and update `migrations/meta/_journal.json`.
   `npx next dev -p 3101` with `PORT=3101 npm run check:actions`.
 - `npm run docker:up` fails — the Compose plugin is not installed. Use the
   `docker start arbor-pg` line above.
+- **There are two Docker daemons on this machine, and `arbor-pg` lives on
+  Colima.** `docker context ls` shows `desktop-linux` as current, so a bare
+  `docker ps` talks to Docker Desktop and reports **no `arbor-pg`** — which
+  looks exactly like the container having been deleted. It has not been. Always
+  check the Colima daemon before concluding anything about it:
+
+  ```bash
+  docker context use colima          # or, per command:
+  DOCKER_HOST="unix://$HOME/.colima/default/docker.sock" docker ps
+  ```
+
+  Creating a "replacement" from the Docker Desktop context gives you a *second*
+  Postgres, and then two things publish port 5432 — at which point the host and
+  a container disagree about which database they are talking to. Symptom: the
+  app 500s or redirects to `/login` with a session that the database plainly
+  contains, or `docs` is empty in one connection and populated in another.
+  `lsof -nP -iTCP:5432 -sTCP:LISTEN` shows both (`ssh` is Colima's forward,
+  `com.docker` is Desktop's).
+- **`docker` cannot pull: `docker-credential-desktop` not found.**
+  `~/.docker/config.json` names a credential helper that is not installed. The
+  images here are public, so a clean config is enough for one command:
+  `DOCKER_CONFIG=$(mktemp -d) docker pull …`.
+- **The first host→Postgres connection after Colima starts can take ~30s** while
+  the port forward is established. It looks like a hung migration. The second
+  connection is instant; do not go hunting for a deadlock before retrying.
 - Deleting a `grants` row does **not** update `access_index`. Revoke properly or
   clear both, or the next thing you check sees stale access.
 - **A dev-server 503 on `/api/live` or an `?_rsc=` request** is Next compiling,

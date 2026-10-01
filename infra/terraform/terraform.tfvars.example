@@ -1,0 +1,37 @@
+# Copy to terraform.tfvars, which is gitignored.
+#
+# Every value here has a default in variables.tf; this file is for the ones
+# worth setting deliberately rather than inheriting.
+
+region      = "us-east-1"
+environment = "prod"
+
+# Must be in `region`, and there must be at least two.
+azs = ["us-east-1a", "us-east-1b"]
+
+# The commit sha you built and pushed. Not "latest" — see variables.tf.
+image_tag = "bootstrap"
+
+# --- before this is reachable by anyone else ---------------------------------
+
+# An ACM certificate in `region`, for the domain pointing at the ALB. While this
+# is empty the listener is plain HTTP, and the session cookie is a bearer token.
+# certificate_arn = "arn:aws:acm:us-east-1:111122223333:certificate/..."
+
+# Your own address, while it is still being set up. The default is the whole
+# internet.
+# allowed_ingress_cidrs = ["203.0.113.4/32"]
+
+# --- cost knobs ---------------------------------------------------------------
+# The standing monthly cost of this environment is dominated by three things
+# that run whether or not anybody uses it: the NAT gateway, the ALB, and the
+# RDS instance. Fargate is the part that scales with `desired_count`.
+
+desired_count = 2
+
+db_instance_class = "db.t4g.micro"
+db_multi_az       = false
+
+# Unsupported on micro and small burstable classes — leaving this true with the
+# class above makes the first apply fail.
+db_performance_insights = false

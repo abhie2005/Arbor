@@ -1,0 +1,39 @@
+# The build context is the whole monorepo, so what is excluded here is the
+# difference between a fast build and shipping a 2GB tarball to the daemon.
+
+# Installed inside the image by `npm ci` — a host node_modules is both huge and
+# wrong, because it may hold darwin-arm64 binaries for a linux/amd64 image.
+node_modules
+**/node_modules
+
+# Build output. `.next` in particular must not be copied in: a stale local
+# build would be overwritten by the builder stage, but only after being sent
+# over the wire.
+.next
+**/.next
+.turbo
+**/.turbo
+**/*.tsbuildinfo
+
+# Secrets. `.env` holds a local DATABASE_URL and would otherwise be baked into
+# the image, where it would also *win* over the environment ECS injects —
+# `loadRootEnv` uses `override: false`, so a file that should not be there
+# would not be overridden, it would be preferred.
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore
+Dockerfile
+.dockerignore
+infra/terraform
+
+# Documentation and local tooling: nothing the build reads.
+*.md
+!README.md
+docs
+.claude
+.cursor
+.rocketride
+.mcp.json.example

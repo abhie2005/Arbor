@@ -3701,4 +3701,89 @@ clothes, and it wants the results to already be fast).
 the reader that came matches the same way the compiler always has — because the
 expensive mistake here was never a slow query, it was two halves of one search
 box disagreeing about what the word means.
+### D-114
+**The AWS path is one environment, and it stops at Postgres** · 2026-09-30 · active
 
+The README has described an AWS deployment since phase 1 and `infra/` contained
+one Compose file. Worse, `compose.yml` asserted that "every service here has an
+AWS counterpart in infra/terraform" and that "CI runs this on every PR", and
+neither `infra/terraform` nor any CI existed. The design was real; the claim that
+it was built was not. Both sentences are now corrected rather than deleted,
+because what they described is still the intention.
+
+**What got built is the smallest thing that actually runs**: a VPC with public
+and private subnets, RDS Postgres, an ECS Fargate service behind an ALB, two ECR
+repositories, one secret. 45 resources. Not S3, not SES, not SQS, not
+ElastiCache, not Bedrock — and that is the same rule the README already stated
+and the codebase already follows: a managed service arrives when a feature needs
+it, with the local implementation written first. Redis has been in the reference
+table for eight phases with nothing using it, because live updates went to
+Postgres `LISTEN`/`NOTIFY` instead (D-090). Provisioning ElastiCache now would be
+paying monthly for a decision that was reversed.
+
+**The app needed almost nothing to become deployable**, which is the part worth
+recording. It reads exactly three environment variables — `DATABASE_URL`,
+`NODE_ENV`, `PORT` — and `createPool` already had an `ssl` option with a comment
+about Fargate. Everything else in `.env` (`STORAGE_*`, `SMTP_*`, `QUEUE_*`,
+`LLM_*`, `REDIS_URL`) is read by nothing, which looked like configuration and was
+really a list of intentions. Two additions were needed: `output: "standalone"`
+with `outputFileTracingRoot` at the monorepo root, and `/api/health`.
+
+**The health check asks Postgres, not Node.** A task whose connection is gone
+still answers HTTP, and a check that proves only "the process is up" keeps that
+task in the target group serving errors. `SELECT 1` is the cheapest question
+that separates listening from working. It is also the reason the service cycles
+tasks before the first migration has run, which is correct and looks alarming.
+
+**Two numbers on the load balancer exist because of Server-Sent Events.** This is
+the one place where Arbor's architecture reaches into its infrastructure. Every
+screen holds a `GET /api/live` open and the server may say nothing on it for
+minutes (D-090, D-092). The ALB's default idle timeout is 60 seconds, which
+closes exactly those connections — and because `EventSource` reconnects
+silently, the symptom is not an error but a reconnect per tab per minute,
+indistinguishable from load. `idle_timeout` is 3600. The matching mistake is
+`deregistration_delay`, whose 300-second default holds a draining task open
+waiting for connections designed never to close, turning every deploy into a
+five-minute wait; it is 30. The same fact is why the README chose Fargate over
+Lambda, so this is that decision's bill arriving.
+
+**Migrations are a separate image running the same command as a developer.** The
+`Dockerfile` has two targets: a lean `runner` with Next's traced output and no
+build tooling, and a fatter `migrator` that carries devDependencies so it can run
+`drizzle-kit migrate` — the identical command behind `npm run db:migrate`. A
+hand-written runner over `pg` would have produced a smaller image and a second
+thing deciding what "already applied" means, which would disagree with
+`drizzle-kit` the first time the bookkeeping changed. One migration runner in the
+project is worth a short-lived fat image. It is invoked with `aws ecs run-task`
+and is deliberately *not* wired into `terraform apply`: a migration is a deploy
+step, and making apply perform one makes every plan look like a pending
+migration.
+
+**Immutable ECR tags, and the tag is a commit sha.** `latest` makes a rollback
+unexpressible — the thing you would roll back to has been overwritten by the
+push that broke it. Immutability is what makes "apply the previous tag" a real
+operation, and it is why the first deploy is two applies: the registry must
+exist before an image can be pushed, and the service cannot start without one.
+
+**Rejected:** tasks in public subnets with public IPs, which saves the NAT's ~$32
+a month and makes a service that should only be reachable *through* the ALB
+routable by accident; per-AZ NAT, which doubles that for an outbound path that
+currently carries image pulls and nothing else; Aurora Serverless, which is a
+better fit for spiky load and a worse fit for a project whose entire portability
+claim rests on being plain Postgres; a `db_password` variable, which would put
+the password in a tfvars file, a shell history and a CI secret when the point of
+Secrets Manager is that it lives in one place.
+
+**Not done, and stated plainly because infrastructure that overstates itself is
+how the previous claim happened:** no HTTPS until `certificate_arn` is set, and
+`arbor_session` is a bearer token in a cookie; ingress defaults to the whole
+internet; the database connection is encrypted but the certificate unverified
+(`sslmode=require` with no CA bundle, which is libpq's meaning and the app's own
+existing posture); state is local; there is still no CI; there is no autoscaling.
+And **none of it has been applied** — the configuration is `validate`-clean and
+plans to 45 resources against a real provider, which is not the same as having
+run.
+
+*In one sentence:* the app was already portable and the repository was already
+claiming to have deployed it, so this builds the smallest environment that
+actually runs and says out loud which of the table's boxes are still empty.

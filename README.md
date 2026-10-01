@@ -112,19 +112,26 @@ easiest part of the codebase for a stranger to contribute to.
 Designed to run on AWS, and to run anywhere Docker does. Nothing sits on a
 third-party application platform, hosted database vendor, or auth SaaS.
 
-*Today only the Docker path exists* — the table below is the reference design,
-not a deployment you can `terraform apply` yet.
+*The AWS column is now partly real.* `infra/terraform/` provisions a VPC, RDS
+Postgres, an ECS Fargate service behind an ALB, and the two ECR repositories the
+`Dockerfile`'s two targets push to — 45 resources, with a runbook in
+`infra/terraform/README.md`. It has never been applied against a real account,
+so treat the first apply as the test it is. The rows marked *(designed for)*
+below are still design: no S3, SES, SQS, ElastiCache or Bedrock is provisioned,
+because nothing in the application asks for them yet (D-114).
 
-| | AWS (reference) | Google Cloud | Self-host |
+| | AWS | Google Cloud | Self-host |
 | --- | --- | --- | --- |
-| Containers | ECS Fargate + ALB | Cloud Run | Docker Compose |
-| Database | RDS Postgres | Cloud SQL | postgres:17 |
-| Cache / pub-sub | ElastiCache Redis | Memorystore | redis:7 |
+| Containers | ECS Fargate + ALB — **built** | Cloud Run | Docker Compose |
+| Database | RDS Postgres — **built** | Cloud SQL | postgres:17 |
+| Image registry | ECR — **built** | Artifact Registry | *(local build)* |
+| Secrets | Secrets Manager — **built** | Secret Manager | `.env` |
 | Live updates | *(Postgres `LISTEN`/`NOTIFY`)* | *(the same)* | *(the same)* |
-| Object storage | S3 + CloudFront | Cloud Storage | MinIO |
-| Queue | SQS | Pub/Sub | Redis-backed |
-| Email | SES | SMTP | Mailpit |
-| LLM | Bedrock | Vertex AI | Direct API key |
+| Cache / pub-sub | ElastiCache Redis *(designed for)* | Memorystore | redis:7 |
+| Object storage | S3 + CloudFront *(designed for)* | Cloud Storage | MinIO |
+| Queue | SQS *(designed for)* | Pub/Sub | Redis-backed |
+| Email | SES *(designed for)* | SMTP | Mailpit |
+| LLM | Bedrock *(designed for)* | Vertex AI | Direct API key |
 
 Two rules keep that table true: use the **S3 API** rather than S3-specific
 features, and put every managed service behind a small interface with the local
@@ -132,7 +139,10 @@ implementation written first. If Compose can run the test suite, the abstraction
 is real.
 
 Fargate rather than Lambda, deliberately — Server-Sent Events need long-lived
-connections, which a per-invocation runtime cannot hold open.
+connections, which a per-invocation runtime cannot hold open. That choice bills
+twice: the load balancer's 60-second idle timeout closes exactly those streams,
+and its 300-second deregistration delay waits for connections designed never to
+close, so both are set explicitly rather than defaulted (D-114).
 
 Redis is in the table and nothing uses it yet. Live updates and presence went to
 Postgres instead, because the database every request already talks to has a
@@ -177,7 +187,15 @@ back would be worse than no nudge.
       decision rather than a default — a goal's rollup runs as the goal's owner,
       so a shared commitment reads the same for everyone, and a dashboard card
       runs as the viewer, because a dashboard lives in a container.
-- [ ] **9 — Docs.** CRDT editor, nested pages, backlinks.
+- [ ] **9 — Docs.** CRDT editor, nested pages, backlinks. The editor and the
+      page tree are built; so is **search**, which was the first reader the
+      documents' plain-text projection ever had. Both halves of search match the
+      same way the view compiler always has — case-insensitive substring — so one
+      box cannot have two ideas of what matches, and neither half needed a
+      permission rule of its own: tasks go through the compiler's access-index
+      join, pages through the clause the docs screen already shares. Still owed:
+      an editor that can hold a mention, ⌘Z wired to the CRDT's own history, and
+      a page tree that is more than indentation.
 - [ ] **10 — Automations, forms, public API.**
 
 Access control moved ahead of collaboration deliberately: every collaborative
