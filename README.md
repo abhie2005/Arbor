@@ -14,7 +14,11 @@ and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 > permission-checked. Time tracking, goals and dashboards are built — a goal's
 > rollup and a dashboard card are compiled by the same thing that compiles a
 > list, so a number on one screen cannot disagree with the rows on another.
-> Docs, chat, automations and AI are not.
+> Documents are built and editable — a page's body is a CRDT holding the same
+> block tree comments use — and search reads across tasks and pages, scoped by
+> the same permission join everything else uses. Chat, automations and AI are
+> not. There is now an AWS deployment (Terraform and a container image) that has
+> been validated but never applied.
 > **[docs/STATUS.md](docs/STATUS.md) is the current state and where to pick up.**
 
 ---
@@ -40,10 +44,10 @@ demo password.
 Verify the stack end to end:
 
 ```bash
-npm test               # 420 unit tests, no database needed
-npm run db:smoke       # 199 checks against real Postgres: compiled queries,
+npm test               # 457 unit tests, no database needed
+npm run db:smoke       # 230 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
-npm run check:actions  # 140 checks that POST what a button click posts, then
+npm run check:actions  # 158 checks that POST what a button click posts, then
                        # assert against Postgres — needs a dev server running
 ```
 
@@ -86,7 +90,8 @@ packages/
   sdk/          ·  typed API client
 infra/
   docker/       compose.yml — the self-host path
-  terraform/    ·  the AWS reference deployment
+  terraform/    VPC, RDS, ECS Fargate, ALB, ECR — 45 resources
+Dockerfile      two targets: the app, and a one-off migration task
 docs/decisions/ ADRs
 ```
 
@@ -96,8 +101,11 @@ Postgres turned out to carry it — changes ride `LISTEN`/`NOTIFY` announced
 inside the transaction that made them, presence *is* the open connection, and
 both cross process boundaries on the same channel. There is nothing left for a
 second deployable to do. `worker` still earns its keep once there are
-automations to run, and `sdk` once there is an API worth a typed client. The
-AWS topology below is designed and documented; no Terraform is written.
+automations to run, and `sdk` once there is an API worth a typed client.
+`infra/terraform` is no longer one of them: it provisions the containers,
+database, load balancer and registries of the topology below, though the rows
+marked *(designed for)* there — object storage, queue, mail, cache — are still
+design rather than code (D-114).
 
 `packages/core` holds the things hardest to get right — the view compiler, the
 field type system, status resolution, ordering, and the document format
