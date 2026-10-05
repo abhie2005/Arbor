@@ -1,8 +1,8 @@
 # Status — resume here
 
-Last updated 2026-09-30 (Phase 9 in progress — documents are built and
-editable, search reads them, and there is now an AWS path). Repo:
-https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-05 (Phase 9 in progress — documents are built and
+editable, search reads them, there is an AWS path, and search has its own
+gate). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
@@ -173,6 +173,10 @@ In the order that buys the most:
 - **No ⌘K.** The box is in the header and needs a click or a tab; there is no
   keyboard route to it, which is conspicuous in an app whose whole pitch is
   keyboard-driven.
+- ~~**The screen's HTTP checks have never run.**~~ Closed: they are
+  `npm run check:search`, eleven GETs that run against a dev server, the
+  container image or a deployed URL (D-115), and they are proven to fail when
+  the private page becomes reachable.
 
 **Documents**
 

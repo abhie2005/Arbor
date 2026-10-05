@@ -3787,3 +3787,67 @@ run.
 *In one sentence:* the app was already portable and the repository was already
 claiming to have deployed it, so this builds the smallest environment that
 actually runs and says out loud which of the table's boxes are still empty.
+
+### D-115
+**A screen with no server action needs a gate that does not look for one** · 2026-10-05 · active
+
+The eight HTTP checks written for `/search` in D-113 were put in
+`check-actions.mts` and then never ran, for a reason that turned out to be
+structural rather than circumstantial.
+
+**`check:actions` is built entirely on `actionIds()`**, which recovers the
+id-to-export mapping Next assigns server actions by reading it out of the
+compiled bundle. That mapping only exists in a **dev** build. A production
+build's `server-reference-manifest.json` maps action ids to the routes that use
+them and carries no export names at all, because they are minified away — so
+there is no way to ask a production server to run `createDocAction` by name.
+The gate therefore requires `next dev`, and that is inherent, not an oversight.
+
+Search has no server action. The query is in the URL and the screen is a GET
+(D-113), so none of that machinery applies to it — and keeping its checks in
+that file meant a screen with no actions could only ever be verified against the
+one build that cannot be deployed. `check-search.mts` needs a URL and the seeded
+workspace, so it runs against a dev server, the container image, or a deployed
+environment. On a machine where `next dev` would not start, it ran against the
+image on the first try.
+
+**What it covers that nothing else can.** `db:smoke` proves `searchDocs` filters
+rows; the unit tests prove the snippet window and the marks. Neither can prove
+the screen *renders* what the loader found, which is exactly where this
+feature's first draft was broken: a status query selecting a `workspace_id` that
+does not exist on `statuses` — it hangs off `status_set_id` — which typechecks
+because it lives in a SQL string, and which no amount of unit testing would
+have reached.
+
+**Two things learned writing the assertions, both of which produced a false
+accusation of a permission leak before they were understood.**
+
+*The query comes back in the HTML three times.* "Nothing matches <term>", the
+search box's value, and Next's RSC flight payload — the `self.__next_f.push`
+script blocks carry the serialized props, so the search term is in the response
+verbatim. A grep for a secret word finds the viewer's own typing there and
+reports it as the document's prose. `stripQueryEcho` removes all three, scripts
+wholesale.
+
+*Content has to be asserted against the text, not the markup.* The thing being
+searched for is the thing the renderer takes apart: a title matching the query
+is split into `<mark>` and `<span>` runs, so searching "rollout" makes "Rollout
+handbook" render as `<mark>Rollout</mark><span> handbook</span>` and a grep for
+the title finds nothing. The neighbouring check used a query that does not match
+the title, left it in one piece, and passed — which made the failure look like
+broken permission scoping rather than a regex reading markup. Every content
+assertion now goes through `visibleText()`; the markup assertions still read the
+raw HTML, because that is what they are for.
+
+**Rejected:** retrying failed fetches inside `check:actions` so a dev-server
+restart does not abort the run. The restart is real — Next dev prints "Server is
+approaching the used memory threshold" and comes back in ~1.5s, dropping one
+in-flight request — but a retried **POST** may re-apply a mutation that
+succeeded, and a gate that can double-apply is worse than one that stops.
+Also rejected: parsing `server-reference-manifest.json` to recover action ids
+from a production build, which cannot work because the names are not in it.
+
+*In one sentence:* the gate that covers "a click reaches a service" is built on
+machinery a GET does not have, so the screen that is only a GET gets a suite
+that needs nothing but a URL — and can therefore check a deployment, which none
+of the others can.

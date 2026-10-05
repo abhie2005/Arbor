@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
-    "check:actions": "tsx scripts/check-actions.mts"
+    "check:actions": "tsx scripts/check-actions.mts",
+    "check:search": "tsx scripts/check-search.mts"
   },
   "dependencies": {
     "@arbor/core": "*",

@@ -174,8 +174,11 @@ two applies, because the registry must exist before an image can be pushed.
   alternatives, the trade-off accepted. Next id continues the sequence. Written
   to be explained out loud.
 - **Commit and push each verified chunk**, on `main`. Do not batch.
-- **Four gates before any commit**: `npm test`, `db:smoke`, `check:actions`,
-  `typecheck` — plus driving it in Chrome for anything with a UI.
+- **Gates before any commit**: `npm test`, `db:smoke`, `check:actions`,
+  `check:search`, `typecheck` — plus driving it in Chrome for anything with a UI.
+  `check:search` is the one that runs against the **container image** as happily
+  as a dev server (D-115), which is what to reach for when `next dev` will not
+  start on this machine.
 - A new check should **fail if the fix is reverted**. Verify that it does.
 - Infrastructure stays on AWS/GCP or self-hosted Docker. No Vercel, no hosted
   database vendors, no auth SaaS.
@@ -221,6 +224,44 @@ two applies, because the registry must exist before an image can be pushed.
 - **The first host→Postgres connection after Colima starts can take ~30s** while
   the port forward is established. It looks like a hung migration. The second
   connection is instant; do not go hunting for a deadlock before retrying.
+- **When the host dev server will not compile, run one in a container.** Built
+  from the Dockerfile's `builder` target — which already holds the full source
+  and `node_modules` — it was **ready in 1.8s** on a day the host reported
+  "Ready in 632s" and then sat on `Compiling /login` forever. The difference is
+  the host's `.next` cache state, not the machine's memory, so this is the
+  workaround that does not require deleting it:
+
+  ```bash
+  docker build --target builder -t arbor-dev:local .
+  PGIP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' arbor-pg)
+  docker run -d --name arbor-devsrv -p 3300:3000 -e NODE_ENV=development \
+    -e HOSTNAME=0.0.0.0 \
+    -e DATABASE_URL="postgres://arbor:arbor@$PGIP:5432/arbor_check" \
+    -w /repo/apps/web arbor-dev:local \
+    node /repo/node_modules/.bin/next dev -p 3000 -H 0.0.0.0
+  # the script, tsx and the source are all in the image, so run the gate inside:
+  docker exec arbor-devsrv sh -c 'cd /repo/apps/web && node /repo/node_modules/.bin/tsx scripts/check-actions.mts 3000'
+  ```
+
+  Use the Postgres container's own IP, **not `host.docker.internal`** — that
+  crosses to the other daemon.
+
+  **Do not raise `--max-old-space-size` to get further.** The Colima VM has
+  2GiB, where node's default heap cap is ~1004MB. At the default, Next dev
+  notices the ceiling itself, prints "Server is approaching the used memory
+  threshold, restarting", and is back in ~1.5s — dropping one in-flight request,
+  which surfaced as `fetch failed: ECONNRESET` about 65 checks into
+  `check:actions`. Setting 1536 removes that guard rail and lets node grow past
+  what the VM can back, so the **kernel** kills the container instead
+  (`OOMKilled=true`) while compiling `/t/[key]`'s 1270 modules — 45 checks in.
+  Graceful beats dead. The real fix is a bigger VM (`colima stop && colima start
+  --memory 4`), which restarts the Postgres container and is therefore the
+  user's call, not a thing to do mid-task.
+- **`check:actions` cannot run against a production build.** `actionIds()` reads
+  the `exportedName` manifest that only a dev build emits; a production build's
+  `server-reference-manifest.json` maps action ids to routes but carries no
+  export names, because they are minified away. So the gate needs `next dev`,
+  and that is inherent rather than an oversight.
 - Deleting a `grants` row does **not** update `access_index`. Revoke properly or
   clear both, or the next thing you check sees stale access.
 - **A dev-server 503 on `/api/live` or an `?_rsc=` request** is Next compiling,

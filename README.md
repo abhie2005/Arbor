@@ -47,15 +47,21 @@ Verify the stack end to end:
 npm test               # 457 unit tests, no database needed
 npm run db:smoke       # 230 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
-npm run check:actions  # 158 checks that POST what a button click posts, then
+npm run check:actions  # 152 checks that POST what a button click posts, then
                        # assert against Postgres — needs a dev server running
+npm run check:search   # 11 GETs against /search, asserting what the screen
+                       # renders — runs against a dev server, the container
+                       # image, or a deployed URL
 ```
 
-The three run at different depths on purpose. Unit tests cover logic with no
+They run at different depths on purpose. Unit tests cover logic with no
 fixtures; `db:smoke` proves the SQL the compiler emits is valid and that
 permission scoping actually filters rows; `check:actions` covers the seam
 between a UI handler and a service, which is where the bugs that survived
-longest have lived.
+longest have lived; `check:search` covers a screen that has no server action at
+all, so none of `check:actions`' machinery applies to it (D-115) — and unlike
+the others it will run against a deployed environment, because all it needs is
+a URL and the seeded workspace.
 
 ---
 
