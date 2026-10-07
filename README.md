@@ -15,7 +15,8 @@ and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 > rollup and a dashboard card are compiled by the same thing that compiles a
 > list, so a number on one screen cannot disagree with the rows on another.
 > Documents are built and editable — a page's body is a CRDT holding the same
-> block tree comments use — and search reads across tasks and pages, scoped by
+> block tree comments use, and ⌘Z inside one takes back your own typing without
+> ever reaching a colleague's. Search reads across tasks and pages, scoped by
 > the same permission join everything else uses. Chat, automations and AI are
 > not. There is now an AWS deployment (Terraform and a container image) that has
 > been validated but never applied.
@@ -44,7 +45,7 @@ demo password.
 Verify the stack end to end:
 
 ```bash
-npm test               # 457 unit tests, no database needed
+npm test               # 462 unit tests, no database needed
 npm run db:smoke       # 230 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
 npm run check:actions  # 152 checks that POST what a button click posts, then
@@ -207,9 +208,11 @@ back would be worse than no nudge.
       same way the view compiler always has — case-insensitive substring — so one
       box cannot have two ideas of what matches, and neither half needed a
       permission rule of its own: tasks go through the compiler's access-index
-      join, pages through the clause the docs screen already shares. Still owed:
-      an editor that can hold a mention, ⌘Z wired to the CRDT's own history, and
-      a page tree that is more than indentation.
+      join, pages through the clause the docs screen already shares. ⌘Z inside a
+      document is the CRDT's rather than the textarea's, and tracks only local
+      edits, so undo can never take back somebody else's sentence. Still owed:
+      an editor that can hold a mention, and a page tree that is more than
+      indentation.
 - [ ] **10 — Automations, forms, public API.**
 
 Access control moved ahead of collaboration deliberately: every collaborative
