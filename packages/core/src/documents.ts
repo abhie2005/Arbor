@@ -213,6 +213,54 @@ export function searchTextFrom(state: Uint8Array): string {
 }
 
 /**
+ * The origin stamped on every change this client makes itself.
+ *
+ * It is the difference between "I typed this" and "this arrived", and three
+ * things read it: the editor pushes only local changes to the server, the pull
+ * path applies remote ones under a *different* origin so they are not echoed
+ * back, and the undo manager below tracks only this one. A change with no
+ * origin is a bug — it would be both unpushed and un-undoable.
+ */
+export const LOCAL_ORIGIN = "local";
+
+/** The origin for an update that came from somebody else, via the stream. */
+export const REMOTE_ORIGIN = "remote";
+
+/**
+ * ⌘Z inside a document, as a Yjs undo manager (D-116).
+ *
+ * **What it is for.** D-111 decided that undo inside a document means *the text
+ * you typed*, and that this is deliberately not the workspace undo stack: an
+ * operation carries a `taskId`, a document carries a container, and two stacks
+ * fighting over one keystroke is worse than a rename that is not undoable. What
+ * it did not do is make that true — until this, ⌘Z in a paragraph was the
+ * **textarea's** own history, which is private to that element and knows
+ * nothing about a remote change that arrived between two keystrokes. Undoing
+ * past one would resurrect text the CRDT had already moved on from.
+ *
+ * **Scoped to the blocks array, not to one paragraph.** Yjs tracks a type and
+ * everything beneath it, so one manager covers every paragraph's `Y.Text` —
+ * including paragraphs added after it was created, which matters because
+ * `+ Paragraph` is itself an undoable change. A manager per textarea would mean
+ * a stack per paragraph and no way to undo adding or removing one.
+ *
+ * **`trackedOrigins` is the whole safety property.** Only changes stamped
+ * `LOCAL_ORIGIN` enter the stack, so ⌘Z can never reach into somebody else's
+ * typing — a remote update is applied under `REMOTE_ORIGIN` and is invisible
+ * here. Without this the manager would happily revert a colleague's sentence,
+ * which is both astonishing and, in a CRDT, perfectly durable.
+ *
+ * The capture timeout is left at Yjs's default: changes within half a second
+ * collapse into one entry, so a burst of typing is one ⌘Z rather than one per
+ * character — which is what the diff in the editor produces.
+ */
+export function documentUndoManager(doc: Y.Doc): Y.UndoManager {
+  return new Y.UndoManager(doc.getArray(BLOCKS), {
+    trackedOrigins: new Set([LOCAL_ORIGIN]),
+  });
+}
+
+/**
  * One update folded into the stored state.
  *
  * **No document is instantiated**, deliberately: `Y.mergeUpdates` works on the

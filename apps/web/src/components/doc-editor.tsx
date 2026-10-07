@@ -1,6 +1,12 @@
 "use client";
 
-import { richTextFrom, type RichDoc } from "@arbor/core";
+import {
+  LOCAL_ORIGIN,
+  REMOTE_ORIGIN,
+  documentUndoManager,
+  richTextFrom,
+  type RichDoc,
+} from "@arbor/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
 
@@ -106,6 +112,17 @@ export function DocEditor({ docId, state, viewerId, canEdit }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [docId]);
 
+  /**
+   * ⌘Z for this document (D-116).
+   *
+   * Scoped to the blocks array and tracking only `LOCAL_ORIGIN`, both decided
+   * in `documentUndoManager` where they are unit-tested. Lives as long as the
+   * `Y.Doc` does, because an undo stack that reset on re-render would be a
+   * stack you could not reach past the last keystroke.
+   */
+  const undoManager = useMemo(() => documentUndoManager(ydoc), [ydoc]);
+  useEffect(() => () => undoManager.destroy(), [undoManager]);
+
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [status, setStatus] = useState<"saved" | "saving" | "error">("saved");
   const [error, setError] = useState<string | null>(null);
@@ -172,12 +189,16 @@ export function DocEditor({ docId, state, viewerId, canEdit }: Props) {
   useEffect(() => {
     const onUpdate = (_update: Uint8Array, origin: unknown) => {
       read();
-      if (origin === "local") push();
+      // An undo is a change like any other and has to be saved. Yjs stamps it
+      // with the manager itself rather than with `LOCAL_ORIGIN`, so checking
+      // only for the latter would leave ⌘Z visible on screen and absent from
+      // the database until the next keystroke happened to flush it.
+      if (origin === LOCAL_ORIGIN || origin === undoManager) push();
     };
 
     ydoc.on("update", onUpdate);
     return () => ydoc.off("update", onUpdate);
-  }, [ydoc, push, read]);
+  }, [ydoc, push, read, undoManager]);
 
   /**
    * Someone else changed this document.
@@ -195,7 +216,7 @@ export function DocEditor({ docId, state, viewerId, canEdit }: Props) {
       void pullDocUpdate(docId, base64(Y.encodeStateVector(ydoc))).then((result) => {
         if (!result.ok) return;
         const update = bytes(result.update);
-        if (update.length > 0) Y.applyUpdate(ydoc, update, "remote");
+        if (update.length > 0) Y.applyUpdate(ydoc, update, REMOTE_ORIGIN);
       });
     };
 
@@ -215,7 +236,7 @@ export function DocEditor({ docId, state, viewerId, canEdit }: Props) {
     ydoc.transact(() => {
       if (removed > 0) text.delete(at, removed);
       if (added.length > 0) text.insert(at, added);
-    }, "local");
+    }, LOCAL_ORIGIN);
   };
 
   const addBlock = () => {
@@ -225,11 +246,41 @@ export function DocEditor({ docId, state, viewerId, canEdit }: Props) {
       block.set("type", "paragraph");
       block.set("text", new Y.Text());
       array.push([block]);
-    }, "local");
+    }, LOCAL_ORIGIN);
   };
 
   const removeBlock = (index: number) => {
-    ydoc.transact(() => blocksOf().delete(index, 1), "local");
+    ydoc.transact(() => blocksOf().delete(index, 1), LOCAL_ORIGIN);
+  };
+
+  /**
+   * ⌘Z / ⌘⇧Z inside a paragraph, and the `preventDefault` is the point.
+   *
+   * **Three stacks could answer this keystroke and exactly one should** (D-116).
+   * The workspace stack already declines: `undo.tsx` returns early when the
+   * event's target is an input or a textarea, on the grounds that the browser's
+   * text undo is what a typing user means. That reasoning is right for a
+   * comment box and wrong here — the textarea's history is private to the
+   * element and knows nothing about a remote edit that landed between two
+   * keystrokes, so undoing past one resurrects text the document has moved on
+   * from. So the default is suppressed and the CRDT's manager answers instead.
+   *
+   * Bound on the textarea rather than on the editor's root because that is the
+   * target the workspace handler yields for. With focus outside a paragraph
+   * there is no text to undo and ⌘Z keeps its workspace meaning, which is the
+   * division D-111 drew.
+   */
+  const onParagraphKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!(event.metaKey || event.ctrlKey)) return;
+
+    const key = event.key.toLowerCase();
+    // ⌘Y is redo on Windows and Linux; ⌘⇧Z is redo everywhere.
+    const redo = key === "y" || (key === "z" && event.shiftKey);
+    if (key !== "z" && !redo) return;
+
+    event.preventDefault();
+    if (redo) undoManager.redo();
+    else undoManager.undo();
   };
 
   return (
@@ -265,6 +316,7 @@ export function DocEditor({ docId, state, viewerId, canEdit }: Props) {
               rows={Math.max(1, block.text.split("\n").length)}
               placeholder={canEdit ? "Write here" : ""}
               onChange={(e) => edit(index, e.target.value)}
+              onKeyDown={onParagraphKeyDown}
             />
             {canEdit ? (
               <button

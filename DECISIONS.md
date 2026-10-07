@@ -3851,3 +3851,66 @@ from a production build, which cannot work because the names are not in it.
 machinery a GET does not have, so the screen that is only a GET gets a suite
 that needs nothing but a URL — and can therefore check a deployment, which none
 of the others can.
+
+### D-116
+**⌘Z in a document is the CRDT's, and only for your own typing** · 2026-10-06 · active
+
+D-111 decided what undo means inside a document — *the text you typed*,
+deliberately not the workspace stack, because an operation carries a `taskId`
+and a document carries a container, and two stacks fighting over one keystroke
+is worse than a rename that is not undoable. What it did not do is make that
+true. Until this, ⌘Z in a paragraph was the **textarea's own history**: private
+to that element, invisible to the document, and knowing nothing about a remote
+edit that arrived between two keystrokes. Undoing past one resurrected text the
+CRDT had already moved on from.
+
+**Three stacks could answer the keystroke and exactly one should.** The
+workspace stack already declines: `undo.tsx` returns early when the target is an
+input or textarea, on the stated grounds that "the browser's own text undo is
+what they mean there". That reasoning is right for a comment box and wrong for a
+CRDT paragraph, so the handler calls `preventDefault()` — which is the entire
+mechanism by which the browser's history is taken out of the contest. Bound on
+the textarea rather than the editor root precisely because that is the target
+the workspace handler yields for; with focus outside a paragraph there is no
+text to undo and ⌘Z keeps its workspace meaning, which is the division D-111
+drew.
+
+**`trackedOrigins` is the safety property, and it is the reason this is in
+core.** `documentUndoManager` tracks only `LOCAL_ORIGIN`, so a remote update —
+applied under `REMOTE_ORIGIN` by the pull path — can never enter the stack. ⌘Z
+reaching into a colleague's sentence would be astonishing and, in a CRDT,
+perfectly durable. That is a rule about what a document *is*, not about how a
+React component is wired, so it lives beside the format in
+`packages/core/src/documents.ts` with unit tests: one proves the array scope
+reaches a paragraph's `Y.Text` two levels down, one proves a remote change
+leaves `canUndo()` false, and one types on both sides and proves the undo takes
+back only my half while theirs survives.
+
+**Scoped to the blocks array, not to one paragraph.** Yjs tracks a type and
+everything beneath it, so one manager covers every paragraph including ones
+added later — which matters because `+ Paragraph` is itself undoable. A manager
+per textarea would have meant a stack per paragraph and no way to undo adding or
+removing one.
+
+**An undo is a change and has to be saved.** Yjs stamps undo output with the
+manager instance rather than with the origin of what it is reverting, so the
+editor's update handler had to learn `origin === undoManager` alongside
+`LOCAL_ORIGIN`. Without it ⌘Z was visible on screen and absent from the
+database until the next keystroke happened to flush it — verified in Chrome by
+undoing and then reading the row: `search_text` holds the undone text.
+
+**What is deliberately not solved: the caret.** After an undo the textarea's
+value is replaced by React and the caret lands at the end rather than where the
+edit was. The same is already true of a remote edit arriving, so this is not new
+— but undo makes it obvious. Putting it right means carrying a selection through
+the diff, which is the work the editing-surface item owns, and guessing at it
+here would be a second place that thinks it knows where the cursor goes.
+
+**Also not solved: history does not survive a reload.** The stack is in memory
+beside the `Y.Doc`, so a refresh empties it. That is ordinary for an editor, and
+the alternative — persisting per-client undo history into a column shared by
+every client — is a much larger idea than this one.
+
+*In one sentence:* D-111 said ⌘Z in a document means the text you typed, and
+this makes the browser stop disagreeing — while `trackedOrigins` makes sure it
+can only ever take back your own.

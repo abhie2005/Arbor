@@ -133,6 +133,7 @@ two applies, because the registry must exist before an image can be pushed.
 | A document as Yjs, and its projection back | `packages/core/src/documents.ts` |
 | Documents: the page tree and the bytes | `packages/db/src/documents.ts` |
 | The editor, and the diff that makes a keystroke a CRDT edit | `apps/web/src/components/doc-editor.tsx` |
+| What ⌘Z may take back in a document (pure) | `documentUndoManager` in `packages/core/src/documents.ts` |
 | Who gets notified (pure) | `packages/core/src/notifications.ts` |
 | The executor — all writes land here | `packages/db/src/mutations.ts` |
 | Authorization checks | `packages/db/src/task-access.ts` |

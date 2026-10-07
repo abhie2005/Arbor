@@ -3,10 +3,13 @@ import * as Y from "yjs";
 
 import {
   DocumentError,
+  LOCAL_ORIGIN,
+  REMOTE_ORIGIN,
   applyDocUpdate,
   diffFor,
   docStateFrom,
   docStateFromText,
+  documentUndoManager,
   emptyDocState,
   richTextFrom,
   searchTextFrom,
@@ -169,5 +172,105 @@ describe("the tree it is built from", () => {
     });
 
     expect(searchTextFrom(state)).toBe("Owner: @Riley Kaur");
+  });
+});
+
+describe("documentUndoManager", () => {
+  /** A document with one paragraph, the way the editor holds one. */
+  function opened(text = "") {
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, docStateFromText(text || "Hello", []));
+    return doc;
+  }
+
+  const paragraph = (doc: Y.Doc, index = 0) =>
+    doc.getArray<Y.Map<unknown>>("blocks").get(index).get("text") as Y.Text;
+
+  /** What a keystroke in the editor does: a local-origin edit to the Y.Text. */
+  const type = (doc: Y.Doc, at: number, chars: string, index = 0) =>
+    doc.transact(() => paragraph(doc, index).insert(at, chars), LOCAL_ORIGIN);
+
+  it("undoes text typed in a paragraph, which the array scope has to reach", () => {
+    // The property the scope choice rests on: the manager is given the blocks
+    // array, and the text lives in a Y.Text two levels below it.
+    const doc = opened("Hello");
+    const manager = documentUndoManager(doc);
+
+    type(doc, 5, " world");
+    expect(paragraph(doc).toString()).toBe("Hello world");
+
+    manager.undo();
+    expect(paragraph(doc).toString()).toBe("Hello");
+
+    manager.redo();
+    expect(paragraph(doc).toString()).toBe("Hello world");
+    manager.destroy();
+  });
+
+  it("will not undo a change that arrived from somebody else", () => {
+    // The safety property. A remote update is applied under REMOTE_ORIGIN, so
+    // it must not be in the stack — ⌘Z reaching into a colleague's sentence is
+    // both astonishing and, in a CRDT, durable.
+    const mine = opened("Ours");
+    const manager = documentUndoManager(mine);
+
+    const theirs = new Y.Doc();
+    Y.applyUpdate(theirs, Y.encodeStateAsUpdate(mine));
+    theirs.transact(() => (paragraph(theirs).insert(4, " and theirs")), LOCAL_ORIGIN);
+    Y.applyUpdate(mine, Y.encodeStateAsUpdate(theirs), REMOTE_ORIGIN);
+
+    expect(paragraph(mine).toString()).toBe("Ours and theirs");
+    expect(manager.canUndo()).toBe(false);
+
+    manager.undo();
+    expect(paragraph(mine).toString()).toBe("Ours and theirs");
+    manager.destroy();
+  });
+
+  it("undoes only my half when both of us have typed", () => {
+    const mine = opened("Start");
+    const manager = documentUndoManager(mine);
+
+    const theirs = new Y.Doc();
+    Y.applyUpdate(theirs, Y.encodeStateAsUpdate(mine));
+    theirs.transact(() => paragraph(theirs).insert(5, " theirs"), LOCAL_ORIGIN);
+    Y.applyUpdate(mine, Y.encodeStateAsUpdate(theirs), REMOTE_ORIGIN);
+
+    type(mine, paragraph(mine).length, " mine");
+    expect(paragraph(mine).toString()).toContain(" mine");
+
+    manager.undo();
+    const after = paragraph(mine).toString();
+    expect(after).not.toContain(" mine");
+    // Theirs survives, which is the point of tracking origins at all.
+    expect(after).toContain(" theirs");
+    manager.destroy();
+  });
+
+  it("treats adding a paragraph as one undoable step", () => {
+    // Why the scope is the array and not one Y.Text: `+ Paragraph` has to be
+    // undoable too, and a manager per textarea could not see it.
+    const doc = opened("First");
+    const manager = documentUndoManager(doc);
+
+    doc.transact(() => {
+      const block = new Y.Map<unknown>();
+      block.set("type", "paragraph");
+      block.set("text", new Y.Text());
+      doc.getArray<Y.Map<unknown>>("blocks").push([block]);
+    }, LOCAL_ORIGIN);
+
+    expect(doc.getArray("blocks").length).toBe(2);
+    manager.undo();
+    expect(doc.getArray("blocks").length).toBe(1);
+    manager.destroy();
+  });
+
+  it("has nothing to undo on a document nobody has touched", () => {
+    const doc = opened();
+    const manager = documentUndoManager(doc);
+    expect(manager.canUndo()).toBe(false);
+    expect(manager.canRedo()).toBe(false);
+    manager.destroy();
   });
 });

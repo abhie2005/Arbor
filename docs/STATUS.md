@@ -1,8 +1,8 @@
 # Status — resume here
 
-Last updated 2026-10-05 (Phase 9 in progress — documents are built and
-editable, search reads them, there is an AWS path, and search has its own
-gate). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-06 (Phase 9 in progress — documents are built and
+editable, ⌘Z in one is the CRDT's, search reads them, and there is an AWS
+path). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
@@ -116,16 +116,34 @@ In the order that buys the most:
    surface, and it is worth deciding deliberately: a small contenteditable that
    understands one embed type, or a library. Note what is *not* at stake — the
    storage format is settled and does not move either way (ADR 6).
-3. **⌘Z in a document is the browser's, not the CRDT's.** Yjs has
-   `Y.UndoManager`, and it is not wired up: undo inside a textarea is that
-   textarea's own history, which knows nothing about a remote change that
-   arrived between two keystrokes. D-111 says ⌘Z in a document means the text
-   somebody typed; making that true needs the undo manager.
+3. ~~**⌘Z in a document is the browser's, not the CRDT's.**~~ Built (D-116).
+   `documentUndoManager` tracks only `LOCAL_ORIGIN`, so ⌘Z takes back your own
+   typing and can never reach a colleague's; the handler calls
+   `preventDefault()` so the textarea's own history stops competing. Verified in
+   Chrome, including that the undo reaches Postgres. The caret still lands at
+   the end afterwards — see the gaps below.
 4. **A page tree that is only indentation.** `parent_page_id` is stored, moving
    between containers works, and there is no drag, no collapse, and no reorder
    among siblings — `position` is fractional and written only on create.
 
 ### Known gaps in what was just built
+
+**Undo in a document (D-116)**
+
+- **The caret lands at the end after an undo**, rather than where the edit was.
+  The textarea is controlled and React replaces its value, which is already true
+  when a remote edit arrives — undo just makes it obvious. Fixing it means
+  carrying a selection through the diff, which belongs to the editing-surface
+  item rather than here.
+- **History does not survive a reload.** The stack lives in memory beside the
+  `Y.Doc`. Ordinary for an editor; persisting per-client history into a column
+  every client shares is a much bigger idea.
+- **No visible affordance.** There is no button and nothing says ⌘Z works here,
+  which is the same gap the whole app has — the workspace Undo button is in the
+  header and means something else while focus is in a paragraph.
+- **The remote case is proven by unit test, not in a browser.** Two real clients
+  typing at once was checked in `documents.test.ts`; driving two browsers at one
+  document is the harness nobody has built yet.
 
 **Deployment (D-114)**
 
