@@ -116,6 +116,7 @@ export {
   listDocs,
   loadDoc,
   loadDocContent,
+  mentionableIn,
   moveDoc,
   renameDoc,
   searchDocs,

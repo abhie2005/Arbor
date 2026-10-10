@@ -33,9 +33,11 @@ interface Props {
   open: { doc: DocRecord; state: string } | null;
   viewerId: string;
   canCreateWorkspaceWide: boolean;
+  /** Who the editor's `@` can mean. */
+  people: { id: string; name: string }[];
 }
 
-export function Docs({ docs, places, open, viewerId, canCreateWorkspaceWide }: Props) {
+export function Docs({ docs, places, open, viewerId, canCreateWorkspaceWide, people }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -160,6 +162,7 @@ export function Docs({ docs, places, open, viewerId, canCreateWorkspaceWide }: P
               state={open.state}
               viewerId={viewerId}
               canEdit={canEdit}
+              people={people}
             />
           </>
         ) : (

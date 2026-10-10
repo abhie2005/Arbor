@@ -4107,9 +4107,14 @@ select.filter-add option {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
+  /* The mention picker is positioned against the paragraph it belongs to. */
+  position: relative;
 }
 
-.doc-para textarea {
+/* The editing surface (D-117). `pre-wrap` is not cosmetic: Enter writes a
+   newline into the paragraph, and the default `normal` would collapse it, so
+   the text on screen would stop matching the text in the document. */
+.doc-para-text {
   flex: 1;
   font: inherit;
   color: var(--text);
@@ -4117,24 +4122,24 @@ select.filter-add option {
   border: 1px solid transparent;
   border-radius: var(--radius-control);
   padding: 4px 6px;
-  resize: vertical;
   line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  min-height: calc(1.6em + 8px);
 }
 
-.doc-para textarea:focus {
+.doc-para-text:focus {
   border-color: var(--line);
   background: var(--raised);
   outline: none;
 }
 
-/* A paragraph holding a mention. Shown rather than edited, with the reason in
-   its title — the same choice the task page makes for the field types it
-   cannot edit yet. */
-.doc-para-locked {
-  padding: 4px 6px;
-  line-height: 1.6;
-  color: var(--text-2);
-  border-left: 2px solid var(--line);
+/* An empty paragraph has nothing to give it height and nothing to say, so the
+   placeholder is drawn rather than typed — a value would be real text. */
+.doc-para-text[data-placeholder]::before {
+  content: attr(data-placeholder);
+  color: var(--text-3);
+  pointer-events: none;
 }
 
 .doc-para-remove {
@@ -4170,6 +4175,12 @@ select.filter-add option {
 
 .doc-status-error {
   color: var(--priority-urgent);
+}
+
+.doc-hint {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  margin-right: auto;
 }
 
 /* --- search -------------------------------------------------------------

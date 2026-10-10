@@ -246,7 +246,7 @@ export async function createDoc(input: CreateDocInput, context: ConfigContext): 
     if (parentPageId) await requireSameWorkspace(client, parentPageId, input.workspaceId);
 
     const state = input.text
-      ? docStateFromText(input.text, await mentionable(client, input.workspaceId))
+      ? docStateFromText(input.text, await mentionableIn(input.workspaceId, client))
       : emptyDocState();
     const position = await nextPosition(client, input.containerId, parentPageId);
 
@@ -528,14 +528,28 @@ async function one(client: PoolClient, docId: string): Promise<DocRow> {
  * **Members of this workspace**, not every user in the database. Somebody who
  * cannot open the document is not somebody it can be about.
  */
-async function mentionable(
-  client: PoolClient,
+/**
+ * Who can be mentioned in this workspace.
+ *
+ * **Members, not every user in the database.** A first draft parsed from plain
+ * text resolves "@Riley Kaur" against this list, and so does the editor's
+ * picker — so a name that is not in the workspace stays text rather than
+ * becoming a reference to somebody who cannot open the page. `comment-actions.ts`
+ * still asks for every user, which is a real difference and invisible in a
+ * one-workspace install.
+ *
+ * Deactivated users are excluded: they are a name nobody should be able to
+ * newly notify, while a mention already written keeps its label (D-083).
+ */
+export async function mentionableIn(
   workspaceId: string,
+  connection: Connection = pool(),
 ): Promise<{ id: string; name: string }[]> {
-  const result = await client.query<{ id: string; name: string }>(
+  const result = await connection.query<{ id: string; name: string }>(
     `SELECT u.id, u.name
      FROM users u JOIN memberships m ON m.user_id = u.id AND m.workspace_id = $1
-     WHERE u.deactivated_at IS NULL`,
+     WHERE u.deactivated_at IS NULL
+     ORDER BY u.name`,
     [workspaceId],
   );
 

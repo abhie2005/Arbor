@@ -1,8 +1,8 @@
 # Status — resume here
 
-Last updated 2026-10-06 (Phase 9 in progress — documents are built and
-editable, ⌘Z in one is the CRDT's, search reads them, and there is an AWS
-path). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-08 (Phase 9 in progress — documents are built and
+editable *including the paragraphs that name somebody*, ⌘Z in one is the CRDT's
+and puts the caret back, search reads them, and there is an AWS path). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
@@ -51,16 +51,23 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Time tracking** | Start and stop on the task page, an entry list, logging time after the fact, and tracked-against-estimate. Every write is an operation (D-093), so ⌘Z undoes a stop and restores a deleted entry. At most one running timer per person, held by a unique partial index (D-094). A readout in the shell of every screen, pushed down the live stream so a timer started in another tab appears in this one (D-098). |
 | **Goals** | `/goals` — goals with key results of four kinds. A *rollup* key result holds a view definition and is counted by the compiler (D-101), so a goal and a list can never disagree about what counts; it is computed as the goal's **owner** rather than the reader (D-102), which is what makes progress a shared fact. Manual, currency and yes/no key results are entered. Progress is the mean of the key results, each clamped; completion is a timestamp somebody set, not a number crossing 100%. |
 | **Dashboards** | `/dashboards` — a grid of cards, each a filter plus a way of drawing it. A card's `kind` *is* which compiler entry point it calls (D-104): a stat is `compileAggregate`, a chart is `compileGroupCounts`. Counted as the **viewer** (D-105), which is the opposite of a goal and for a reason. Scoped to a container, with personal dashboards following the saved view rule. Charts are HTML bars measured against the largest slice; no charting library. |
-| **Documents** | `/docs` — a page tree scoped by the same `access_index` join everything else uses, and an editor. A document's body is a Yjs CRDT holding the *same block tree* comments and descriptions use (ADR 6, D-110), so a mention is a reference rather than the characters "@Name", and `search_text` beside it is a projection recomputed on every write. The editor is a textarea per paragraph with the change applied as a diff (D-112), so two people typing in one paragraph merge instead of clobbering. Updates POST as base64 and arrive as a nudge on the existing stream; the editor answers by pulling the difference rather than re-rendering. Creating, renaming, moving and archiving are configuration writes with an activity row and no ⌘Z (D-111). |
+| **Documents** | `/docs` — a page tree scoped by the same `access_index` join everything else uses, and an editor. A document's body is a Yjs CRDT holding the *same block tree* comments and descriptions use (ADR 6, D-110), so a mention is a reference rather than the characters "@Name", and `search_text` beside it is a projection recomputed on every write. The editor is a **contenteditable per paragraph** (D-117) with the change applied as a diff (D-112), so two people typing in one paragraph merge instead of clobbering. A mention is one `EMBED_CHAR` in the string the editor works in, which makes a DOM offset, a caret and a CRDT position the same number — so a paragraph naming somebody is edited rather than shown, `@` offers the workspace's members, and the caret is a Yjs relative position that survives both ⌘Z and somebody else's insert. Updates POST as base64 and arrive as a nudge on the existing stream; the editor answers by pulling the difference rather than re-rendering. Creating, renaming, moving and archiving are configuration writes with an activity row and no ⌘Z (D-111). |
 | **Search** | `/search` — the screen that finally reads `docs.search_text`. Two halves, each through the permission path it already had: tasks are `compileViewQuery` with scope `everything` and `filters.search` set (which had existed since the beginning and been set by nothing), pages are `searchDocs` sharing `listDocs`' reachability clause. Matching is `ILIKE`, the same rule the compiler has always used, so one box cannot have two ideas of what matches (D-113); trigram GIN indexes make that affordable. A GET with the query in the URL, so a search is a sendable link — no action, no debounce. Snippets are anchored on the match and the term is marked. |
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 437 unit tests, 220 live-Postgres checks, 151 server-action
-checks, four packages typechecking clean, and the interactions above driven in
-Chrome — most recently a member creating a page, typing in it, and watching
-somebody else's paragraph arrive in the open editor with their own cursor
-untouched.
+**Verified:** 486 unit tests, 230 live-Postgres checks, 11 search checks, four
+packages typechecking clean, and the interactions above driven in Chrome — most
+recently a member writing a paragraph that names somebody, editing the text on
+both sides of the name, taking an edit back with ⌘Z and finding the caret where
+the edit was, and watching a second client's eight characters arrive at the
+start of that paragraph and carry their own caret from 7 to 15 without losing
+focus.
+
+`check:actions` is the gate that does not finish on this machine — the VM's
+memory ceiling drops a request around a third of the way through (see the gaps
+below). Its **documents** section was run on its own, in its own process, and
+all 7 of its checks pass.
 
 ---
 
@@ -110,12 +117,15 @@ In the order that buys the most:
    task half goes through the compiler's `filters.search`, and both halves match
    with `ILIKE` so one box cannot have two ideas of what matches. What it does
    *not* cover is below, under "Known gaps".
-2. **An editor that can hold a mention.** A paragraph containing one is
-   read-only today, because a textarea has no way to draw an embed and the
-   diff's offsets would be wrong. This is the piece that needs a real editing
-   surface, and it is worth deciding deliberately: a small contenteditable that
-   understands one embed type, or a library. Note what is *not* at stake — the
-   storage format is settled and does not move either way (ADR 6).
+2. ~~**An editor that can hold a mention.**~~ Built (D-117). A contenteditable
+   per paragraph, hand-rolled rather than a library — because every Yjs editor
+   binding binds a *fixed* shared type (`y-prosemirror` a `Y.XmlFragment`) and
+   adopting one as shipped would have changed what the CRDT contains, which is
+   the one thing ADR 6 says has no second chance. The storage format was
+   therefore at stake after all, in exactly the direction the note said it was
+   not. A mention is one `EMBED_CHAR` in the editor's string, so the diff
+   (D-112) applies unchanged and a caret is one integer; `@` inserts one, from
+   the workspace's members.
 3. ~~**⌘Z in a document is the browser's, not the CRDT's.**~~ Built (D-116).
    `documentUndoManager` tracks only `LOCAL_ORIGIN`, so ⌘Z takes back your own
    typing and can never reach a colleague's; the handler calls
@@ -130,11 +140,10 @@ In the order that buys the most:
 
 **Undo in a document (D-116)**
 
-- **The caret lands at the end after an undo**, rather than where the edit was.
-  The textarea is controlled and React replaces its value, which is already true
-  when a remote edit arrives — undo just makes it obvious. Fixing it means
-  carrying a selection through the diff, which belongs to the editing-surface
-  item rather than here.
+- ~~**The caret lands at the end after an undo.**~~ Closed by D-117, which was
+  the item it was handed to. The caret is a Yjs relative position carried on the
+  stack item, so an undo returns it to where the edit began and a remote insert
+  above it moves it by exactly as much as it inserted. Both verified in Chrome.
 - **History does not survive a reload.** The stack lives in memory beside the
   `Y.Doc`. Ordinary for an editor; persisting per-client history into a column
   every client shares is a much bigger idea.
@@ -222,6 +231,34 @@ In the order that buys the most:
   conflict state, because there is no conflict to show — but a failed push
   leaves the text on screen and the error beside it, and nothing retries.
 
+**The editing surface (D-117)**
+
+- **A mention in a document notifies nobody.** A comment's does: the fan-out
+  runs inside the causing transaction and asks before granting access to
+  somebody who cannot read the task. A document update is a merge of bytes, so
+  there is no operation to hang a fan-out on and nothing reads the embed that
+  appeared. This is the largest thing the picker makes possible and does not
+  do, and it is a real decision rather than an oversight — "who was newly
+  mentioned" means diffing two projections of a CRDT.
+- **Backspace at the start of a paragraph does nothing**, and there is no way
+  to split one. Each paragraph is its own editing host, which is what makes a
+  selection unable to span blocks (and so unable to delete across them); the
+  price is that the two keystrokes that join and split paragraphs have no
+  meaning yet. `+ Paragraph` and the `×` are still how blocks come and go.
+- **The composition path is coded but not driven.** `compositionstart` /
+  `compositionend` hold off both reading the DOM and repainting it, which is
+  what an IME needs, but nobody has typed Japanese into this editor. The
+  failure it guards against — a repaint mid-word abandoning the composition —
+  is the kind that only shows up with a real IME.
+- **The `@` candidates are loaded with the page.** Somebody who joins the
+  workspace while a page is open is not offered until a reload. A picker that
+  asked the server per keystroke would be a round trip inside the one
+  interaction that has to feel local, so this is the trade rather than an
+  omission.
+- **Nothing shows the caret of the person editing with you.** The relative
+  position that keeps *your* caret still is exactly what a remote cursor would
+  be built from, and it is not sent anywhere.
+
 **Two things older than this phase, found while building it**
 
 - **`/settings/sharing` lists every container in the workspace to anybody who
@@ -230,7 +267,9 @@ In the order that buys the most:
   now the most visible thing the container rows make fixable.
 - **A comment's mention candidates are every user in the database**, not the
   members of that workspace (`comment-actions.ts`). `documents.ts` asks for
-  members; the older path did not, and with one workspace nobody can tell.
+  members, and so does the editor's picker now (D-117, `mentionableIn`) — so
+  the older path is the only one left that does not, and with one workspace
+  nobody can tell.
 
 ### Done — the decision Phase 9 turned on
 

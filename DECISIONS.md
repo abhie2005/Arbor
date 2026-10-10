@@ -3914,3 +3914,107 @@ every client — is a much larger idea than this one.
 *In one sentence:* D-111 said ⌘Z in a document means the text you typed, and
 this makes the browser stop disagreeing — while `trackedOrigins` makes sure it
 can only ever take back your own.
+
+### D-117
+**A hand-rolled contenteditable, and a mention is one character in it** · 2026-10-08 · active
+
+A paragraph containing a mention was **read-only**, which is half a document.
+The surface was a textarea per paragraph (D-112) and a textarea can only hold
+text, so an embed had nowhere to be drawn and the diff's offsets would have
+been wrong the moment one existed. Closing that needed a real editing surface,
+and the fork was a small contenteditable that understands one embed type, or a
+library.
+
+**Why not a library.** The storage format looked neutral — ADR 6 settled what
+the CRDT contains and nothing about this item moves it — but that is only true
+of the hand-rolled path. Every off-the-shelf Yjs binding binds a *fixed* shared
+type: `y-prosemirror` a `Y.XmlFragment`, `y-quill` a `Y.Text`. A document here
+is a `Y.Array` of `Y.Map`s each holding a `Y.Text` (D-110), so adopting Tiptap
+as shipped means changing what the CRDT contains — the one thing ADR 6 says has
+no second chance, because a CRDT keeps history and cannot be migrated the way a
+`jsonb` column can. Writing a *custom* binding onto the existing tree is most
+of the hand-rolled work plus a dependency. So the question answered itself, and
+it happens to agree with the pattern the rest of this codebase already follows:
+HTML bars rather than a charting library, hand-rolled drag, no date library.
+
+**A mention is one `EMBED_CHAR`, and that is the whole design.** Yjs counts an
+embed as **one** position, so if the string the editor works in spends exactly
+one UTF-16 code unit per embed, a string offset and a `Y.Text` offset are the
+same number. Everything downstream collapses: `replacedRange` applies unchanged
+with no knowledge of embeds, a caret is one integer, a range that happens to
+span a mention deletes it and nothing else needs to know, and
+`text.delete(at, n)` takes the numbers a `Selection` reported with no conversion
+step that could be wrong. U+FFFC is OBJECT REPLACEMENT CHARACTER, which Unicode
+defines for exactly this — picking a character nobody types is the requirement,
+picking the one *named* after the job means the next reader is not told, they
+already know. The paragraph is read out of the DOM through `blockString`, never
+`Y.Text.toString()`, which drops embeds and would leave every offset after a
+mention one short: a silent off-by-one with a unit test of its own.
+
+**Pasted text is stripped of `EMBED_CHAR`** (`typeable`). A literal U+FFFC
+arriving in a paste would be stored as a character and read back as if it were
+a mention, so every offset after it would address the wrong place while the
+paragraph looked fine.
+
+**One editing host per paragraph, not one per document.** This is the half that
+is load-bearing and looks like an aesthetic choice. Two separate contenteditable
+hosts cannot hold one selection, so a drag across three paragraphs followed by a
+keystroke can never delete across blocks and leave the browser to invent what
+the result is. The cost is Backspace at the start of a paragraph doing nothing —
+listed as a gap rather than hidden. It is also the shape the textarea version
+already had, so nothing else had to move.
+
+**React renders the hosts and does not render what is inside them.** The
+children of an editable element are mutated by the browser on every keystroke,
+and a reconciler that believed it owned them would fight the person typing. Each
+host is rendered childless and painted imperatively by an effect, and the paint
+is **skipped** whenever the DOM already says what the document says — which is
+every local keystroke. The skip is not an optimisation: repainting a host whose
+text is already right would destroy the selection on every character, and
+`replaceChildren` during an IME composition would abandon the composition. A
+repaint therefore happens only when the text changed from somewhere else.
+
+**The caret is a relative position, not a number** — and this is what closes the
+gap D-116 left open. A Yjs relative position is anchored to the character rather
+than to the offset, so it survives both a colleague's insert and the deletion of
+the very text it sits in. The undo stack carries one per entry, the pattern Yjs
+documents for this: `stack-item-added` stores where the edit *ended*, and
+because a relative position whose characters are then deleted resolves to where
+they were, undoing an insert lands the caret where the insert *began*. Verified
+in Chrome: typing at offset 7 and pressing ⌘Z returns the caret to 7, not to the
+end of the paragraph; and a second client inserting eight characters at the
+start of the paragraph moved a caret from 7 to 15 while it stayed focused.
+
+**Enter is a newline, not a new block.** A stored paragraph already holds
+newlines — that is what the textarea wrote and what `renderPlain` reads — so
+Enter keeps meaning what it meant, and `white-space: pre-wrap` is correctness
+rather than styling. Splitting a paragraph in two is a different decision about
+what a block *is*, and it is not this one.
+
+**Paste is intercepted** and reinserted as plain text, because the alternative
+is a browser putting a copied web page's markup inside the editable and the DOM
+reader flattening it — the styling silently discarded along with anything the
+reader does not recognise. Verified by dispatching a paste carrying both
+`text/html` and `text/plain`: the text lands, the `<b>` and the `<script>` do
+not.
+
+**Mentions can now be made, not only kept.** A picker on `@` was not strictly
+part of "an editor that can hold a mention", but without it the only way a
+document could contain one was `createDoc`'s optional first draft, which no
+screen passes — so the surface would have been editable around a mention nobody
+could create. Candidates are the workspace's **members** (`mentionableIn`),
+which is what `documents.ts` already asked for and what `comment-actions.ts`
+still does not — a difference now named in that function's doc comment. The
+embed is written by `insertMention` in core, so the one shape `inlinesOf`
+recognises has one writer; a second spelling would render as nothing and read
+back one character short.
+
+**What this does not do.** It does not notify the person named — a mention in a
+document writes no `notifications` row, where a comment does; it does not merge
+paragraphs on Backspace; and it does not show a remote collaborator's cursor,
+which is the presence gap documents already had.
+
+*In one sentence:* the surface is hand-rolled because every Yjs editor binding
+would have changed what the CRDT contains, and it is tractable because a mention
+spends exactly one character — which makes a DOM offset, a caret and a CRDT
+position the same number.

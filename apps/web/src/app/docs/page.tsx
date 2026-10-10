@@ -63,6 +63,7 @@ export default async function DocsPage({
         open={page.open}
         viewerId={viewer.id}
         canCreateWorkspaceWide={page.canCreateWorkspaceWide}
+        people={page.people}
       />
 
       <FooterNote>

@@ -78,7 +78,12 @@ two applies, because the registry must exist before an image can be pushed.
    with mention *nodes* carrying user ids, `packages/core/src/richtext.ts`.
    Never store a mention as the characters "@Name" (D-083). A doc is that same
    tree in Yjs types, and what every non-editor reads is the projection back to
-   it (ADR 6, D-110) — never the CRDT.
+   it (ADR 6, D-110) — never the CRDT. **Inside the editor a mention is one
+   `EMBED_CHAR`** (D-117): Yjs counts an embed as one position, so spending one
+   UTF-16 code unit on it makes a DOM offset, a caret and a `Y.Text` offset the
+   same number. Read a paragraph with `blockString`, never `Y.Text.toString()`
+   — that one drops embeds, and every offset after a mention comes out one
+   short while the text looks right.
 8. **Notifications: direct signals only.** Assigned, mentioned, replied write a
    row inside the causing transaction. Everything ambient is aggregated at read
    time from `activity` (`loadAmbient`) — fanning out to watchers is the
@@ -132,7 +137,7 @@ two applies, because the registry must exist before an image can be pushed.
 | Rich text / mentions | `packages/core/src/richtext.ts` |
 | A document as Yjs, and its projection back | `packages/core/src/documents.ts` |
 | Documents: the page tree and the bytes | `packages/db/src/documents.ts` |
-| The editor, and the diff that makes a keystroke a CRDT edit | `apps/web/src/components/doc-editor.tsx` |
+| The editor: a contenteditable per paragraph, the diff, the caret | `apps/web/src/components/doc-editor.tsx` |
 | What ⌘Z may take back in a document (pure) | `documentUndoManager` in `packages/core/src/documents.ts` |
 | Who gets notified (pure) | `packages/core/src/notifications.ts` |
 | The executor — all writes land here | `packages/db/src/mutations.ts` |

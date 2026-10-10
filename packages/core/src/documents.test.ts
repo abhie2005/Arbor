@@ -3,17 +3,23 @@ import * as Y from "yjs";
 
 import {
   DocumentError,
+  EMBED_CHAR,
   LOCAL_ORIGIN,
   REMOTE_ORIGIN,
   applyDocUpdate,
+  blockString,
   diffFor,
   docStateFrom,
   docStateFromText,
   documentUndoManager,
   emptyDocState,
+  mentionMatches,
+  mentionQuery,
+  replacedRange,
   richTextFrom,
   searchTextFrom,
   stateVectorOf,
+  typeable,
 } from "./documents";
 import { renderPlain } from "./richtext";
 
@@ -272,5 +278,166 @@ describe("documentUndoManager", () => {
     expect(manager.canUndo()).toBe(false);
     expect(manager.canRedo()).toBe(false);
     manager.destroy();
+  });
+});
+
+describe("a paragraph as the string an editor edits", () => {
+  const paragraphOf = (text: string, people = [RILEY]) => {
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, docStateFromText(text, people));
+    return doc.getArray<Y.Map<unknown>>("blocks").get(0)!.get("text") as Y.Text;
+  };
+
+  it("spends exactly one character on a mention, so offsets stay true", () => {
+    // The property everything else rests on (D-117): a string offset and a
+    // Y.Text offset are the same number.
+    const text = paragraphOf("Ask @Riley Kaur today");
+    const serialized = blockString(text);
+
+    expect(serialized).toBe(`Ask ${EMBED_CHAR} today`);
+    expect(serialized.length).toBe(text.length);
+    expect(serialized.indexOf("today")).toBe(6);
+  });
+
+  it("does not let Y.Text.toString() shorten the paragraph behind our back", () => {
+    // toString() drops embeds, so every offset after a mention would be one
+    // short — the silent off-by-one blockString exists to prevent.
+    const text = paragraphOf("Ask @Riley Kaur today");
+    expect(text.toString().length).toBe(text.length - 1);
+    expect(blockString(text).length).toBe(text.length);
+  });
+
+  it("deletes a mention as one character when a range covers it", () => {
+    const text = paragraphOf("Ask @Riley Kaur today");
+    const { at, removed, added } = replacedRange(blockString(text), "Ask  today");
+
+    expect({ at, removed, added }).toEqual({ at: 4, removed: 1, added: "" });
+
+    text.delete(at, removed);
+    expect(blockString(text)).toBe("Ask  today");
+    expect(richTextFrom(Y.encodeStateAsUpdate(text.doc!))!.content[0]!.content).toEqual([
+      { type: "text", text: "Ask  today" },
+    ]);
+  });
+
+  it("reports typing after a mention at the offset the CRDT means", () => {
+    const text = paragraphOf("Ask @Riley Kaur");
+    const before = blockString(text);
+    const { at, removed, added } = replacedRange(before, `${before} please`);
+
+    expect(at).toBe(before.length);
+    expect(removed).toBe(0);
+
+    text.insert(at, added);
+    expect(searchTextFrom(Y.encodeStateAsUpdate(text.doc!))).toBe("Ask @Riley Kaur please");
+  });
+});
+
+describe("the diff a keystroke becomes", () => {
+  it("sees one inserted run", () => {
+    expect(replacedRange("Helo", "Hello")).toEqual({ at: 3, removed: 0, added: "l" });
+  });
+
+  it("sees one deleted run", () => {
+    expect(replacedRange("Hello", "Helo")).toEqual({ at: 3, removed: 1, added: "" });
+  });
+
+  it("sees a selection replaced", () => {
+    expect(replacedRange("Hello world", "Hello there")).toEqual({
+      at: 6,
+      removed: 5,
+      added: "there",
+    });
+  });
+
+  it("sees nothing when nothing changed", () => {
+    expect(replacedRange("Hello", "Hello")).toEqual({ at: 5, removed: 0, added: "" });
+  });
+
+  it("does not mistake a repeated character for a longer common suffix", () => {
+    // "aa" → "aaa" has three equally valid answers; any one of them is right
+    // as long as it is exactly one insert of one character.
+    const { removed, added } = replacedRange("aa", "aaa");
+    expect({ removed, added }).toEqual({ removed: 0, added: "a" });
+  });
+});
+
+describe("text as it is safe to insert", () => {
+  it("drops a pasted U+FFFC, which would otherwise read back as a mention", () => {
+    expect(typeable(`a${EMBED_CHAR}b`)).toBe("ab");
+  });
+
+  it("leaves ordinary text alone", () => {
+    expect(typeable("plain")).toBe("plain");
+  });
+});
+
+describe("an @ being typed", () => {
+  it("is found from the caret back to the @", () => {
+    expect(mentionQuery("Ask @ril", 8)).toEqual({ at: 4, query: "ril" });
+  });
+
+  it("starts a paragraph", () => {
+    expect(mentionQuery("@ril", 4)).toEqual({ at: 0, query: "ril" });
+  });
+
+  it("keeps spaces, because names have them", () => {
+    // A picker that stopped at the first space could never offer "Riley Kaur".
+    expect(mentionQuery("Ask @Riley K", 12)).toEqual({ at: 4, query: "Riley K" });
+  });
+
+  it("is nothing when the @ is inside a word, so an email is not a mention", () => {
+    expect(mentionQuery("riley@arbor.dev", 15)).toBeNull();
+  });
+
+  it("does not reach through a newline", () => {
+    expect(mentionQuery("@Riley\nand", 10)).toBeNull();
+  });
+
+  it("does not reach through a mention that is already resolved", () => {
+    expect(mentionQuery(`@${EMBED_CHAR} and`, 6)).toBeNull();
+  });
+
+  it("is nothing when the caret is before the @", () => {
+    expect(mentionQuery("Ask @ril", 4)).toBeNull();
+  });
+});
+
+describe("who an @ query could mean", () => {
+  const people = [
+    RILEY,
+    { id: "user-sam", name: "Sam Petrov" },
+    { id: "user-riley-two", name: "Riley Okafor" },
+    { id: "user-ari", name: "Ari Riley-Jones" },
+  ];
+
+  it("matches case-insensitively, the same rule search uses", () => {
+    expect(mentionMatches(people, "riley").map((p) => p.name)).toEqual([
+      "Riley Kaur",
+      "Riley Okafor",
+      "Ari Riley-Jones",
+    ]);
+  });
+
+  it("offers a name that starts with the query before one that contains it", () => {
+    // Somebody typing three letters usually means the name they begin.
+    expect(mentionMatches(people, "riley")[0]!.name).toBe("Riley Kaur");
+  });
+
+  it("narrows as more is typed", () => {
+    expect(mentionMatches(people, "riley o").map((p) => p.name)).toEqual(["Riley Okafor"]);
+  });
+
+  it("offers everybody when nothing has been typed after the @", () => {
+    expect(mentionMatches(people, "")).toHaveLength(4);
+  });
+
+  it("offers nobody when nothing matches, which is how the picker closes", () => {
+    expect(mentionMatches(people, "zzz")).toEqual([]);
+  });
+
+  it("stops at the limit, because a picker is a menu and not a directory", () => {
+    const many = Array.from({ length: 20 }, (_, i) => ({ id: `u${i}`, name: `Person ${i}` }));
+    expect(mentionMatches(many, "person")).toHaveLength(6);
   });
 });

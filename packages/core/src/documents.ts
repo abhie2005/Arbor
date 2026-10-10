@@ -138,10 +138,28 @@ function fill(text: Y.Text, paragraph: ParagraphNode): void {
       text.insert(text.length, node.text);
       continue;
     }
-    text.insertEmbed(text.length, {
-      mention: { userId: node.userId, label: node.label },
-    } satisfies MentionEmbed);
+    insertMention(text, text.length, { id: node.userId, name: node.label });
   }
+}
+
+/**
+ * A mention written into a paragraph, at an offset.
+ *
+ * **The embed's shape lives here and nowhere else** (invariant 7). Two call
+ * sites build one now — a first draft parsed from plain text, and somebody
+ * choosing a name from the editor's picker — and a second spelling of
+ * `{ mention: { userId, label } }` would be a mention that `inlinesOf` skips
+ * as an embed it does not recognise. Silently: the paragraph would render
+ * without it and read back one character short.
+ *
+ * The label is stored beside the id for the reason `MentionNode` gives — it is
+ * what the document said at the time, and re-resolving every mention through
+ * the current user table would rewrite what people wrote (D-083).
+ */
+export function insertMention(text: Y.Text, at: number, person: MentionCandidate): void {
+  text.insertEmbed(at, {
+    mention: { userId: person.id, label: person.name },
+  } satisfies MentionEmbed);
 }
 
 /**
@@ -258,6 +276,188 @@ export function documentUndoManager(doc: Y.Doc): Y.UndoManager {
   return new Y.UndoManager(doc.getArray(BLOCKS), {
     trackedOrigins: new Set([LOCAL_ORIGIN]),
   });
+}
+
+/* ------------------------------------------------------------------ *
+ * What an editing surface needs: a paragraph as a string, and offsets
+ * in that string that mean something to the CRDT.
+ * ------------------------------------------------------------------ */
+
+/**
+ * A mention, as one character.
+ *
+ * **This is the decision the editing surface turns on** (D-117). A paragraph
+ * is a `Y.Text` holding text and embeds, and Yjs counts an embed as **one**
+ * position — `text.length` of a paragraph that is nothing but a mention is 1.
+ * So if the string an editor works in spends exactly one UTF-16 code unit on
+ * each embed, a string offset and a `Y.Text` offset are *the same number*, and
+ * everything downstream gets simple: the diff below needs no knowledge of
+ * embeds, a caret is one integer, and `text.delete(at, n)` takes the offsets a
+ * `Selection` reported without a conversion step that could be wrong.
+ *
+ * U+FFFC is OBJECT REPLACEMENT CHARACTER, which Unicode defines for exactly
+ * this — the stand-in for an embedded object in a run of text. Picking a
+ * character nobody types is the whole requirement; picking the one that is
+ * *named* after the job means the next reader does not have to be told.
+ */
+export const EMBED_CHAR = "\uFFFC";
+
+/**
+ * One paragraph's inline nodes.
+ *
+ * The same projection `richTextFrom` does, for one block instead of a
+ * document. An editor wants this rather than the whole tree: it repaints a
+ * paragraph per keystroke, and `richTextFrom` takes an encoded update, so
+ * asking it would mean encoding the entire document on every character.
+ */
+export function blockNodes(text: Y.Text): InlineNode[] {
+  return inlinesOf(text);
+}
+
+/**
+ * A paragraph as the string an editor edits.
+ *
+ * Reads the delta rather than `toString()`, because `Y.Text.toString()` drops
+ * embeds entirely — a paragraph of "Ask @Riley about it" would come back as
+ * "Ask  about it" and every offset after the mention would be one short. That
+ * silent off-by-one is the bug this function exists to make impossible.
+ */
+export function blockString(text: Y.Text): string {
+  let out = "";
+
+  for (const op of text.toDelta() as { insert?: unknown }[]) {
+    if (typeof op.insert === "string") out += op.insert;
+    else if (op.insert !== undefined) out += EMBED_CHAR;
+  }
+
+  return out;
+}
+
+/**
+ * Text as it is safe to insert — which is text with no `EMBED_CHAR` in it.
+ *
+ * A literal U+FFFC arriving from a paste would be stored as a character and
+ * then read back by `blockString` as if it were a mention, so every offset
+ * after it would address the wrong place while the paragraph looked fine. It
+ * is not a character anybody means to type; dropping it is cheaper than
+ * carrying the ambiguity.
+ */
+export function typeable(input: string): string {
+  return input.includes(EMBED_CHAR) ? input.split(EMBED_CHAR).join("") : input;
+}
+
+/** One replaced range: what to delete at `at`, and what to insert there. */
+export interface Replacement {
+  at: number;
+  removed: number;
+  added: string;
+}
+
+/**
+ * The single replaced range between two strings.
+ *
+ * Walks in from both ends. Everything between the common prefix and the common
+ * suffix is what changed — which is one insert, one delete, or one of each, and
+ * covers typing, backspacing, selecting-and-replacing and pasting without
+ * needing to know which of those happened.
+ *
+ * **It is the whole trick** (D-112), and it did not change when the surface
+ * did (D-117). Applying the range is a `delete` and an `insert` on the
+ * `Y.Text`; replacing the paragraph wholesale would also "work" and would make
+ * every edit conflict with every concurrent edit — two people typing in
+ * different sentences of one paragraph would overwrite each other, which is
+ * precisely what the CRDT was chosen to prevent. Because an embed is one
+ * character here, a range that happens to span a mention deletes the mention
+ * and nothing else needs to know.
+ */
+export function replacedRange(before: string, after: string): Replacement {
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) {
+    start += 1;
+  }
+
+  let end = 0;
+  while (
+    end < before.length - start &&
+    end < after.length - start &&
+    before[before.length - 1 - end] === after[after.length - 1 - end]
+  ) {
+    end += 1;
+  }
+
+  return {
+    at: start,
+    removed: before.length - start - end,
+    added: after.slice(start, after.length - end),
+  };
+}
+
+/** An `@` being typed: where it starts, and what has been typed after it. */
+export interface MentionQuery {
+  /** The offset of the `@` itself. */
+  at: number;
+  /** What follows it, up to the caret. */
+  query: string;
+}
+
+/** The longest name a typeahead will chase before giving up. */
+const MAX_QUERY = 40;
+
+/**
+ * Is the caret inside an `@` that has not been resolved yet?
+ *
+ * **Spaces are allowed in the query**, which looks wrong until you remember
+ * that `parseRichText` matches the *longest* candidate name and names contain
+ * spaces (D-083): a picker that stopped at the first space could never offer
+ * "Riley Kaur". The query therefore runs from the `@` to the caret and is
+ * filtered by substring, so it narrows as you type and closes on its own when
+ * nothing matches.
+ *
+ * An `@` only counts at the start of the paragraph or after whitespace, so an
+ * email address is not a mention attempt. A newline or an existing mention ends
+ * the scan — you cannot mention somebody *through* either.
+ */
+export function mentionQuery(block: string, caret: number): MentionQuery | null {
+  const from = Math.max(0, caret - MAX_QUERY - 1);
+
+  for (let i = caret - 1; i >= from; i -= 1) {
+    const char = block[i];
+    if (char === undefined) return null;
+    if (char === "\n" || char === EMBED_CHAR) return null;
+
+    if (char === "@") {
+      const before = i === 0 ? " " : block[i - 1]!;
+      if (!/\s/.test(before)) return null;
+      return { at: i, query: block.slice(i + 1, caret) };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * The people an `@` query could mean, best first.
+ *
+ * Match is case-insensitive substring on the name, which is the same rule
+ * `ILIKE` gives search (invariant 15) — one idea of what "matches" in an app
+ * where a person could reasonably expect the two to agree. A name that
+ * *starts* with the query is offered before one that merely contains it,
+ * because that is the one somebody typing three letters usually means.
+ */
+export function mentionMatches(
+  people: readonly MentionCandidate[],
+  query: string,
+  limit = 6,
+): MentionCandidate[] {
+  const needle = query.trim().toLowerCase();
+
+  const scored = people
+    .map((person) => ({ person, at: person.name.toLowerCase().indexOf(needle) }))
+    .filter((hit) => hit.at >= 0);
+
+  scored.sort((a, b) => a.at - b.at || a.person.name.localeCompare(b.person.name));
+
+  return scored.slice(0, limit).map((hit) => hit.person);
 }
 
 /**

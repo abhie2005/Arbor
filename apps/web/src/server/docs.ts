@@ -1,6 +1,13 @@
 import "server-only";
 
-import { type DocRecord, containerAccess, listDocs, loadContainerTree, loadDoc } from "@arbor/db";
+import {
+  type DocRecord,
+  containerAccess,
+  listDocs,
+  loadContainerTree,
+  loadDoc,
+  mentionableIn,
+} from "@arbor/db";
 import { cache } from "react";
 
 /**
@@ -30,6 +37,13 @@ export interface DocsPage {
   /** Null when the workspace has no documents, or the asked-for one is gone. */
   open: { doc: DocRecord; state: string } | null;
   canCreateWorkspaceWide: boolean;
+  /**
+   * Who the editor's `@` can mean — the workspace's members, loaded with the
+   * page rather than fetched when somebody types. A workspace has hundreds of
+   * people, not millions, and a picker that asked the server per keystroke
+   * would be a round trip inside the one interaction that has to feel local.
+   */
+  people: { id: string; name: string }[];
 }
 
 export const loadDocsPage = cache(
@@ -39,9 +53,10 @@ export const loadDocsPage = cache(
     docId: string | null,
     isAdmin: boolean,
   ): Promise<DocsPage> => {
-    const [docs, containers] = await Promise.all([
+    const [docs, containers, people] = await Promise.all([
       listDocs(workspaceId, viewerId),
       loadContainerTree(workspaceId),
+      mentionableIn(workspaceId),
     ]);
 
     const nodes = [...containers.values()];
@@ -83,6 +98,7 @@ export const loadDocsPage = cache(
       // operation learned the hard way (D-097).
       open: open ? { doc: open, state: Buffer.from(open.state).toString("base64") } : null,
       canCreateWorkspaceWide: isAdmin,
+      people,
     };
   },
 );
