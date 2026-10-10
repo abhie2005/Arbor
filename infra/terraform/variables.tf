@@ -102,6 +102,18 @@ variable "db_username" {
   default     = "arbor"
 }
 
+variable "ecr_force_delete" {
+  description = "Allow `terraform destroy` to delete a repository that still has images in it. True for a throwaway environment; false for one holding the images a rollback would need."
+  type        = bool
+  default     = false
+}
+
+variable "db_skip_final_snapshot" {
+  description = "Skip the snapshot taken on destroy. A final snapshot outlives the database and keeps billing, which is right for production and wrong for a validation run nobody intends to restore."
+  type        = bool
+  default     = false
+}
+
 variable "db_deletion_protection" {
   description = <<-EOT
     Refuse `terraform destroy` on the database.

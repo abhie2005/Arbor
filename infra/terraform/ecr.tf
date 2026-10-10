@@ -11,6 +11,13 @@
 resource "aws_ecr_repository" "web" {
   name = "${local.name}-web"
 
+  # A repository with images in it cannot be deleted, so a `terraform destroy`
+  # of a validated throwaway environment fails here — after the VPC and the
+  # database have already gone, which is the worst place to stop. Off by
+  # default: deleting a production registry should take a deliberate hand,
+  # because the images are how a rollback is expressed.
+  force_delete = var.ecr_force_delete
+
   # Immutable tags, because `var.image_tag` is a commit sha and a rollback is
   # only expressible if the thing being rolled back to still exists. A mutable
   # tag turns "deploy the previous sha" into "deploy whatever that sha points at
@@ -25,6 +32,7 @@ resource "aws_ecr_repository" "web" {
 resource "aws_ecr_repository" "migrator" {
   name                 = "${local.name}-migrator"
   image_tag_mutability = "IMMUTABLE"
+  force_delete         = var.ecr_force_delete
 
   image_scanning_configuration {
     scan_on_push = true

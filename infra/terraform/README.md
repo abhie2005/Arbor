@@ -17,6 +17,13 @@ needs them yet, and Redis is in the table with nothing using it.
   instance run whether or not anyone opens the app. Fargate is the only part
   that tracks `desired_count`.
 - `cp terraform.tfvars.example terraform.tfvars` and read it.
+- A deploy identity that may create these 43 resource blocks. **`PowerUserAccess`
+  covers everything here except IAM**, and this configuration creates two roles
+  and passes them to ECS — so attach `PowerUserAccess` plus `deploy-policy.json`
+  in this directory, which grants exactly those IAM actions and scopes them to
+  roles named `arbor-*`. Reusing another project's deploy user is the tempting
+  shortcut and the one that fails halfway: `iam:CreateRole` is denied after the
+  VPC and the NAT gateway already exist.
 
 ## The first deploy, in the order it has to happen
 
@@ -54,6 +61,31 @@ terraform apply -var "image_tag=$TAG"
 RDS takes about ten minutes to come up on the first apply. The ECS service will
 cycle tasks until the schema exists, because `/api/health` asks Postgres a
 question — which is the point of it. Run the migration next and it settles.
+
+## Proving it works without keeping it
+
+The first apply is the test, and the test does not have to become a bill. Every
+part of this is charged by the hour, so standing it up, driving it, and
+destroying it inside an afternoon costs cents rather than the ~$95/month the
+environment costs to leave running.
+
+Set the four throwaway values in `terraform.tfvars` (see the example file) before
+the first apply, not after. With the production defaults a `destroy` fails on the
+protected database and again on the registries that still hold your images —
+both *after* the VPC is gone, which leaves an environment that is neither up nor
+down and has to be finished by hand.
+
+```bash
+terraform apply -var "image_tag=$TAG"     # ~15 min; RDS is ~10 of it
+# run the migration task (below), then:
+curl -s -o /dev/null -w '%{http_code}\n' "http://$(terraform output -raw alb_dns_name)/api/health"
+# open the app, sign in, watch a second tab receive a change
+terraform destroy
+```
+
+`destroy` takes the database with it and keeps no snapshot, which is the whole
+point of `db_skip_final_snapshot` — and the reason not to do this to anything
+holding data you want.
 
 ## Migrations
 

@@ -95,8 +95,14 @@ resource "aws_db_instance" "main" {
   deletion_protection = var.db_deletion_protection
   # A final snapshot on destroy, named for when it happened so two destroys do
   # not collide on the identifier.
-  skip_final_snapshot       = false
-  final_snapshot_identifier = "${local.name}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  skip_final_snapshot = var.db_skip_final_snapshot
+  # Null when it is being skipped: AWS rejects an identifier it has been told
+  # not to use, and the error names the identifier rather than the skip.
+  final_snapshot_identifier = (
+    var.db_skip_final_snapshot
+    ? null
+    : "${local.name}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}"
+  )
 
   # Off by default, and not as a cost decision: Performance Insights is not
   # supported on the burstable micro and small classes, so leaving it on would

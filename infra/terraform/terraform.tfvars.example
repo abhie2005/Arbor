@@ -35,3 +35,15 @@ db_multi_az       = false
 # Unsupported on micro and small burstable classes — leaving this true with the
 # class above makes the first apply fail.
 db_performance_insights = false
+
+# --- a throwaway environment, for proving the apply works ---------------------
+# All three of these are production-wrong and validation-right. Set them
+# together or not at all: with the defaults, `terraform destroy` fails twice —
+# on the database, which is protected, and then on the registries, which still
+# hold the images you pushed. It fails *after* the VPC has gone, which is the
+# least convenient place to stop.
+#
+# db_deletion_protection = false
+# db_skip_final_snapshot = true   # or the snapshot outlives the database, billing
+# ecr_force_delete       = true
+# desired_count          = 1      # halves the Fargate line; one task still proves it

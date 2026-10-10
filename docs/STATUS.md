@@ -158,7 +158,18 @@ In the order that buys the most:
 
 - **It has never been applied.** `terraform validate` passes and `plan` reports
   45 resources against the real provider, which is not the same as having run.
-  The first apply is the test.
+  The first apply is the test. Three things that would have made that test end
+  badly are now fixed: a `destroy` used to fail on the protected database and
+  again on the registries still holding the pushed images — both *after* the
+  VPC had gone — and the final snapshot outlived the database it was taken
+  from. `db_deletion_protection`, `db_skip_final_snapshot` and
+  `ecr_force_delete` make a throwaway run destroyable, and the runbook now says
+  to set them before the first apply rather than after.
+- **The runbook never said what permissions the deploy identity needs.** It
+  does now: `PowerUserAccess` plus `infra/terraform/deploy-policy.json`, which
+  grants the IAM actions this creates and scopes them to `arbor-*` roles. The
+  failure it prevents is the slow one — `iam:CreateRole` denied after the NAT
+  gateway already exists.
 - **No HTTPS until `certificate_arn` is set**, and `arbor_session` is a bearer
   token in a cookie — over plain HTTP it is readable by anything on the path.
 - **`allowed_ingress_cidrs` defaults to the whole internet.**
