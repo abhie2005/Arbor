@@ -45,7 +45,7 @@ demo password.
 Verify the stack end to end:
 
 ```bash
-npm test               # 462 unit tests, no database needed
+npm test               # 486 unit tests, no database needed
 npm run db:smoke       # 230 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
 npm run check:actions  # 152 checks that POST what a button click posts, then
@@ -209,10 +209,13 @@ back would be worse than no nudge.
       box cannot have two ideas of what matches, and neither half needed a
       permission rule of its own: tasks go through the compiler's access-index
       join, pages through the clause the docs screen already shares. ⌘Z inside a
-      document is the CRDT's rather than the textarea's, and tracks only local
-      edits, so undo can never take back somebody else's sentence. Still owed:
-      an editor that can hold a mention, and a page tree that is more than
-      indentation.
+      document is the CRDT's rather than the browser's, and tracks only local
+      edits, so undo can never take back somebody else's sentence. The editor
+      is a hand-rolled contenteditable per paragraph, because every Yjs editor
+      binding binds a shared type the stored format is not — and a mention is
+      one character in the string it edits, which is what makes a DOM offset, a
+      caret and a CRDT position the same number. Still owed: a page tree that is
+      more than indentation.
 - [ ] **10 — Automations, forms, public API.**
 
 Access control moved ahead of collaboration deliberately: every collaborative
