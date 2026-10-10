@@ -263,6 +263,15 @@ two applies, because the registry must exist before an image can be pushed.
   Graceful beats dead. The real fix is a bigger VM (`colima stop && colima start
   --memory 4`), which restarts the Postgres container and is therefore the
   user's call, not a thing to do mid-task.
+- **A section `check:actions` never reaches can be run on its own.** The script
+  is linear top-level code, so its preamble (sign-in, `report`, `callOn`, the
+  `pg` client) plus one section's own lines is a runnable file — drop the
+  `/settings/statuses` and `/` warms and the `IDS` lookup, which are the
+  heaviest compiles and which only `call()` needs. That is how the documents
+  section was verified for D-117 on a machine where the full run dies a third
+  of the way through. Write it to the scratchpad, `docker cp` it into
+  `/repo/apps/web/scripts/`, and delete it afterwards — it is a way of reading
+  the gate, not a second gate to maintain.
 - **`check:actions` cannot run against a production build.** `actionIds()` reads
   the `exportedName` manifest that only a dev build emits; a production build's
   `server-reference-manifest.json` maps action ids to routes but carries no
