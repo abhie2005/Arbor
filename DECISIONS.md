@@ -4018,3 +4018,67 @@ which is the presence gap documents already had.
 would have changed what the CRDT contains, and it is tractable because a mention
 spends exactly one character — which makes a DOM offset, a caret and a CRDT
 position the same number.
+
+### D-118
+**The first apply, and the TLS mode that had quietly changed meaning** · 2026-10-10 · active
+
+D-114 built the AWS path and said, in as many words, that the first apply would
+be the test. It was. Forty-five resources stood up in a real account, the
+schema migrated, the seed ran, the app answered `/api/health` with `ok` through
+the load balancer, every protected route redirected to `/login`, and then the
+whole thing was destroyed. About fifteen cents.
+
+**What the test caught could not have been caught any other way.** The migrator
+reached RDS and died on `SELF_SIGNED_CERT_IN_CHAIN`. The runbook said
+`sslmode=require` with no CA bundle gives `rejectUnauthorized: false` —
+encrypted but unverified, libpq's meaning. That stopped being true: current
+`pg-connection-string` treats `require`, `prefer` and `verify-ca` as aliases
+for `verify-full`, and prints a warning saying so on every connection. So the
+posture against RDS was not weak-but-working. It could not connect at all, and
+nothing had noticed because nothing in this repo had ever opened a TLS
+connection to a real RDS instance — `db:smoke` runs against a local container
+with no TLS at all, and `validate` and `plan` never connect to anything.
+
+**The fix is the one the gap list already named**, which is the part worth
+noticing: "shipping the Amazon RDS CA bundle and moving to `verify-full`" was
+written there as the eventual answer to a weakness. It turned out to be the
+only answer that connects. There was no unverified-but-working state to leave
+in place, so the choice was between doing it properly and explicitly asking for
+something weaker (`uselibpqcompat=true`), which would have meant writing down a
+posture the project had already rejected. Both image targets fetch the global
+bundle at build time and assert it parses; the connection string asks for
+`verify-full` against it.
+
+**`DatabaseOptions.ssl` was dead code, and that is a documentation bug as much
+as a code one.** It implied `{ rejectUnauthorized: false }` and nothing in the
+repo ever passed it, so the posture the deployment notes described was never
+the posture in force — the connection string was always what decided. Removing
+it means there is one place that answers "how is this connection secured", and
+it is the URL.
+
+**Three smaller things the apply found.** The account is on an **AWS Free
+Plan**, which refuses `backup_retention_period = 7` with a
+`FreeTierRestrictionError` that names the retention period rather than the
+plan — so `db_backup_retention_days` exists now, 7 by default and 0 for a
+throwaway. Nothing else hit the cap: the NAT gateway, the ALB and Fargate all
+created normally, which was the open question. And the alpine base has no
+`/usr/local/share/ca-certificates`, so the bundle needs a `mkdir -p` ahead of
+it — caught by the build rather than by reading it.
+
+**What was fixed *before* the apply mattered as much.** A `destroy` would have
+failed on the protected database and again on the registries still holding the
+pushed images, both *after* the VPC and NAT gateway had gone — an environment
+neither up nor down, finished by hand. `db_deletion_protection`,
+`db_skip_final_snapshot` and `ecr_force_delete` were set as a group before
+anything was created, and the destroy completed cleanly: 45 destroyed, empty
+state, and a sweep for orphaned NAT gateways, addresses, snapshots and load
+balancers that came back zero.
+
+**Not done, deliberately.** Nobody signed in on the deployed instance. The
+authenticated screens were driven on localhost the same day; what AWS adds is
+proof of the infrastructure path, and that is what was proven.
+
+*In one sentence:* the apply was worth running because it falsified a sentence
+in our own documentation — `sslmode=require` had stopped meaning "unverified"
+and started meaning "fails", and no amount of `plan`, `validate` or unit
+testing could have said so.

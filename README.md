@@ -130,8 +130,12 @@ third-party application platform, hosted database vendor, or auth SaaS.
 *The AWS column is now partly real.* `infra/terraform/` provisions a VPC, RDS
 Postgres, an ECS Fargate service behind an ALB, and the two ECR repositories the
 `Dockerfile`'s two targets push to — 45 resources, with a runbook in
-`infra/terraform/README.md`. It has never been applied against a real account,
-so treat the first apply as the test it is. The rows marked *(designed for)*
+`infra/terraform/README.md`. **It has been applied**: all 45 stood up in a real
+account, the schema migrated, the app answered its health check through the
+load balancer, and it was destroyed again, for about fifteen cents. The apply
+was worth running because it falsified a sentence in these docs — `sslmode=require`
+had stopped meaning "encrypted but unverified" and started meaning "fails", so
+the images now ship the Amazon RDS CA bundle and verify properly (D-118). The rows marked *(designed for)*
 below are still design: no S3, SES, SQS, ElastiCache or Bedrock is provisioned,
 because nothing in the application asks for them yet (D-114).
 

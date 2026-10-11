@@ -156,15 +156,34 @@ In the order that buys the most:
 
 **Deployment (D-114)**
 
-- **It has never been applied.** `terraform validate` passes and `plan` reports
-  45 resources against the real provider, which is not the same as having run.
-  The first apply is the test. Three things that would have made that test end
-  badly are now fixed: a `destroy` used to fail on the protected database and
-  again on the registries still holding the pushed images — both *after* the
-  VPC had gone — and the final snapshot outlived the database it was taken
-  from. `db_deletion_protection`, `db_skip_final_snapshot` and
-  `ecr_force_delete` make a throwaway run destroyable, and the runbook now says
-  to set them before the first apply rather than after.
+- ~~**It has never been applied.**~~ **It has now** (2026-10-10). All 45
+  resources stood up in a real account, the migrator applied the schema, the
+  seed ran, and the app answered `/api/health` with `ok` through the ALB while
+  every protected route 307'd to `/login`. Then it was destroyed. Total cost of
+  finding out: about fifteen cents. What the first apply caught — none of it
+  visible to `validate`, to `plan`, or to any test in this repo:
+  - **`sslmode=require` stopped meaning what the note below said it meant**
+    (D-118). Current `pg-connection-string` treats it as an alias for
+    `verify-full`, so the migrator did not connect weakly, it died on
+    `SELF_SIGNED_CERT_IN_CHAIN`. Fixed properly rather than downgraded: both
+    image targets ship the Amazon RDS CA bundle now.
+  - **`DatabaseOptions.ssl` was dead code** implying
+    `rejectUnauthorized: false`, and nothing ever passed it — so the posture
+    the docs described was never the posture in force. Removed.
+  - **The account is on an AWS Free Plan**, which refuses
+    `backup_retention_period = 7` with a `FreeTierRestrictionError` naming the
+    retention rather than the plan. `db_backup_retention_days` exists now: 7 by
+    default, 0 for a throwaway. Nothing else hit the cap — NAT gateway, ALB and
+    Fargate all created normally.
+  - **The alpine base has no `/usr/local/share/ca-certificates`**, so the
+    bundle needed a `mkdir -p` ahead of it.
+- Three things that would have made that first apply end badly were fixed
+  before it: a `destroy` used to fail on the protected database and again on
+  the registries still holding the pushed images — both *after* the VPC had
+  gone — and the final snapshot outlived the database it was taken from.
+  `db_deletion_protection`, `db_skip_final_snapshot` and `ecr_force_delete`
+  make a throwaway run destroyable. **Proven: the destroy completed cleanly**,
+  which is the half of the exercise that would have been easy to skip.
 - **The runbook never said what permissions the deploy identity needs.** It
   does now: `PowerUserAccess` plus `infra/terraform/deploy-policy.json`, which
   grants the IAM actions this creates and scopes them to `arbor-*` roles. The
@@ -173,9 +192,10 @@ In the order that buys the most:
 - **No HTTPS until `certificate_arn` is set**, and `arbor_session` is a bearer
   token in a cookie — over plain HTTP it is readable by anything on the path.
 - **`allowed_ingress_cidrs` defaults to the whole internet.**
-- **The database connection is encrypted but unverified.** `sslmode=require`
-  with no CA bundle means `rejectUnauthorized: false`. Shipping the Amazon RDS
-  CA bundle and moving to `verify-full` is the fix.
+- ~~**The database connection is encrypted but unverified.**~~ Closed by D-118,
+  and the premise was wrong rather than merely incomplete: `require` is an
+  alias for `verify-full` in current `pg`, so there was never an
+  unverified-but-working state to leave in place — only a broken one.
 - **Terraform state is local**, so two operators would race. The S3 backend is
   written and commented out in `versions.tf`.
 - **Still no CI.** Nothing builds or pushes the images; `compose.yml` used to

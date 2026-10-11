@@ -58,7 +58,11 @@ ENV NODE_ENV=production
 # Shipping the bundle is the fix the deployment notes already named, and it is
 # now the only one that works: there is no posture here that both connects and
 # skips verification without explicitly asking for it.
-RUN wget -qO /usr/local/share/ca-certificates/rds-global-bundle.pem \
+# mkdir first: the alpine base has no /usr/local/share/ca-certificates — that
+# directory arrives with the ca-certificates package, which this image does not
+# install and does not need for one explicitly-named bundle.
+RUN mkdir -p /usr/local/share/ca-certificates \
+ && wget -qO /usr/local/share/ca-certificates/rds-global-bundle.pem \
       https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
  && grep -q "BEGIN CERTIFICATE" /usr/local/share/ca-certificates/rds-global-bundle.pem
 
@@ -105,7 +109,11 @@ ENV NODE_ENV=production
 # Shipping the bundle is the fix the deployment notes already named, and it is
 # now the only one that works: there is no posture here that both connects and
 # skips verification without explicitly asking for it.
-RUN wget -qO /usr/local/share/ca-certificates/rds-global-bundle.pem \
+# mkdir first: the alpine base has no /usr/local/share/ca-certificates — that
+# directory arrives with the ca-certificates package, which this image does not
+# install and does not need for one explicitly-named bundle.
+RUN mkdir -p /usr/local/share/ca-certificates \
+ && wget -qO /usr/local/share/ca-certificates/rds-global-bundle.pem \
       https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
  && grep -q "BEGIN CERTIFICATE" /usr/local/share/ca-certificates/rds-global-bundle.pem
 

@@ -223,10 +223,28 @@ two applies, because the registry must exist before an image can be pushed.
   contains, or `docs` is empty in one connection and populated in another.
   `lsof -nP -iTCP:5432 -sTCP:LISTEN` shows both (`ssh` is Colima's forward,
   `com.docker` is Desktop's).
-- **`docker` cannot pull: `docker-credential-desktop` not found.**
-  `~/.docker/config.json` names a credential helper that is not installed. The
-  images here are public, so a clean config is enough for one command:
-  `DOCKER_CONFIG=$(mktemp -d) docker pull …`.
+- **`docker` cannot pull or push: `docker-credential-desktop` not found.**
+  `~/.docker/config.json` sets `credsStore: desktop`, and the helper is not on
+  PATH — but it **is installed**, at
+  `/Applications/Docker.app/Contents/Resources/bin/` alongside
+  `docker-credential-ecr-login` and `docker-credential-osxkeychain`. Put that
+  directory on PATH and the keychain works normally, which is what an
+  `aws ecr get-login-password | docker login` needs (D-118):
+
+  ```bash
+  export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"
+  ```
+
+  For a one-off pull of a public image, a clean config also works and needs no
+  helper: `DOCKER_CONFIG=$(mktemp -d) docker pull …`.
+- **Build container images on Docker Desktop, not on Colima.** Colima's VM has
+  ~1.9GiB and 2 CPUs; Docker Desktop has 7.7GiB and 12. A
+  `--platform linux/amd64` production build of this app is an emulated Next
+  build and wants the larger one. They are separate daemons, so this costs
+  nothing but a context: `docker context use desktop-linux`, or
+  `DOCKER_HOST="" docker …`. `arbor-pg` stays on Colima and is untouched — which
+  is the point, since the alternative is `colima start --memory 4` and that
+  restarts the database.
 - **The first host→Postgres connection after Colima starts can take ~30s** while
   the port forward is established. It looks like a hung migration. The second
   connection is instant; do not go hunting for a deadlock before retrying.
