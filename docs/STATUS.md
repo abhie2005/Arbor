@@ -1,18 +1,30 @@
 # Status — resume here
 
-Last updated 2026-10-11 (Phase 9 is complete — its roadmap line read
-"CRDT editor, nested pages, backlinks" and all three now exist — documents are
-editable *including the paragraphs that name somebody*, ⌘Z in one is the
-CRDT's and puts the caret back, search reads them, the page tree is a tree you
-can rearrange, and the AWS path has been applied once and destroyed). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-11. Repo: https://github.com/abhie2005/Arbor (`main`).
+
+**Phases 1–9 are done; Phase 10 is next and has nothing built against it.**
+Phase 9's roadmap line read "CRDT editor, nested pages, backlinks" and all
+three now exist: documents are editable *including the paragraphs that name
+somebody*, ⌘Z in one is the CRDT's and puts the caret back where the edit was,
+search reads them, the page tree is a tree you can rearrange, and `[[` links a
+page or a task with the reverse lookup on both ends. The AWS path has been
+applied against a real account once and destroyed again.
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
 what is next*, so start here when resuming and do not read the tree to orient
 yourself.
 
-**No open bugs.** The archaeology of the ones that are fixed, and what browser
-verification found in each phase, is in `docs/HISTORY.md`.
+**One open bug**, found on 2026-10-11 while building backlinks and deliberately
+not fixed there because it predates the phase: `task-history.tsx` formats
+timestamps with `toLocaleString("en-GB")` and no `timeZone`, so the server
+renders in its zone and the browser re-renders in the viewer's — React throws
+the tree away and says so in the console. It will happen in any deployment,
+since a server and a browser are rarely in the same zone, and it contradicts
+invariant 9. Details under "Found while building this".
+
+The archaeology of the bugs that are fixed, and what browser verification found
+in each phase, is in `docs/HISTORY.md`.
 
 ---
 
@@ -53,14 +65,14 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Time tracking** | Start and stop on the task page, an entry list, logging time after the fact, and tracked-against-estimate. Every write is an operation (D-093), so ⌘Z undoes a stop and restores a deleted entry. At most one running timer per person, held by a unique partial index (D-094). A readout in the shell of every screen, pushed down the live stream so a timer started in another tab appears in this one (D-098). |
 | **Goals** | `/goals` — goals with key results of four kinds. A *rollup* key result holds a view definition and is counted by the compiler (D-101), so a goal and a list can never disagree about what counts; it is computed as the goal's **owner** rather than the reader (D-102), which is what makes progress a shared fact. Manual, currency and yes/no key results are entered. Progress is the mean of the key results, each clamped; completion is a timestamp somebody set, not a number crossing 100%. |
 | **Dashboards** | `/dashboards` — a grid of cards, each a filter plus a way of drawing it. A card's `kind` *is* which compiler entry point it calls (D-104): a stat is `compileAggregate`, a chart is `compileGroupCounts`. Counted as the **viewer** (D-105), which is the opposite of a goal and for a reason. Scoped to a container, with personal dashboards following the saved view rule. Charts are HTML bars measured against the largest slice; no charting library. |
-| **Documents** | `/docs` — a page tree scoped by the same `access_index` join everything else uses, and an editor. The tree is a real walk at any depth (D-119): collapse hides descendants, a drop onto a row makes a page its first child and a drop in the gap below one makes it the next sibling, both as one `afterId`, and the `+` on a row makes a subpage. A document's body is a Yjs CRDT holding the *same block tree* comments and descriptions use (ADR 6, D-110), so a mention is a reference rather than the characters "@Name", and `search_text` beside it is a projection recomputed on every write. The editor is a **contenteditable per paragraph** (D-117) with the change applied as a diff (D-112), so two people typing in one paragraph merge instead of clobbering. A mention is one `EMBED_CHAR` in the string the editor works in, which makes a DOM offset, a caret and a CRDT position the same number — so a paragraph naming somebody is edited rather than shown, `@` offers the workspace's members, and the caret is a Yjs relative position that survives both ⌘Z and somebody else's insert. Updates POST as base64 and arrive as a nudge on the existing stream; the editor answers by pulling the difference rather than re-rendering. Creating, renaming, moving and archiving are configuration writes with an activity row and no ⌘Z (D-111). |
+| **Documents** | `/docs` — a page tree scoped by the same `access_index` join everything else uses, and an editor. The tree is a real walk at any depth (D-119): collapse hides descendants, a drop onto a row makes a page its first child and a drop in the gap below one makes it the next sibling, both as one `afterId`, and the `+` on a row makes a subpage. `[[` links a page or a task — a second embed kind the editor's offset arithmetic absorbed without a change — and `doc_links` answers the reverse, shown as "Linked from" on a page and "Referenced by" on a task, scoped to pages the *viewer* can read (D-120). A document's body is a Yjs CRDT holding the *same block tree* comments and descriptions use (ADR 6, D-110), so a mention is a reference rather than the characters "@Name", and `search_text` beside it is a projection recomputed on every write. The editor is a **contenteditable per paragraph** (D-117) with the change applied as a diff (D-112), so two people typing in one paragraph merge instead of clobbering. A mention is one `EMBED_CHAR` in the string the editor works in, which makes a DOM offset, a caret and a CRDT position the same number — so a paragraph naming somebody is edited rather than shown, `@` offers the workspace's members, and the caret is a Yjs relative position that survives both ⌘Z and somebody else's insert. Updates POST as base64 and arrive as a nudge on the existing stream; the editor answers by pulling the difference rather than re-rendering. Creating, renaming, moving and archiving are configuration writes with an activity row and no ⌘Z (D-111). |
 | **Search** | `/search` — the screen that finally reads `docs.search_text`. Two halves, each through the permission path it already had: tasks are `compileViewQuery` with scope `everything` and `filters.search` set (which had existed since the beginning and been set by nothing), pages are `searchDocs` sharing `listDocs`' reachability clause. Matching is `ILIKE`, the same rule the compiler has always used, so one box cannot have two ideas of what matches (D-113); trigram GIN indexes make that affordable. A GET with the query in the URL, so a search is a sendable link — no action, no debounce. Snippets are anchored on the match and the term is marked. |
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
 **Verified:** 522 unit tests, 245 live-Postgres checks, 11 search checks, 7
-document-action checks, four packages typechecking clean, and the interactions above driven in Chrome — most
-recently `[[` resolving to a page and then to a task inside one sentence, the
+document-action checks, four packages typechecking clean, and the interactions
+above driven in Chrome — most recently `[[` resolving to a page and then to a task inside one sentence, the
 two edges landing in `doc_links`, and the reverse showing as "Linked from" on
 the page and "Referenced by" on the task.
 
@@ -82,8 +94,9 @@ all 7 of its checks pass.
   have required a gateway and it did not. `apps/worker` still has nothing to
   run.
 - `packages/sdk` — empty. Needed once there's an API worth a typed client.
-- Chat, automations, AI. **Docs are built** — see the table above and the gaps
-  below for what that does and does not mean.
+- Chat and AI. **Automations are next** (Phase 10) and their tables already
+  exist unread; **docs are built** — see the table above and the gaps below for
+  what that does and does not mean.
 - Derived field types (`formula`, `rollup`, `automatic_progress`) are declared
   and filterable, but nothing computes them yet. Time tracking did **not**
   change this: a tracked total is summed at read time, so the question of
@@ -115,38 +128,61 @@ was short rather than long:
   built and was invisible because the seed puts every view on a list.
 - ~~**A tracked-time rollup.**~~ Built earlier (D-107).
 
-### Next — what Phase 9 still owes
+### What Phase 9 owed, and where each answer is written down
 
-In the order that buys the most:
+All four are built. Kept as one line each because the reasoning is the
+valuable part and it lives in `DECISIONS.md`, not here:
 
-1. ~~**Nothing reads `search_text`.**~~ Built (D-113). `/search` reads it, the
-   task half goes through the compiler's `filters.search`, and both halves match
-   with `ILIKE` so one box cannot have two ideas of what matches. What it does
-   *not* cover is below, under "Known gaps".
-2. ~~**An editor that can hold a mention.**~~ Built (D-117). A contenteditable
-   per paragraph, hand-rolled rather than a library — because every Yjs editor
-   binding binds a *fixed* shared type (`y-prosemirror` a `Y.XmlFragment`) and
-   adopting one as shipped would have changed what the CRDT contains, which is
-   the one thing ADR 6 says has no second chance. The storage format was
-   therefore at stake after all, in exactly the direction the note said it was
-   not. A mention is one `EMBED_CHAR` in the editor's string, so the diff
-   (D-112) applies unchanged and a caret is one integer; `@` inserts one, from
-   the workspace's members.
-3. ~~**⌘Z in a document is the browser's, not the CRDT's.**~~ Built (D-116).
-   `documentUndoManager` tracks only `LOCAL_ORIGIN`, so ⌘Z takes back your own
-   typing and can never reach a colleague's; the handler calls
-   `preventDefault()` so the textarea's own history stops competing. Verified in
-   Chrome, including that the undo reaches Postgres. The caret still lands at
-   the end afterwards — see the gaps below.
-4. ~~**A page tree that is only indentation.**~~ Built (D-119). The order is
-   computed from the tree rather than from the flat list — which was the
-   actual bug, since a child's `position` comes from its own sibling sequence
-   and sorting the list put children among their parents' siblings. Collapse
-   hides descendants, a drop onto a row reparents and a drop in the gap below
-   one reorders, both through a single `afterId`, and subpages can finally be
-   made from the screen rather than only from the data model.
+1. **Nothing read `search_text`** → D-113. `/search` reads it; both halves
+   match with `ILIKE` so one box cannot have two ideas of what matches.
+2. **An editor that could hold a mention** → D-117. A hand-rolled
+   contenteditable per paragraph, because every Yjs editor binding binds a
+   *fixed* shared type and adopting one would have changed what the CRDT
+   contains. A mention is one `EMBED_CHAR`, which makes a DOM offset, a caret
+   and a CRDT position the same number.
+3. **⌘Z meaning the CRDT rather than the browser** → D-116, and the caret it
+   left at the end of the paragraph → D-117, which made the caret a Yjs
+   relative position.
+4. **A page tree that was only indentation** → D-119. The order is computed
+   from the tree, collapse hides descendants, and a drop onto a row or into
+   the gap below it is one `afterId`.
 
-### Known gaps in what was just built
+And the roadmap word that had no code at all:
+
+5. **Backlinks** → D-120. A link is a second embed kind carrying a target kind
+   plus an id; `doc_links` is maintained where `search_text` is and answers
+   the reverse question, scoped to pages the *viewer* can read.
+
+### Next — Phase 10, and what to settle before writing any of it
+
+**Automations, forms, public API.** The first phase with nothing built against
+it, and the first since Phase 1 that would give `apps/worker` something to run.
+Three questions are worth answering deliberately, the way the editor fork and
+the link format were, because each has a shape that is hard to take back:
+
+- **Does an automation run in-process or in a worker?** Every transport
+  question so far has been settled *against* a separate service: Postgres
+  carries changes (D-090), presence within a process (D-092) and between them
+  (D-100), and document updates (D-112). A collaborative editor was the last
+  thing that might have needed a gateway and it did not. An automation with a
+  delay ("in 3 days, if still open") is the first thing that genuinely cannot
+  be answered by a connection somebody is holding open — which is what makes
+  this a real decision rather than a repeat of one.
+- **Is an automation's action an `Operation`?** Invariant 1 says
+  `applyOperations` is the only thing that writes task data, so an automation
+  that sets a status should be an operation — which means it gets an activity
+  row and lands in somebody's undo stack. Whose? "The robot did it and I
+  pressed ⌘Z" is a question the operation layer has never been asked.
+- **What does the public API authenticate as?** Every read in the app joins
+  `access_index` for a *person*. A token is not a person, and inventing a
+  synthetic one is how the permission model gets quietly widened.
+  `packages/sdk` is empty and waiting for the answer.
+
+`automations`, `automation_runs`, `webhooks` and `templates` already exist as
+tables (`packages/db/src/schema/automation.ts`) and nothing reads or writes
+them — the schema was drawn in Phase 1 and has been waiting since.
+
+### Known gaps carried into Phase 10
 
 **Undo in a document (D-116)**
 
@@ -389,7 +425,7 @@ form offers single-valued axes only.
 - **Presence crosses processes** (D-100), with the check acting as the second
   process.
 
-### Known gaps in what was just built
+### Known gaps from Phase 8, still open
 
 **Dashboards**
 

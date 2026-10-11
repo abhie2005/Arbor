@@ -26,6 +26,16 @@ npm run typecheck
 
 `db:generate` then `db:migrate` for schema changes; rename the generated
 migration to something descriptive and update `migrations/meta/_journal.json`.
+**Check what `generate` proposes before applying it**: 0011's trigram indexes
+were hand-written with `IF NOT EXISTS`, so the drizzle snapshot never recorded
+them and every generate re-proposes them without the guard — which fails on any
+database that has actually run 0011 (D-120).
+
+There are two databases on the local Postgres. `arbor` is the real one, named
+by `.env`, and what `db:seed`, `db:smoke` and a host dev server use.
+`arbor_check` is a scratch copy for driving the app in a browser without
+touching the first; it is migrated and seeded, and nothing depends on it
+surviving — drop and recreate it freely.
 
 ```bash
 # The container image. Two targets; --platform matters on Apple Silicon because
