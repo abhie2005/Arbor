@@ -14,6 +14,7 @@ import {
 import { revalidatePath } from "next/cache";
 
 import { requireUser } from "./auth";
+import { loadSearch } from "./search";
 import { requireWorkspace } from "./workspace";
 
 /**
@@ -171,6 +172,55 @@ export async function repositionDocAction(
     await moveDoc(docId, { parentPageId, afterId }, { actorId: actor.id });
     revalidatePath("/docs");
     return { ok: true };
+  } catch (error) {
+    return failed(error);
+  }
+}
+
+/**
+ * What a `[[` could mean: pages and tasks the viewer can reach.
+ *
+ * **This asks the server per keystroke and the mention picker does not**, and
+ * the difference is the size of the set (D-120). A workspace has hundreds of
+ * members, so they are loaded with the page; it has thousands of tasks, and
+ * shipping those to the browser to filter locally would be a page load paying
+ * for an interaction most readers never start.
+ *
+ * It runs through `loadSearch` rather than a query of its own, so the picker
+ * matches the way `/search` matches — case-insensitive substring, one rule
+ * (invariant 15) — and inherits both halves' permission scoping rather than
+ * repeating it.
+ */
+export async function linkCandidates(term: string): Promise<
+  DocResult<{ candidates: { kind: "page" | "task"; id: string; label: string; hint: string }[] }>
+> {
+  try {
+    const [actor, workspace] = await Promise.all([requireUser(), requireWorkspace()]);
+
+    const trimmed = term.trim();
+    if (trimmed.length === 0) return { ok: true, candidates: [] };
+
+    const results = await loadSearch(workspace.id, actor.id, trimmed);
+
+    return {
+      ok: true,
+      candidates: [
+        ...results.docs.slice(0, 5).map((doc) => ({
+          kind: "page" as const,
+          id: doc.id,
+          label: doc.title,
+          hint: doc.containerName ?? "Workspace",
+        })),
+        ...results.tasks.slice(0, 5).map((task) => ({
+          kind: "task" as const,
+          id: task.id,
+          // The human key is what somebody means by "link to ENG-402", and it
+          // is what the label should say if they pick it.
+          label: task.key ?? task.name,
+          hint: task.name,
+        })),
+      ],
+    };
   } catch (error) {
     return failed(error);
   }

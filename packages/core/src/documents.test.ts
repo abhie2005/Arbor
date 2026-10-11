@@ -13,6 +13,7 @@ import {
   docStateFromText,
   documentUndoManager,
   emptyDocState,
+  linkQuery,
   mentionMatches,
   mentionQuery,
   pageWalk,
@@ -619,5 +620,43 @@ describe("a link inside the CRDT", () => {
 
     const nodes = richTextFrom(state)!.content[0]!.content;
     expect(nodes.map((n) => n.type)).toEqual(["mention", "text", "link"]);
+  });
+});
+
+describe("a [[ being typed", () => {
+  it("is found from the caret back to the brackets", () => {
+    expect(linkQuery("See [[hir", 9)).toEqual({ at: 4, query: "hir" });
+  });
+
+  it("starts a paragraph", () => {
+    expect(linkQuery("[[hir", 5)).toEqual({ at: 0, query: "hir" });
+  });
+
+  it("needs two brackets, because one is punctuation people type", () => {
+    expect(linkQuery("an [aside", 9)).toBeNull();
+  });
+
+  it("may begin after a letter, unlike an @ — a bracket is not part of a word", () => {
+    expect(linkQuery("note[[hir", 9)).toEqual({ at: 4, query: "hir" });
+  });
+
+  it("keeps spaces, so a multi-word title can be typed", () => {
+    expect(linkQuery("[[Hiring pl", 11)).toEqual({ at: 0, query: "Hiring pl" });
+  });
+
+  it("does not reach through a newline", () => {
+    expect(linkQuery("[[Hiring\nplan", 13)).toBeNull();
+  });
+
+  it("does not reach through an embed", () => {
+    expect(linkQuery(`[[${EMBED_CHAR}x`, 4)).toBeNull();
+  });
+
+  it("stops at a closing bracket, so a finished link does not reopen the picker", () => {
+    expect(linkQuery("[[done]] and more", 17)).toBeNull();
+  });
+
+  it("is nothing when the caret is before the brackets", () => {
+    expect(linkQuery("See [[hir", 3)).toBeNull();
   });
 });

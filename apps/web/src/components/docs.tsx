@@ -45,9 +45,19 @@ interface Props {
   canCreateWorkspaceWide: boolean;
   /** Who the editor's `@` can mean. */
   people: { id: string; name: string }[];
+  /** The pages pointing at whatever is open. */
+  backlinks: { id: string; title: string; containerName: string | null }[];
 }
 
-export function Docs({ docs, places, open, viewerId, canCreateWorkspaceWide, people }: Props) {
+export function Docs({
+  docs,
+  places,
+  open,
+  viewerId,
+  canCreateWorkspaceWide,
+  people,
+  backlinks,
+}: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -317,6 +327,22 @@ export function Docs({ docs, places, open, viewerId, canCreateWorkspaceWide, peo
               canEdit={canEdit}
               people={people}
             />
+
+            {/* What points here. Absent rather than empty when nothing does —
+                a heading over nothing reads as a feature that is broken. */}
+            {backlinks.length > 0 ? (
+              <section className="docs-backlinks">
+                <h2>Linked from</h2>
+                <ul>
+                  {backlinks.map((source) => (
+                    <li key={source.id}>
+                      <a href={`/docs?doc=${source.id}`}>{source.title}</a>
+                      <span>{source.containerName ?? "Workspace"}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
           </>
         ) : (
           <p className="docs-none">Nothing open. Pick a page, or make one.</p>

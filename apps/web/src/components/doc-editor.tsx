@@ -7,20 +7,23 @@ import {
   blockNodes,
   blockString,
   documentUndoManager,
+  insertLink,
   insertMention,
+  linkQuery,
   mentionMatches,
   mentionQuery,
   replacedRange,
   typeable,
   type InlineNode,
-  type MentionCandidate,
   type LinkNode,
+  type LinkTarget,
+  type MentionCandidate,
   type MentionNode,
 } from "@arbor/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Y from "yjs";
 
-import { pullDocUpdate, pushDocUpdate } from "@/server/doc-actions";
+import { linkCandidates, pullDocUpdate, pushDocUpdate } from "@/server/doc-actions";
 
 /**
  * The editor.
@@ -94,12 +97,27 @@ interface Block {
   nodes: InlineNode[];
 }
 
-/** An `@` the person is in the middle of typing. */
+/**
+ * A trigger the person is in the middle of typing.
+ *
+ * One at a time, kind-tagged. `@` and `[[` can both match the same caret —
+ * "@riley [[hir" has an unresolved `@` behind an unresolved `[[` — so the
+ * *nearer* trigger wins, which is the one whose opening is further right.
+ */
 interface Picker {
+  kind: "mention" | "link";
   block: number;
-  /** The offset of the `@`. */
+  /** The offset of the `@`, or of the first `[`. */
   at: number;
   query: string;
+}
+
+/** Something a `[[` could resolve to, as the server offered it. */
+interface LinkHit {
+  kind: LinkTarget["kind"];
+  id: string;
+  label: string;
+  hint: string;
 }
 
 function bytes(base64: string): Uint8Array {
@@ -315,6 +333,7 @@ export function DocEditor({ docId, state, viewerId, canEdit, people }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [picker, setPicker] = useState<Picker | null>(null);
   const [highlight, setHighlight] = useState(0);
+  const [linkHits, setLinkHits] = useState<LinkHit[]>([]);
 
   const hosts = useRef<(HTMLDivElement | null)[]>([]);
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -324,10 +343,42 @@ export function DocEditor({ docId, state, viewerId, canEdit, people }: Props) {
   /** An IME is mid-word: the DOM is not a document yet, so do not read it. */
   const composing = useRef(false);
 
-  const matches = useMemo(
-    () => (picker ? mentionMatches(people, picker.query) : []),
+  const mentionHits = useMemo(
+    () => (picker?.kind === "mention" ? mentionMatches(people, picker.query) : []),
     [people, picker],
   );
+
+  /** How many rows the open picker has, whichever kind it is. */
+  const optionCount = picker?.kind === "link" ? linkHits.length : mentionHits.length;
+
+  /**
+   * Candidates for a `[[`, asked of the server as it is typed.
+   *
+   * Debounced, unlike the mention picker which filters a list it already has
+   * (D-120). The stale guard matters more than the delay: answers can arrive
+   * out of order, and a slow response for "hi" landing after a fast one for
+   * "hiring" would replace the right list with a wrong one.
+   */
+  useEffect(() => {
+    if (picker?.kind !== "link") {
+      setLinkHits([]);
+      return;
+    }
+
+    let current = true;
+    const timer = setTimeout(() => {
+      void linkCandidates(picker.query).then((result) => {
+        if (!current) return;
+        setLinkHits(result.ok ? result.candidates : []);
+        setHighlight(0);
+      });
+    }, 150);
+
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [picker?.kind, picker?.query]);
 
   const blocksOf = useCallback(() => ydoc.getArray<Y.Map<unknown>>(BLOCKS), [ydoc]);
 
@@ -558,13 +609,33 @@ export function DocEditor({ docId, state, viewerId, canEdit, people }: Props) {
     // The picker follows the caret rather than the keystroke, so it is right
     // after an arrow key and after a click as well as after typing.
     const range = selectionIn(host);
-    const query = range && range.from === range.to ? mentionQuery(domString(host), range.from) : null;
+    const caret = range && range.from === range.to ? range.from : null;
+    const now = caret === null ? null : domString(host);
 
-    setPicker(query ? { block: index, ...query } : null);
+    const mention = now === null || caret === null ? null : mentionQuery(now, caret);
+    const link = now === null || caret === null ? null : linkQuery(now, caret);
+
+    // Both can match one caret. The nearer opening is the one being typed.
+    const opened: Picker | null =
+      link && (!mention || link.at > mention.at)
+        ? { kind: "link", block: index, ...link }
+        : mention
+          ? { kind: "mention", block: index, ...mention }
+          : null;
+
+    setPicker(opened);
     setHighlight(0);
   };
 
-  const choose = (index: number, person: MentionCandidate) => {
+  /**
+   * Resolve the open trigger into an embed.
+   *
+   * Both kinds do the same three things: delete the trigger and everything
+   * typed after it, write one embed in its place, and leave a space so the
+   * next keystroke is text rather than an argument about whether the caret is
+   * inside the name.
+   */
+  const choose = (index: number, pick: MentionCandidate | LinkHit) => {
     const host = hosts.current[index];
     const text = textAt(index);
     if (!host || !text || !picker || picker.block !== index) return;
@@ -573,11 +644,9 @@ export function DocEditor({ docId, state, viewerId, canEdit, people }: Props) {
     const caret = range?.from ?? blockString(text).length;
 
     ydoc.transact(() => {
-      // The `@` and what was typed after it become the embed.
       if (caret > picker.at) text.delete(picker.at, caret - picker.at);
-      insertMention(text, picker.at, person);
-      // A space after it, so the next keystroke is text rather than an
-      // argument about whether the caret is inside the name.
+      if ("hint" in pick) insertLink(text, picker.at, { kind: pick.kind, id: pick.id }, pick.label);
+      else insertMention(text, picker.at, pick);
       text.insert(picker.at + 1, " ");
     }, LOCAL_ORIGIN);
 
@@ -614,23 +683,25 @@ export function DocEditor({ docId, state, viewerId, canEdit, people }: Props) {
    * the picker is open, in which case it picks.
    */
   const onKeyDown = (index: number, event: React.KeyboardEvent<HTMLDivElement>) => {
-    const open = picker?.block === index && matches.length > 0;
+    const open = picker?.block === index && optionCount > 0;
 
     if (open) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setHighlight((current) => (current + 1) % matches.length);
+        setHighlight((current) => (current + 1) % optionCount);
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        setHighlight((current) => (current - 1 + matches.length) % matches.length);
+        setHighlight((current) => (current - 1 + optionCount) % optionCount);
         return;
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
-        const person = matches[highlight] ?? matches[0];
-        if (person) choose(index, person);
+        const options: (MentionCandidate | LinkHit)[] =
+          picker?.kind === "link" ? linkHits : mentionHits;
+        const pick = options[highlight] ?? options[0];
+        if (pick) choose(index, pick);
         return;
       }
       if (event.key === "Escape") {
@@ -705,10 +776,27 @@ export function DocEditor({ docId, state, viewerId, canEdit, people }: Props) {
             onBlur={() => setPicker((current) => (current?.block === index ? null : current))}
           />
 
-          {picker?.block === index && matches.length > 0 ? (
-            <ul className="mention-picker" role="listbox" aria-label="People">
-              {matches.map((person, position) => (
-                <li key={person.id}>
+          {picker?.block === index && optionCount > 0 ? (
+            <ul
+              className="mention-picker"
+              role="listbox"
+              aria-label={picker.kind === "link" ? "Pages and tasks" : "People"}
+            >
+              {(picker.kind === "link"
+                ? linkHits.map((hit) => ({
+                    key: `${hit.kind}:${hit.id}`,
+                    label: hit.label,
+                    hint: hit.hint,
+                    pick: hit as MentionCandidate | LinkHit,
+                  }))
+                : mentionHits.map((person) => ({
+                    key: person.id,
+                    label: person.name,
+                    hint: null as string | null,
+                    pick: person as MentionCandidate | LinkHit,
+                  }))
+              ).map((option, position) => (
+                <li key={option.key}>
                   <button
                     type="button"
                     role="option"
@@ -717,13 +805,14 @@ export function DocEditor({ docId, state, viewerId, canEdit, people }: Props) {
                     // Mousedown, not click: click fires after blur, and blur
                     // has already closed the picker by then — and preventing
                     // the default keeps the caret in the paragraph, which
-                    // `choose` reads to know what the `@` query was.
+                    // `choose` reads to know what the trigger's query was.
                     onMouseDown={(event) => {
                       event.preventDefault();
-                      choose(index, person);
+                      choose(index, option.pick);
                     }}
                   >
-                    {person.name}
+                    {option.label}
+                    {option.hint ? <span className="mention-hint">{option.hint}</span> : null}
                   </button>
                 </li>
               ))}
@@ -749,7 +838,7 @@ export function DocEditor({ docId, state, viewerId, canEdit, people }: Props) {
           <button type="button" onClick={addBlock}>
             + Paragraph
           </button>
-          <span className="doc-hint">@ names somebody · ⌘Z takes back your own typing</span>
+          <span className="doc-hint">@ names somebody · [[ links a page or task · ⌘Z takes back your own typing</span>
           <span className={`doc-status doc-status-${status}`}>
             {status === "saving" ? "Saving…" : status === "error" ? error : "Saved"}
           </span>

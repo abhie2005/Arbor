@@ -64,6 +64,7 @@ export default async function DocsPage({
         viewerId={viewer.id}
         canCreateWorkspaceWide={page.canCreateWorkspaceWide}
         people={page.people}
+        backlinks={page.backlinks}
       />
 
       <FooterNote>

@@ -1,6 +1,7 @@
 # Status — resume here
 
-Last updated 2026-10-10 (Phase 9's four items are built — documents are
+Last updated 2026-10-11 (Phase 9 is complete — its roadmap line read
+"CRDT editor, nested pages, backlinks" and all three now exist — documents are
 editable *including the paragraphs that name somebody*, ⌘Z in one is the
 CRDT's and puts the caret back, search reads them, the page tree is a tree you
 can rearrange, and the AWS path has been applied once and destroyed). Repo: https://github.com/abhie2005/Arbor (`main`).
@@ -57,12 +58,11 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 499 unit tests, 237 live-Postgres checks, 11 search checks, 7
+**Verified:** 522 unit tests, 245 live-Postgres checks, 11 search checks, 7
 document-action checks, four packages typechecking clean, and the interactions above driven in Chrome — most
-recently a three-level page tree being rearranged by dragging: a page dropped
-onto a row became its first child, a page dropped in the gap below one landed
-between two neighbours, collapsing a grandparent hid the grandchild, and a page
-dragged onto its own descendant was never offered the drop.
+recently `[[` resolving to a page and then to a task inside one sentence, the
+two edges landing in `doc_links`, and the reverse showing as "Linked from" on
+the page and "Referenced by" on the task.
 
 `check:actions` is the gate that does not finish on this machine — the VM's
 memory ceiling drops a request around a third of the way through (see the gaps
@@ -94,12 +94,16 @@ all 7 of its checks pass.
 
 ## Where to pick up
 
-**Phase 9's four items are all built.** Documents exist, are
-permission-scoped, can be written in by more than one person at a time
-including the paragraphs that name somebody, are searchable, and sit in a tree
-that can be rearranged. What remains is not a numbered item but the gaps
-below — the honest list of what a reviewer will ask about first, and the input
-to deciding whether Phase 9 is done or merely out of planned work.
+**Phase 9 is complete.** Its roadmap line was "CRDT editor, nested pages,
+backlinks" and all three exist: documents are permission-scoped and editable by
+more than one person at once including the paragraphs that name somebody, the
+page tree is a tree that can be rearranged, and `[[` links a page or a task
+with the reverse lookup shown on both ends. Search reads them. What remains is
+not a numbered item but the gaps below.
+
+**Next is Phase 10 — automations, forms, public API**, which is the first phase
+with nothing built against it at all. `packages/sdk` is empty and waiting for
+exactly that, and `apps/worker` has had nothing to run since Phase 1.
 
 Two things that were owed before Phase 9 are done and are why the docs screen
 was short rather than long:
@@ -258,9 +262,10 @@ In the order that buys the most:
 - **A document on no container takes the workspace role to edit**, following the
   workspace-wide saved view rule. For a handbook page that is probably wrong,
   and it is the same "blunt in the safe direction" trade D-081 made.
-- **No comments on a document**, no links between a document and a task, no
-  templates, no export, no archive screen — archived pages are only reachable by
-  asking `listDocs` for them.
+- **No comments on a document**, no templates, no export, no archive screen —
+  archived pages are only reachable by asking `listDocs` for them. Links
+  between a document and a task are built (D-120); the rest of that list is
+  not.
 - ~~**A new page is always created at the container root.**~~ Closed by D-119:
   the `+` on a row aims the new-page input at that page, and the container
   picker is disabled while it is aimed, because a subpage inherits its
@@ -296,6 +301,18 @@ In the order that buys the most:
 - **Nothing shows the caret of the person editing with you.** The relative
   position that keeps *your* caret still is exactly what a remote cursor would
   be built from, and it is not sent anywhere.
+
+**Found while building this, older than it**
+
+- **The task history's timestamps cause a hydration mismatch.**
+  `task-history.tsx` formats with `toLocaleString("en-GB")` and no `timeZone`,
+  so the server renders in *its* zone and the browser re-renders in the
+  viewer's — React discards the tree and says so in the console. In the
+  container dev server (UTC) against a Pacific browser it reads "10 Oct" on the
+  server and "9 Oct" on the client. It predates Phase 9 and will happen in any
+  deployment, because a server and a browser are rarely in the same zone. The
+  fix is to pick the zone explicitly, which is what invariant 9 already demands
+  of every other date in this app.
 
 **Two things older than this phase, found while building it**
 

@@ -4286,6 +4286,84 @@ select.filter-add option {
   color: var(--priority-urgent);
 }
 
+/* A link to another page or task, inside prose (D-120). Drawn like a
+   reference rather than like a web link: the same chip shape a mention uses,
+   in the text colour, because it points inside this workspace. */
+.doc-link {
+  color: var(--text);
+  text-decoration: none;
+  border-bottom: 1px solid var(--line-strong);
+  padding: 0 1px;
+  cursor: pointer;
+}
+
+.doc-link:hover {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+/* The secondary line in a picker row — a task's name under its key, or the
+   container a page lives in. */
+.mention-hint {
+  display: block;
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "Linked from" under a document, and "Referenced by" on a task. Same shape in
+   both places because it is the same question asked from two directions. */
+.docs-backlinks,
+.detail-backlinks {
+  margin-top: var(--space-5);
+}
+
+.docs-backlinks h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-meta);
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.docs-backlinks ul,
+.detail-backlinks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.docs-backlinks li,
+.detail-backlinks li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 3px 0;
+}
+
+.docs-backlinks a,
+.detail-backlinks a {
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: var(--text-meta);
+}
+
+.docs-backlinks a:hover,
+.detail-backlinks a:hover {
+  color: var(--text);
+}
+
+.docs-backlinks span,
+.detail-backlinks span {
+  font-size: var(--text-meta);
+  color: var(--text-3);
+}
+
 .doc-hint {
   font-size: var(--text-meta);
   color: var(--text-3);

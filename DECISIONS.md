@@ -4159,3 +4159,84 @@ calendar hit.
 *In one sentence:* the tree was indentation pretending to be structure, and the
 fix was to compute the order from the tree and let one `afterId` express both
 things a drop can mean.
+
+### D-120
+**Backlinks: a second embed kind, and the index that knows the reverse** · 2026-10-11 · active
+
+Phase 9's roadmap line read "CRDT editor, nested pages, backlinks" and the
+third word had no code behind it — not a table, not a node, not a query. This
+is that word.
+
+**The format was the decision, because a CRDT keeps history.** A `LinkNode`
+carries a target *kind* plus an id plus the label the document used. The label
+is duplicated on purpose, the same bargain `MentionNode` struck (D-083): the id
+is the reference, the label is what the sentence said at the time, and a link
+whose text re-resolved on every render would rewrite a paragraph when somebody
+renamed a page — and would leave a blank where a deleted page used to be rather
+than a record that it was once pointed at.
+
+**Kind beside id rather than two nullable id fields.** A page and a task are
+both uuids, so `{ pageId?, taskId? }` would have three illegal shapes for every
+legal one and nothing to stop a writer producing them. The kind is also exactly
+what a reader needs to build an href without asking the database which table an
+id belongs to.
+
+**It cost the editor nothing, which is the strongest evidence D-117 was
+right.** `blockString` spends one `EMBED_CHAR` on anything that is not a
+string, so a second embed kind needed no change to the offset arithmetic, the
+caret handling, or the diff. The only editor change was drawing it.
+
+**The index is maintained where `search_text` is, and inside the same
+transaction.** Answering "what links here" from the documents themselves would
+mean loading and parsing every CRDT in the workspace to render one footer, so
+`doc_links` is recomputed from the projection on every write. Delete-then-
+insert rather than a diff: a document has a handful of links, and working out
+which three rows changed would cost more than replacing them while adding a
+second place that could be wrong about what the document says.
+
+**No foreign key on the target**, because a page and a task live in different
+tables and one `references()` cannot say that. The cost is that a deleted
+target leaves a row; every read joins to the real table and drops what no
+longer resolves. The edge records what the document said, and the join decides
+whether it still means anything.
+
+**The permission join is on the *source*, not the target.** The question is
+"which pages that I can read point at this", so a page in a space the viewer
+has no grant on must not appear — otherwise a backlink list on a widely
+readable task would enumerate the titles of private pages, which is the
+`/settings/sharing` leak in a new place (invariant 6). Proven both directions
+against Postgres: the outsider does not see it, the owner does.
+
+**A page is not its own backlink.** Self-links are dropped on write rather than
+filtered on read, so the edge never exists to be forgotten about later.
+
+**`[[` rather than one bracket**, because a single `[` is punctuation people
+type in prose and `@` is not; a picker that opened on every bracket would
+interrupt writing rather than help it. Unlike `@`, a `[[` may begin anywhere —
+it is punctuation, so the character before it says nothing about intent. When
+both triggers match one caret ("@riley [[hir"), the *nearer* opening wins.
+
+**The link picker asks the server and the mention picker does not**, and the
+difference is the size of the set. A workspace has hundreds of members, so they
+ship with the page; it has thousands of tasks, and sending those to the browser
+to filter locally would make every page load pay for an interaction most
+readers never start. It runs through `loadSearch`, so the picker matches the
+way `/search` matches (invariant 15) and inherits both halves' permission
+scoping instead of repeating it. Debounced, with a stale guard — answers can
+arrive out of order, and a slow response for "hi" landing after a fast one for
+"hiring" would replace the right list with a wrong one.
+
+**Two things the checks caught about themselves rather than about the code.**
+`applyDocumentUpdate` merges, so testing retraction by posting a fresh document
+appended a paragraph beside the old one and both sets of links survived —
+correct CRDT behaviour and a wrong test. And the links were in the second
+paragraph, because `createDoc` had written a placeholder first.
+
+**The migration carries `IF NOT EXISTS` on two trigram indexes.** 0011 wrote
+them by hand, so the drizzle snapshot never recorded them and every `generate`
+re-proposes them; without the guard this file fails on any database that has
+run 0011, which is all of them. Caught by applying it rather than by reading it.
+
+*In one sentence:* a link is a mention with a different payload, which is why
+the format absorbed it in one node and the editor absorbed it in none — and the
+work that remained was the index that can answer the question backwards.

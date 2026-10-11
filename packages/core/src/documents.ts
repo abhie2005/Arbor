@@ -496,6 +496,45 @@ export function mentionQuery(block: string, caret: number): MentionQuery | null 
   return null;
 }
 
+/** A `[[` being typed: where it starts, and what has been typed after it. */
+export interface LinkQuery {
+  /** The offset of the first `[`. */
+  at: number;
+  /** What follows the brackets, up to the caret. */
+  query: string;
+}
+
+/**
+ * Is the caret inside a `[[` that has not been resolved yet? (D-120)
+ *
+ * **Two brackets rather than one character**, because a single `[` is
+ * punctuation somebody types in prose and `@` is not — a picker that opened on
+ * every bracket would interrupt writing rather than help it. Two in a row is
+ * rare enough to be a deliberate signal and is the convention a reader
+ * arriving from any other wiki already knows.
+ *
+ * Unlike an `@`, a `[[` may begin anywhere: it is punctuation, so the
+ * character before it says nothing about intent. A newline or an existing
+ * embed still ends the scan — you cannot link *through* either.
+ */
+export function linkQuery(block: string, caret: number): LinkQuery | null {
+  const from = Math.max(0, caret - MAX_QUERY - 2);
+
+  for (let i = caret - 1; i > from; i -= 1) {
+    const char = block[i];
+    if (char === undefined) return null;
+    if (char === "\n" || char === EMBED_CHAR) return null;
+    // Closing brackets mean this one has already been finished with.
+    if (char === "]") return null;
+
+    if (char === "[" && block[i - 1] === "[") {
+      return { at: i - 1, query: block.slice(i + 1, caret) };
+    }
+  }
+
+  return null;
+}
+
 /**
  * The people an `@` query could mean, best first.
  *

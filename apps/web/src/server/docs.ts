@@ -1,7 +1,9 @@
 import "server-only";
 
 import {
+  type Backlink,
   type DocRecord,
+  backlinksTo,
   containerAccess,
   listDocs,
   loadContainerTree,
@@ -37,6 +39,14 @@ export interface DocsPage {
   /** Null when the workspace has no documents, or the asked-for one is gone. */
   open: { doc: DocRecord; state: string } | null;
   canCreateWorkspaceWide: boolean;
+  /**
+   * The pages that point at whatever is open (D-120). Empty when nothing is.
+   *
+   * Loaded with the page rather than fetched by the client, because it is part
+   * of what the page *is* — and it is one indexed query on
+   * `(target_kind, target_id)`, which is the entire reason `doc_links` exists.
+   */
+  backlinks: Backlink[];
   /**
    * Who the editor's `@` can mean — the workspace's members, loaded with the
    * page rather than fetched when somebody types. A workspace has hundreds of
@@ -89,6 +99,7 @@ export const loadDocsPage = cache(
 
     const asked = docId ?? docs[0]?.id ?? null;
     const open = asked ? await loadDoc(asked, viewerId) : null;
+    const backlinks = open ? await backlinksTo({ kind: "page", id: open.id }, viewerId) : [];
 
     return {
       docs,
@@ -98,6 +109,7 @@ export const loadDocsPage = cache(
       // operation learned the hard way (D-097).
       open: open ? { doc: open, state: Buffer.from(open.state).toString("base64") } : null,
       canCreateWorkspaceWide: isAdmin,
+      backlinks,
       people,
     };
   },

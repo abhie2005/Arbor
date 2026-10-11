@@ -12,6 +12,7 @@ import {
 import {
   type CommentRecord,
   type TimeEntryRecord,
+  backlinksTo,
   fieldsAvailableOn,
   listTaskTypes,
   loadComments,
@@ -104,6 +105,15 @@ export interface TaskDetail {
   watcherIds: string[];
   fields: DetailField[];
   subtasks: Subtask[];
+  /**
+   * The pages that point at this task (D-120).
+   *
+   * The direction `task_links` never covered: that table is tasks pointing at
+   * tasks, and a document referencing a task had nowhere to be recorded until
+   * `doc_links`. Scoped to pages the *viewer* can read, so a private page's
+   * title cannot leak through a task everybody can open.
+   */
+  backlinks: { id: string; title: string; containerName: string | null }[];
 
   /**
    * The task-level estimate, in milliseconds — the one tracked time is compared
@@ -260,6 +270,7 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
     listCount,
     comments,
     timeEntries,
+    backlinks,
   ] = await Promise.all([
       resolveStatusSetFor(row.workspace_id, row.home_list_id, connection),
       fieldsAvailableOn(row.workspace_id, row.home_list_id, row.task_type_id, connection),
@@ -312,6 +323,9 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
       // task rather than beside it. Not scoped again here: `taskAccess` above
       // is what decides whether any of this page exists for this viewer.
       loadTaskTime(taskId, connection),
+      // What points here from the documents side (D-120). One indexed lookup
+      // on (target_kind, target_id), scoped to pages the viewer can read.
+      backlinksTo({ kind: "task", id: taskId }, viewerId, connection),
     ]);
 
   // Stored JSON is untrusted input even from our own table (D-018): it was
@@ -387,6 +401,11 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
     description,
     descriptionText: description ? renderPlain(description) : "",
     comments,
+    backlinks: backlinks.map((source) => ({
+      id: source.id,
+      title: source.title,
+      containerName: source.containerName,
+    })),
     timeEstimateMs: row.time_estimate_ms === null ? null : Number(row.time_estimate_ms),
     timeEntries,
     loadedAt: new Date().toISOString(),

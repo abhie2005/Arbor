@@ -45,7 +45,7 @@ demo password.
 Verify the stack end to end:
 
 ```bash
-npm test               # 499 unit tests, no database needed
+npm test               # 522 unit tests, no database needed
 npm run db:smoke       # 230 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
 npm run check:actions  # 152 checks that POST what a button click posts, then
@@ -206,7 +206,7 @@ back would be worse than no nudge.
       decision rather than a default — a goal's rollup runs as the goal's owner,
       so a shared commitment reads the same for everyone, and a dashboard card
       runs as the viewer, because a dashboard lives in a container.
-- [ ] **9 — Docs.** CRDT editor, nested pages, backlinks. The editor and the
+- [x] **9 — Docs.** CRDT editor, nested pages, backlinks. The editor and the
       page tree are built; so is **search**, which was the first reader the
       documents' plain-text projection ever had. Both halves of search match the
       same way the view compiler always has — case-insensitive substring — so one
@@ -221,7 +221,10 @@ back would be worse than no nudge.
       caret and a CRDT position the same number. The page tree computes its
       order from the tree rather than the flat list it arrives as — which was
       the real bug behind "only indentation" — and a drop onto a row or into
-      the gap below one is the same call with a different `afterId`.
+      the gap below one is the same call with a different `afterId`. `[[`
+      links a page or a task: one more embed kind in the same format, which
+      the editor's offset arithmetic absorbed without a change, plus an edge
+      table so the reverse question has an index to answer it.
 - [ ] **10 — Automations, forms, public API.**
 
 Access control moved ahead of collaboration deliberately: every collaborative

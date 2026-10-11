@@ -57,6 +57,7 @@ export interface TaskDetailData {
   watcherIds: string[];
   fields: DetailField[];
   subtasks: Subtask[];
+  backlinks: { id: string; title: string; containerName: string | null }[];
   descriptionText: string;
   comments: CommentRecord[];
   timeEstimateMs: number | null;
@@ -311,6 +312,22 @@ export function TaskDetail({
                   <span className="key">{subtask.key ?? "—"}</span>
                   {subtask.name}
                 </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {/* Which pages point at this task (D-120). The direction task_links
+          never covered, and the reason documents stop being an island. */}
+      {task.backlinks.length > 0 ? (
+        <section className="detail-section">
+          <h2>Referenced by</h2>
+          <ul className="detail-backlinks">
+            {task.backlinks.map((source) => (
+              <li key={source.id}>
+                <a href={`/docs?doc=${source.id}`}>{source.title}</a>
+                <span>{source.containerName ?? "Workspace"}</span>
               </li>
             ))}
           </ul>
