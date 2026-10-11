@@ -41,7 +41,36 @@ export interface MentionNode {
   label: string;
 }
 
-export type InlineNode = TextNode | MentionNode;
+/**
+ * What a link points at.
+ *
+ * **A kind beside the id, not two optional id fields.** A page and a task are
+ * both uuids, so a node carrying `pageId?` and `taskId?` would have three
+ * illegal shapes for every legal one and nothing to stop a writer producing
+ * them. The kind is also what the reader needs to build an href without
+ * asking the database which table the id is in.
+ */
+export interface LinkTarget {
+  kind: "page" | "task";
+  id: string;
+}
+
+/**
+ * A link to something else in the workspace (D-120).
+ *
+ * The same bargain `MentionNode` makes, for the same reason: the id is the
+ * reference and the label is what the document said at the time. A link whose
+ * text re-resolved on every render would rewrite a sentence when somebody
+ * renamed a page, and a link to a deleted page would become a blank rather
+ * than a record that it was once pointed at.
+ */
+export interface LinkNode {
+  type: "link";
+  target: LinkTarget;
+  label: string;
+}
+
+export type InlineNode = TextNode | MentionNode | LinkNode;
 
 export interface ParagraphNode {
   type: "paragraph";
@@ -161,10 +190,37 @@ export function renderPlain(doc: RichDoc): string {
   return doc.content
     .map((paragraph) =>
       paragraph.content
-        .map((node) => (node.type === "mention" ? `@${node.label}` : node.text))
+        .map((node) =>
+          node.type === "mention" ? `@${node.label}` : node.type === "link" ? node.label : node.text,
+        )
         .join(""),
     )
     .join("\n\n");
+}
+
+/**
+ * Everything the document points at, deduplicated and in reading order.
+ *
+ * What maintains the backlink index: a page's links are recomputed from the
+ * projection on every write, the same way `search_text` is, because computing
+ * them needs the tree and a query that had to load every CRDT to find out what
+ * points at a page would not be a query (D-120).
+ */
+export function linkedTargets(doc: RichDoc): LinkTarget[] {
+  const seen = new Set<string>();
+  const targets: LinkTarget[] = [];
+
+  for (const paragraph of doc.content) {
+    for (const node of paragraph.content) {
+      if (node.type !== "link") continue;
+      const key = `${node.target.kind}:${node.target.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      targets.push(node.target);
+    }
+  }
+
+  return targets;
 }
 
 /** Every user named in the document, deduplicated. The fan-out list. */
@@ -208,7 +264,13 @@ export function parseStoredDoc(value: unknown): RichDoc | null {
     const inline: InlineNode[] = [];
     for (const item of paragraph.content) {
       if (typeof item !== "object" || item === null) return null;
-      const node = item as { type?: unknown; text?: unknown; userId?: unknown; label?: unknown };
+      const node = item as {
+        type?: unknown;
+        text?: unknown;
+        userId?: unknown;
+        label?: unknown;
+        target?: unknown;
+      };
 
       if (node.type === "text" && typeof node.text === "string") {
         inline.push({ type: "text", text: node.text });
@@ -221,6 +283,22 @@ export function parseStoredDoc(value: unknown): RichDoc | null {
       ) {
         inline.push({ type: "mention", userId: node.userId, label: node.label });
         continue;
+      }
+      if (node.type === "link" && typeof node.label === "string") {
+        const target = node.target as { kind?: unknown; id?: unknown } | null;
+        if (
+          typeof target === "object" &&
+          target !== null &&
+          (target.kind === "page" || target.kind === "task") &&
+          typeof target.id === "string"
+        ) {
+          inline.push({
+            type: "link",
+            target: { kind: target.kind, id: target.id },
+            label: node.label,
+          });
+          continue;
+        }
       }
       return null;
     }

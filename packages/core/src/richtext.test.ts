@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   EMPTY_DOC,
+  type InlineNode,
   type RichDoc,
   isEmptyDoc,
+  linkedTargets,
   mentionedIds,
   parseRichText,
   parseStoredDoc,
@@ -128,5 +130,108 @@ describe("a document read back out of the database", () => {
   it("accepts an empty document", () => {
     const parsed: RichDoc | null = parseStoredDoc({ type: "doc", content: [] });
     expect(parsed).toEqual(EMPTY_DOC);
+  });
+});
+
+describe("links to other things in the workspace", () => {
+  const linked = (kind: "page" | "task", id: string, label: string): RichDoc => ({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "See " },
+          { type: "link", target: { kind, id }, label },
+          { type: "text", text: " for the rest." },
+        ],
+      },
+    ],
+  });
+
+  it("renders as its label, so search reads what the sentence said", () => {
+    expect(renderPlain(linked("page", "page-1", "Hiring plan"))).toBe(
+      "See Hiring plan for the rest.",
+    );
+  });
+
+  it("is not a mention, so it does not reach the notification fan-out", () => {
+    expect(mentionedIds(linked("task", "task-1", "ENG-402"))).toEqual([]);
+  });
+
+  it("round-trips through storage", () => {
+    const doc = linked("task", "task-1", "ENG-402");
+    expect(parseStoredDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
+  });
+
+  it("refuses a target kind it does not know, rather than rendering a dead link", () => {
+    const bad = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "link", target: { kind: "spreadsheet", id: "x" }, label: "X" }],
+        },
+      ],
+    };
+    expect(parseStoredDoc(bad)).toBeNull();
+  });
+
+  it("refuses a link with no target at all", () => {
+    const bad = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "link", label: "X" }] }],
+    };
+    expect(parseStoredDoc(bad)).toBeNull();
+  });
+});
+
+describe("what a document points at", () => {
+  const doc = (nodes: InlineNode[]): RichDoc => ({
+    type: "doc",
+    content: [{ type: "paragraph", content: nodes }],
+  });
+
+  const link = (kind: "page" | "task", id: string, label: string): InlineNode => ({
+    type: "link",
+    target: { kind, id },
+    label,
+  });
+
+  it("lists each target once, in reading order", () => {
+    expect(
+      linkedTargets(
+        doc([
+          link("page", "p1", "First"),
+          { type: "text", text: " and " },
+          link("task", "t1", "ENG-1"),
+        ]),
+      ),
+    ).toEqual([
+      { kind: "page", id: "p1" },
+      { kind: "task", id: "t1" },
+    ]);
+  });
+
+  it("deduplicates a page linked twice, because an edge is an edge", () => {
+    expect(linkedTargets(doc([link("page", "p1", "First"), link("page", "p1", "Again")]))).toEqual([
+      { kind: "page", id: "p1" },
+    ]);
+  });
+
+  it("keeps a page and a task that share an id apart", () => {
+    // Both are uuids, so the kind is the only thing separating them.
+    expect(linkedTargets(doc([link("page", "same", "P"), link("task", "same", "T")]))).toHaveLength(
+      2,
+    );
+  });
+
+  it("finds nothing in a document with no links", () => {
+    expect(linkedTargets(doc([{ type: "text", text: "plain" }]))).toEqual([]);
+  });
+
+  it("does not mistake a mention for a link", () => {
+    expect(
+      linkedTargets(doc([{ type: "mention", userId: "u1", label: "Riley Kaur" }])),
+    ).toEqual([]);
   });
 });

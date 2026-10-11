@@ -112,6 +112,7 @@ export {
 export {
   applyDocumentUpdate,
   archiveDoc,
+  backlinksTo,
   createDoc,
   listDocs,
   loadDoc,
@@ -120,6 +121,7 @@ export {
   moveDoc,
   renameDoc,
   searchDocs,
+  type Backlink,
   type DocHit,
   type DocRecord,
   type DocWithState,

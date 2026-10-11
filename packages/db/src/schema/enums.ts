@@ -65,6 +65,15 @@ export const permission = pgEnum("permission", ["view", "comment", "edit", "mana
 export const taskLinkKind = pgEnum("task_link_kind", ["blocks", "waits_on", "relates"]);
 
 /**
+ * What a link inside a document points at (D-120).
+ *
+ * An enum rather than free text, because the reader builds an href from it
+ * without a query — an unrecognised kind would be a link that renders and goes
+ * nowhere.
+ */
+export const docLinkTarget = pgEnum("doc_link_target", ["page", "task"]);
+
+/**
  * What an activity row is about. Configuration objects are in here alongside
  * tasks on purpose: "who deleted the Done status, and when" is a question the
  * activity log has to be able to answer, and a change nobody can attribute is

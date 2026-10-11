@@ -14,6 +14,7 @@ import {
   typeable,
   type InlineNode,
   type MentionCandidate,
+  type LinkNode,
   type MentionNode,
 } from "@arbor/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -136,7 +137,7 @@ function pieceOf(node: ChildNode, last: boolean): string {
   if (node.nodeType === Node.TEXT_NODE) return node.nodeValue ?? "";
 
   if (node instanceof HTMLElement) {
-    if (node.dataset.mention !== undefined) return EMBED_CHAR;
+    if (node.dataset.mention !== undefined || node.dataset.link !== undefined) return EMBED_CHAR;
     // A browser leaves a filler <br> at the end of an editable element rather
     // than let it collapse, and `white-space: pre-wrap` needs one to show a
     // trailing newline. A last-child <br> is therefore furniture, not a
@@ -164,7 +165,9 @@ function painted(host: HTMLElement): boolean {
     (node) =>
       node.nodeType === Node.TEXT_NODE ||
       (node instanceof HTMLElement &&
-        (node.dataset.mention !== undefined || node.tagName === "BR")),
+        (node.dataset.mention !== undefined ||
+          node.dataset.link !== undefined ||
+          node.tagName === "BR")),
   );
 }
 
@@ -208,12 +211,28 @@ function selectionIn(host: HTMLElement): { from: number; to: number } | null {
 
 /* --------------------------- the DOM, written -------------------------- */
 
-function mentionNode(node: MentionNode): HTMLElement {
+/**
+ * An embed, drawn.
+ *
+ * Both kinds are `contentEditable="false"`, so the browser treats each as one
+ * thing: the caret steps over it and Backspace takes all of it, which is what
+ * a reference rather than a run of characters should feel like. `pieceOf`
+ * reads either back as one `EMBED_CHAR`, which is why a second embed kind cost
+ * the offset arithmetic nothing (D-120).
+ */
+function embedNode(node: MentionNode | LinkNode): HTMLElement {
+  if (node.type === "link") {
+    const link = document.createElement("span");
+    link.className = "doc-link";
+    link.contentEditable = "false";
+    link.dataset.link = `${node.target.kind}:${node.target.id}`;
+    link.title = node.target.kind === "page" ? "Page" : "Task";
+    link.textContent = node.label;
+    return link;
+  }
+
   const span = document.createElement("span");
   span.className = "mention";
-  // Not editable, so the browser treats the whole name as one thing: the
-  // caret steps over it and Backspace takes all of it, which is what a
-  // reference rather than a run of characters should feel like.
   span.contentEditable = "false";
   span.dataset.mention = node.userId;
   span.textContent = `@${node.label}`;
@@ -222,7 +241,7 @@ function mentionNode(node: MentionNode): HTMLElement {
 
 function paint(host: HTMLElement, nodes: readonly InlineNode[]): void {
   const children: Node[] = nodes.map((node) =>
-    node.type === "text" ? document.createTextNode(node.text) : mentionNode(node),
+    node.type === "text" ? document.createTextNode(node.text) : embedNode(node),
   );
 
   const last = nodes[nodes.length - 1];

@@ -13,6 +13,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
+import { docLinkTarget } from "./enums";
 import { containers } from "./containers";
 import { users, workspaces } from "./workspaces";
 
@@ -179,6 +180,51 @@ export const docs = pgTable(
     index("docs_title_trgm_idx").using("gin", sql`${t.title} gin_trgm_ops`),
   ],
 );
+
+/**
+ * What a document points at (D-120).
+ *
+ * **An edge table maintained on write, which is the same bet `search_text`
+ * makes.** Answering "what links here" from the documents themselves would
+ * mean loading and parsing every CRDT in the workspace to render one footer;
+ * the links are therefore recomputed from the projection whenever a document
+ * is written, exactly where `search_text` already is.
+ *
+ * **The target is a kind plus an id, with no foreign key.** A page and a task
+ * live in different tables, so a single `references()` cannot express it — and
+ * a pair of nullable columns with a check constraint would be two columns that
+ * can both be null. The cost is that a deleted target leaves a row behind,
+ * which is why every read joins to the real table and drops what no longer
+ * resolves: the edge is a record of what the document said, and the join is
+ * what decides whether it still means anything.
+ *
+ * `task_links` is the same shape for tasks pointing at tasks, down to the
+ * reverse index being the whole point.
+ */
+export const docLinks = pgTable(
+  "doc_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceDocId: uuid("source_doc_id")
+      .notNull()
+      .references(() => docs.id, { onDelete: "cascade" }),
+    targetKind: docLinkTarget("target_kind").notNull(),
+    targetId: uuid("target_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One edge per source and target: a page linked twice from one document is
+    // still one thing pointing at another.
+    uniqueIndex("doc_links_unique").on(t.sourceDocId, t.targetKind, t.targetId),
+    // The reverse lookup, which is the entire reason this table exists.
+    index("doc_links_target_idx").on(t.targetKind, t.targetId),
+  ],
+);
+
+export type DocLink = typeof docLinks.$inferSelect;
 
 export type Automation = typeof automations.$inferSelect;
 export type AutomationRun = typeof automationRuns.$inferSelect;

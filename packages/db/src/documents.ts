@@ -1,9 +1,11 @@
 import {
   DocumentError,
+  type LinkTarget,
   applyDocUpdate,
   docStateFromText,
   emptyDocState,
   escapeLike,
+  linkedTargets,
   positionBetween,
   richTextFrom,
   searchTextFrom,
@@ -271,6 +273,8 @@ export async function createDoc(input: CreateDocInput, context: ConfigContext): 
     const row = result.rows[0];
     if (!row) throw new ConfigError("The document could not be created");
 
+    await syncLinks(client, input.workspaceId, row.id, state);
+
     await logConfigChange(client, {
       workspaceId: input.workspaceId,
       actorId: context.actorId,
@@ -496,6 +500,12 @@ export async function applyDocumentUpdate(
       [docId, Buffer.from(merged), searchText],
     );
 
+    // The edges are a projection of the same bytes, so they are rewritten
+    // where `search_text` is and inside the same transaction (D-120). A
+    // document whose links disagreed with its prose would be a backlink
+    // pointing at a sentence that no longer exists.
+    await syncLinks(client, row.workspace_id, docId, merged);
+
     await announce(client, row.workspace_id, written.rows[0]!.container_id, docId, context.actorId);
 
     return { searchText, updatedAt: written.rows[0]!.updated_at };
@@ -636,6 +646,96 @@ async function descendsFrom(
  * tree can be one nudge out of date, and a page landing at the end of the
  * right parent is a better answer than an error about a row that moved.
  */
+/**
+ * Rewrites what a document points at.
+ *
+ * **Delete-then-insert rather than a diff.** A document has a handful of links,
+ * not thousands, and the set is recomputed from the projection on every write
+ * — so working out which three rows changed would cost more than replacing
+ * them, and would be a second place that could be wrong about what the
+ * document says.
+ *
+ * A link to the document itself is dropped: a page is not a backlink to
+ * itself, and showing one would put every page in its own "linked from" list.
+ */
+async function syncLinks(
+  client: PoolClient,
+  workspaceId: string,
+  docId: string,
+  state: Uint8Array,
+): Promise<void> {
+  const rich = richTextFrom(state);
+  const targets: LinkTarget[] = rich
+    ? linkedTargets(rich).filter((t) => !(t.kind === "page" && t.id === docId))
+    : [];
+
+  await client.query(`DELETE FROM doc_links WHERE source_doc_id = $1`, [docId]);
+  if (targets.length === 0) return;
+
+  await client.query(
+    `INSERT INTO doc_links (workspace_id, source_doc_id, target_kind, target_id)
+     SELECT $1, $2, kind::doc_link_target, id::uuid
+     FROM unnest($3::text[], $4::text[]) AS t(kind, id)
+     ON CONFLICT (source_doc_id, target_kind, target_id) DO NOTHING`,
+    [workspaceId, docId, targets.map((t) => t.kind), targets.map((t) => t.id)],
+  );
+}
+
+/** A page that points at something, as the backlink list shows it. */
+export interface Backlink {
+  id: string;
+  title: string;
+  containerId: string | null;
+  containerName: string | null;
+  updatedAt: Date;
+}
+
+/**
+ * The pages that point at something, scoped to what the viewer may read.
+ *
+ * **The permission join is on the *source*, not the target.** The question is
+ * "which pages that I can read mention this", so a page in a space the viewer
+ * has no grant on must not appear — otherwise a backlink list on a widely
+ * readable task would enumerate the titles of private pages, which is the
+ * sharing-screen bug (invariant 6) in a new place.
+ *
+ * Archived pages are excluded for the same reason they are excluded from
+ * search: a backlink is a live reference, and one from a page nobody can reach
+ * any more is noise rather than news.
+ */
+export async function backlinksTo(
+  target: LinkTarget,
+  viewerId: string,
+  connection: Connection = pool(),
+): Promise<Backlink[]> {
+  const result = await connection.query<{
+    id: string;
+    title: string;
+    container_id: string | null;
+    container_name: string | null;
+    updated_at: Date;
+  }>(
+    `SELECT d.id, d.title, d.container_id, c.name AS container_name, d.updated_at
+       FROM doc_links l
+       JOIN docs d ON d.id = l.source_doc_id
+       LEFT JOIN containers c ON c.id = d.container_id
+      WHERE l.target_kind = $3::doc_link_target
+        AND l.target_id = $1
+        AND d.archived_at IS NULL
+        AND ${REACHABLE}
+      ORDER BY d.updated_at DESC, d.title`,
+    [target.id, viewerId, target.kind],
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    containerId: row.container_id,
+    containerName: row.container_name,
+    updatedAt: row.updated_at,
+  }));
+}
+
 async function positionAfter(
   client: PoolClient,
   containerId: string | null,

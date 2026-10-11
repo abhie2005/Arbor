@@ -562,3 +562,62 @@ describe("collapsing the page tree", () => {
     expect(visibleRows(rows, new Set())).toHaveLength(4);
   });
 });
+
+describe("a link inside the CRDT", () => {
+  const withLink = () =>
+    docStateFrom({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "text", text: "See " },
+            { type: "link", target: { kind: "page", id: "page-1" }, label: "Hiring plan" },
+            { type: "text", text: " first." },
+          ],
+        },
+      ],
+    });
+
+  it("round-trips as a reference, not as the characters somebody typed", () => {
+    expect(richTextFrom(withLink())!.content[0]!.content).toEqual([
+      { type: "text", text: "See " },
+      { type: "link", target: { kind: "page", id: "page-1" }, label: "Hiring plan" },
+      { type: "text", text: " first." },
+    ]);
+  });
+
+  it("counts as one position, exactly like a mention", () => {
+    // Why a second embed kind cost the editor's offset arithmetic nothing.
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, withLink());
+    const text = doc.getArray<Y.Map<unknown>>("blocks").get(0)!.get("text") as Y.Text;
+
+    expect(blockString(text)).toBe(`See ${EMBED_CHAR} first.`);
+    expect(blockString(text).length).toBe(text.length);
+    doc.destroy();
+  });
+
+  it("is what search reads, flattened to its label", () => {
+    expect(searchTextFrom(withLink())).toBe("See Hiring plan first.");
+  });
+
+  it("sits beside a mention without either being mistaken for the other", () => {
+    const state = docStateFrom({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "mention", userId: "user-riley", label: "Riley Kaur" },
+            { type: "text", text: " owns " },
+            { type: "link", target: { kind: "task", id: "task-9" }, label: "ENG-402" },
+          ],
+        },
+      ],
+    });
+
+    const nodes = richTextFrom(state)!.content[0]!.content;
+    expect(nodes.map((n) => n.type)).toEqual(["mention", "text", "link"]);
+  });
+});

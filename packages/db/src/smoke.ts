@@ -12,6 +12,7 @@
 import {
   DEFAULT_VIEW_DEFINITION,
   compileViewQuery,
+  docStateFrom,
   invert,
   invertBatch,
   mentionedIds,
@@ -105,6 +106,7 @@ import * as Y from "yjs";
 import {
   applyDocumentUpdate,
   archiveDoc,
+  backlinksTo,
   createDoc,
   listDocs,
   loadDoc,
@@ -3437,6 +3439,154 @@ async function main() {
       !(await orderUnder(hiringDoc.id)).includes("Loop A")
       ? null
       : `under the new parent: ${(await orderUnder(child.id)).join(" ")}`,
+  );
+
+  // --- backlinks (D-120) ----------------------------------------------------
+  //
+  // The edges are a projection of the document's own bytes, maintained where
+  // `search_text` is. These drive the maintenance and, more importantly, the
+  // permission scoping: the join is on the *source*, so a private page must
+  // not show up as a backlink to somebody who cannot read it.
+  const linkTargetTask = await one(`SELECT id, key FROM tasks WHERE key IS NOT NULL LIMIT 1`);
+
+  const linkingDoc = await createDoc(
+    {
+      workspaceId: ws.id!,
+      containerId: null,
+      title: "Reading list",
+      text: "placeholder",
+    },
+    docConfig,
+  );
+
+  const withLinks = docStateFrom({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "text", text: "See " },
+          { type: "link", target: { kind: "page", id: openDoc.id }, label: "Notes" },
+          { type: "text", text: " and " },
+          { type: "link", target: { kind: "task", id: linkTargetTask.id! }, label: linkTargetTask.key! },
+          { type: "text", text: ", and this page " },
+          { type: "link", target: { kind: "page", id: linkingDoc.id }, label: "Reading list" },
+        ],
+      },
+    ],
+  });
+  await applyDocumentUpdate(linkingDoc.id, withLinks, docConfig);
+
+  const edges = (
+    await pool.query<{ target_kind: string; target_id: string }>(
+      `SELECT target_kind, target_id FROM doc_links WHERE source_doc_id = $1 ORDER BY target_kind`,
+      [linkingDoc.id],
+    )
+  ).rows;
+  report(
+    "writing a document records what it points at",
+    edges.length === 2 &&
+      edges.some((e) => e.target_kind === "page" && e.target_id === openDoc.id) &&
+      edges.some((e) => e.target_kind === "task" && e.target_id === linkTargetTask.id!)
+      ? null
+      : `edges are ${JSON.stringify(edges)}`,
+  );
+
+  report(
+    "a page linking to itself is not its own backlink",
+    edges.every((e) => e.target_id !== linkingDoc.id)
+      ? null
+      : "a self-link was recorded",
+  );
+
+  const pageBacklinks = await backlinksTo({ kind: "page", id: openDoc.id }, owner.id!, pool);
+  report(
+    "a page knows which pages point at it",
+    pageBacklinks.length === 1 && pageBacklinks[0]!.id === linkingDoc.id
+      ? null
+      : `backlinks are ${JSON.stringify(pageBacklinks.map((p) => p.title))}`,
+  );
+
+  const taskBacklinks = await backlinksTo({ kind: "task", id: linkTargetTask.id! }, owner.id!, pool);
+  report(
+    "and so does a task, which is the direction task_links never covered",
+    taskBacklinks.length === 1 && taskBacklinks[0]!.id === linkingDoc.id
+      ? null
+      : `backlinks are ${JSON.stringify(taskBacklinks.map((p) => p.title))}`,
+  );
+
+  // The same link, written from a page in the private space Sam cannot reach.
+  const privateLinker = await createDoc(
+    { workspaceId: ws.id!, containerId: founders.id!, title: "Private notes" },
+    docConfig,
+  );
+  await applyDocumentUpdate(
+    privateLinker.id,
+    docStateFrom({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "link", target: { kind: "task", id: linkTargetTask.id! }, label: "x" }],
+        },
+      ],
+    }),
+    docConfig,
+  );
+
+  report(
+    "a backlink from a page the viewer cannot read does not appear",
+    (await backlinksTo({ kind: "task", id: linkTargetTask.id! }, outsider.id!, pool)).every(
+      (p) => p.id !== privateLinker.id,
+    )
+      ? null
+      : "a private page's title leaked through a backlink list",
+  );
+
+  report(
+    "while the owner, who can read it, sees it",
+    (await backlinksTo({ kind: "task", id: linkTargetTask.id! }, owner.id!, pool)).some(
+      (p) => p.id === privateLinker.id,
+    )
+      ? null
+      : "the owner could not see a backlink from a page they can read",
+  );
+
+  // Retracting a link has to be a *deletion inside the CRDT*, not a fresh
+  // document posted over the top: `applyDocumentUpdate` merges, so a new
+  // Y.Doc would append its paragraph beside the old one and both sets of
+  // links would still be there — correct CRDT behaviour, and the reason the
+  // first version of this check was wrong rather than the code.
+  const editing = new Y.Doc();
+  Y.applyUpdate(editing, new Uint8Array((await loadDoc(linkingDoc.id, owner.id!, pool))!.state));
+  const beforeDelete = Y.encodeStateVector(editing);
+  const blocks = editing.getArray<Y.Map<unknown>>("blocks");
+  blocks.delete(0, blocks.length);
+  await applyDocumentUpdate(
+    linkingDoc.id,
+    Y.encodeStateAsUpdate(editing, beforeDelete),
+    docConfig,
+  );
+  editing.destroy();
+
+  report(
+    "deleting the prose that held a link retracts the backlink",
+    (await backlinksTo({ kind: "page", id: openDoc.id }, owner.id!, pool)).length === 0 &&
+      (await backlinksTo({ kind: "task", id: linkTargetTask.id! }, owner.id!, pool)).every(
+        (p) => p.id !== linkingDoc.id,
+      )
+      ? null
+      : "the edge survived the text that made it",
+  );
+
+  await archiveDoc(privateLinker.id, true, docConfig);
+  report(
+    "an archived page stops being a backlink",
+    (await backlinksTo({ kind: "task", id: linkTargetTask.id! }, owner.id!, pool)).every(
+      (p) => p.id !== privateLinker.id,
+    )
+      ? null
+      : "an archived page still pointed at the task",
   );
 
   await archiveDoc(hiringDoc.id, true, docConfig);

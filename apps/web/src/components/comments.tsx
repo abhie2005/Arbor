@@ -5,6 +5,7 @@ import type { CommentRecord } from "@arbor/db";
 import { useRef, useState } from "react";
 
 import { type CommentResult, deleteComment, editComment, postComment } from "@/server/comment-actions";
+import { linkHref } from "./doc-links";
 
 import { relative } from "./relative-time";
 import { useTaskAction } from "./use-task-action";
@@ -175,7 +176,15 @@ function Body({ body }: { body: RichDoc | null }) {
         // eslint-disable-next-line react/no-array-index-key -- paragraphs have no id
         <p key={index}>
           {paragraph.content.map((node, position) =>
-            node.type === "mention" ? (
+            node.type === "link" ? (
+              // A comment cannot produce a link today — `parseRichText` has no
+              // syntax for one — but the format is shared (invariant 7), so a
+              // reader that could not render one would be a renderer that
+              // breaks the first time the two surfaces converge.
+              <a className="doc-link" href={linkHref(node.target)} key={position}>
+                {node.label}
+              </a>
+            ) : node.type === "mention" ? (
               // eslint-disable-next-line react/no-array-index-key
               <span className="mention" key={position}>
                 @{node.label}
@@ -475,7 +484,9 @@ function plain(body: RichDoc | null): string {
   return body.content
     .map((paragraph) =>
       paragraph.content
-        .map((node) => (node.type === "mention" ? `@${node.label}` : node.text))
+        .map((node) =>
+          node.type === "mention" ? `@${node.label}` : node.type === "link" ? node.label : node.text,
+        )
         .join(""),
     )
     .join("\n\n");

@@ -31,7 +31,13 @@
 
 import * as Y from "yjs";
 
-import type { InlineNode, MentionCandidate, ParagraphNode, RichDoc } from "./richtext";
+import type {
+  InlineNode,
+  LinkTarget,
+  MentionCandidate,
+  ParagraphNode,
+  RichDoc,
+} from "./richtext";
 import { parseRichText, renderPlain } from "./richtext";
 
 /** The name of the top-level array. Changing it orphans every document. */
@@ -53,6 +59,30 @@ export class DocumentError extends Error {}
  */
 interface MentionEmbed {
   mention: { userId: string; label: string };
+}
+
+/**
+ * A link as it sits inside a `Y.Text` (D-120).
+ *
+ * The second embed kind, and the one that proves the first was not a special
+ * case: both are a non-text item occupying one position, and `blockString`
+ * already spends one `EMBED_CHAR` on anything that is not a string — so the
+ * editor's offsets needed no changes at all to carry a second kind.
+ */
+interface LinkEmbed {
+  link: { kind: LinkTarget["kind"]; id: string; label: string };
+}
+
+function isLinkEmbed(value: unknown): value is LinkEmbed {
+  if (typeof value !== "object" || value === null) return false;
+  const embed = (value as LinkEmbed).link;
+  return (
+    typeof embed === "object" &&
+    embed !== null &&
+    (embed.kind === "page" || embed.kind === "task") &&
+    typeof embed.id === "string" &&
+    typeof embed.label === "string"
+  );
 }
 
 function isMentionEmbed(value: unknown): value is MentionEmbed {
@@ -138,6 +168,10 @@ function fill(text: Y.Text, paragraph: ParagraphNode): void {
       text.insert(text.length, node.text);
       continue;
     }
+    if (node.type === "link") {
+      insertLink(text, text.length, node.target, node.label);
+      continue;
+    }
     insertMention(text, text.length, { id: node.userId, name: node.label });
   }
 }
@@ -156,6 +190,25 @@ function fill(text: Y.Text, paragraph: ParagraphNode): void {
  * what the document said at the time, and re-resolving every mention through
  * the current user table would rewrite what people wrote (D-083).
  */
+/**
+ * A link written into a paragraph, at an offset.
+ *
+ * Beside `insertMention` and for the same reason: one place knows the embed's
+ * shape, so a second spelling cannot produce an embed that `inlinesOf` skips
+ * as unrecognised — which would render as nothing and read back one character
+ * short.
+ */
+export function insertLink(
+  text: Y.Text,
+  at: number,
+  target: LinkTarget,
+  label: string,
+): void {
+  text.insertEmbed(at, {
+    link: { kind: target.kind, id: target.id, label },
+  } satisfies LinkEmbed);
+}
+
 export function insertMention(text: Y.Text, at: number, person: MentionCandidate): void {
   text.insertEmbed(at, {
     mention: { userId: person.id, label: person.name },
@@ -209,6 +262,14 @@ function inlinesOf(text: Y.Text): InlineNode[] {
         type: "mention",
         userId: op.insert.mention.userId,
         label: op.insert.mention.label,
+      });
+      continue;
+    }
+    if (isLinkEmbed(op.insert)) {
+      nodes.push({
+        type: "link",
+        target: { kind: op.insert.link.kind, id: op.insert.link.id },
+        label: op.insert.link.label,
       });
     }
     // Anything else is an embed this version does not know about. Skipping it
