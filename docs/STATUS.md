@@ -1,8 +1,9 @@
 # Status — resume here
 
-Last updated 2026-10-08 (Phase 9 in progress — documents are built and
-editable *including the paragraphs that name somebody*, ⌘Z in one is the CRDT's
-and puts the caret back, search reads them, and there is an AWS path). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-10 (Phase 9's four items are built — documents are
+editable *including the paragraphs that name somebody*, ⌘Z in one is the
+CRDT's and puts the caret back, search reads them, the page tree is a tree you
+can rearrange, and the AWS path has been applied once and destroyed). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
@@ -51,18 +52,17 @@ verification found in each phase, is in `docs/HISTORY.md`.
 | **Time tracking** | Start and stop on the task page, an entry list, logging time after the fact, and tracked-against-estimate. Every write is an operation (D-093), so ⌘Z undoes a stop and restores a deleted entry. At most one running timer per person, held by a unique partial index (D-094). A readout in the shell of every screen, pushed down the live stream so a timer started in another tab appears in this one (D-098). |
 | **Goals** | `/goals` — goals with key results of four kinds. A *rollup* key result holds a view definition and is counted by the compiler (D-101), so a goal and a list can never disagree about what counts; it is computed as the goal's **owner** rather than the reader (D-102), which is what makes progress a shared fact. Manual, currency and yes/no key results are entered. Progress is the mean of the key results, each clamped; completion is a timestamp somebody set, not a number crossing 100%. |
 | **Dashboards** | `/dashboards` — a grid of cards, each a filter plus a way of drawing it. A card's `kind` *is* which compiler entry point it calls (D-104): a stat is `compileAggregate`, a chart is `compileGroupCounts`. Counted as the **viewer** (D-105), which is the opposite of a goal and for a reason. Scoped to a container, with personal dashboards following the saved view rule. Charts are HTML bars measured against the largest slice; no charting library. |
-| **Documents** | `/docs` — a page tree scoped by the same `access_index` join everything else uses, and an editor. A document's body is a Yjs CRDT holding the *same block tree* comments and descriptions use (ADR 6, D-110), so a mention is a reference rather than the characters "@Name", and `search_text` beside it is a projection recomputed on every write. The editor is a **contenteditable per paragraph** (D-117) with the change applied as a diff (D-112), so two people typing in one paragraph merge instead of clobbering. A mention is one `EMBED_CHAR` in the string the editor works in, which makes a DOM offset, a caret and a CRDT position the same number — so a paragraph naming somebody is edited rather than shown, `@` offers the workspace's members, and the caret is a Yjs relative position that survives both ⌘Z and somebody else's insert. Updates POST as base64 and arrive as a nudge on the existing stream; the editor answers by pulling the difference rather than re-rendering. Creating, renaming, moving and archiving are configuration writes with an activity row and no ⌘Z (D-111). |
+| **Documents** | `/docs` — a page tree scoped by the same `access_index` join everything else uses, and an editor. The tree is a real walk at any depth (D-119): collapse hides descendants, a drop onto a row makes a page its first child and a drop in the gap below one makes it the next sibling, both as one `afterId`, and the `+` on a row makes a subpage. A document's body is a Yjs CRDT holding the *same block tree* comments and descriptions use (ADR 6, D-110), so a mention is a reference rather than the characters "@Name", and `search_text` beside it is a projection recomputed on every write. The editor is a **contenteditable per paragraph** (D-117) with the change applied as a diff (D-112), so two people typing in one paragraph merge instead of clobbering. A mention is one `EMBED_CHAR` in the string the editor works in, which makes a DOM offset, a caret and a CRDT position the same number — so a paragraph naming somebody is edited rather than shown, `@` offers the workspace's members, and the caret is a Yjs relative position that survives both ⌘Z and somebody else's insert. Updates POST as base64 and arrive as a nudge on the existing stream; the editor answers by pulling the difference rather than re-rendering. Creating, renaming, moving and archiving are configuration writes with an activity row and no ⌘Z (D-111). |
 | **Search** | `/search` — the screen that finally reads `docs.search_text`. Two halves, each through the permission path it already had: tasks are `compileViewQuery` with scope `everything` and `filters.search` set (which had existed since the beginning and been set by nothing), pages are `searchDocs` sharing `listDocs`' reachability clause. Matching is `ILIKE`, the same rule the compiler has always used, so one box cannot have two ideas of what matches (D-113); trigram GIN indexes make that affordable. A GET with the query in the URL, so a search is a sendable link — no action, no debounce. Snippets are anchored on the match and the term is marked. |
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 486 unit tests, 230 live-Postgres checks, 11 search checks, four
-packages typechecking clean, and the interactions above driven in Chrome — most
-recently a member writing a paragraph that names somebody, editing the text on
-both sides of the name, taking an edit back with ⌘Z and finding the caret where
-the edit was, and watching a second client's eight characters arrive at the
-start of that paragraph and carry their own caret from 7 to 15 without losing
-focus.
+**Verified:** 499 unit tests, 237 live-Postgres checks, 11 search checks, 7
+document-action checks, four packages typechecking clean, and the interactions above driven in Chrome — most
+recently a three-level page tree being rearranged by dragging: a page dropped
+onto a row became its first child, a page dropped in the gap below one landed
+between two neighbours, collapsing a grandparent hid the grandchild, and a page
+dragged onto its own descendant was never offered the drop.
 
 `check:actions` is the gate that does not finish on this machine — the VM's
 memory ceiling drops a request around a third of the way through (see the gaps
@@ -94,10 +94,12 @@ all 7 of its checks pass.
 
 ## Where to pick up
 
-**Phase 9 is part-built.** Documents exist, are permission-scoped, and can be
-written in by more than one person at a time. What is missing is everything a
-document eventually needs *around* the writing — see the gaps below, which are
-the honest list of what a reviewer will ask about first.
+**Phase 9's four items are all built.** Documents exist, are
+permission-scoped, can be written in by more than one person at a time
+including the paragraphs that name somebody, are searchable, and sit in a tree
+that can be rearranged. What remains is not a numbered item but the gaps
+below — the honest list of what a reviewer will ask about first, and the input
+to deciding whether Phase 9 is done or merely out of planned work.
 
 Two things that were owed before Phase 9 are done and are why the docs screen
 was short rather than long:
@@ -132,9 +134,13 @@ In the order that buys the most:
    `preventDefault()` so the textarea's own history stops competing. Verified in
    Chrome, including that the undo reaches Postgres. The caret still lands at
    the end afterwards — see the gaps below.
-4. **A page tree that is only indentation.** `parent_page_id` is stored, moving
-   between containers works, and there is no drag, no collapse, and no reorder
-   among siblings — `position` is fractional and written only on create.
+4. ~~**A page tree that is only indentation.**~~ Built (D-119). The order is
+   computed from the tree rather than from the flat list — which was the
+   actual bug, since a child's `position` comes from its own sibling sequence
+   and sorting the list put children among their parents' siblings. Collapse
+   hides descendants, a drop onto a row reparents and a drop in the gap below
+   one reorders, both through a single `afterId`, and subpages can finally be
+   made from the screen rather than only from the data model.
 
 ### Known gaps in what was just built
 
@@ -255,9 +261,10 @@ In the order that buys the most:
 - **No comments on a document**, no links between a document and a task, no
   templates, no export, no archive screen — archived pages are only reachable by
   asking `listDocs` for them.
-- **A new page is always created at the container root.** `parentPageId` is
-  supported by the service and the screen never sends one, so subpages exist in
-  the data model and cannot be made from the UI.
+- ~~**A new page is always created at the container root.**~~ Closed by D-119:
+  the `+` on a row aims the new-page input at that page, and the container
+  picker is disabled while it is aimed, because a subpage inherits its
+  parent's container.
 - **The editor sends on a 400ms timer** and shows "Saving…" / "Saved" with no
   conflict state, because there is no conflict to show — but a failed push
   leaves the text on screen and the error beside it, and nothing retries.

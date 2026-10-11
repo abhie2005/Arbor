@@ -4082,3 +4082,80 @@ proof of the infrastructure path, and that is what was proven.
 in our own documentation — `sslmode=require` had stopped meaning "unverified"
 and started meaning "fails", and no amount of `plan`, `validate` or unit
 testing could have said so.
+
+### D-119
+**A page tree that is a tree, and what a drop means** · 2026-10-10 · active
+
+Phase 9 shipped documents with `parent_page_id` stored, `position` fractional
+and written only on create, and a sidebar that drew `paddingLeft: 28` when a
+page had a parent and `14` when it did not. Three things were missing and only
+one of them was the obvious one.
+
+**The order on screen was wrong, not merely flat.** `listDocs` sorts by
+container and then `position`, and a child's position is drawn from *its own*
+sibling sequence — so sorting the flat list places a child against its
+parent's siblings rather than under its parent. With one level of nesting and
+a handful of pages this looked fine, which is why it survived. `pageWalk`
+computes the drawing order from the tree: group by parent, sort each sibling
+set, walk depth-first. It is pure and lives in core with the interesting cases
+as unit tests, because the interesting cases are not about React.
+
+**A page whose parent is missing is a root.** `listDocs` is permission scoped,
+so a reader holding a grant on a subpage and none on the page above it gets
+the child alone. Walking only from `parentPageId === null` would drop it
+entirely — a page somebody can open, absent from the only screen that lists
+pages, with nothing on screen to say why. Showing it at the root is the same
+blunt-in-the-safe-direction trade the tree makes elsewhere. A cycle terminates
+too: `moveDoc` refuses to create one, but a walk that *can* loop is a tab that
+stops responding, and the guard costs a `Set`.
+
+**Collapse hides descendants, not children.** `visibleRows` filters on
+`ancestors`, so closing a page takes everything beneath it and reopening it
+restores whatever the inner twisties say. Collapse state is per-browser and
+not persisted — it is a view, not a property of the page, and two people
+should not fight over whether a section is open.
+
+**`afterId`, because a drop has two meanings and they differ only by where.**
+Onto a row means "become its first child"; onto the four-pixel strip below a
+row means "become its next sibling". Both are the same call:
+`repositionDocAction(docId, parentPageId, afterId)`, where `null` places first
+and an id places directly after that sibling. The UI picks the arguments; there
+is no second server path, and the client never has to know what a fractional
+index is.
+
+Three details that are easy to get wrong and were: the moving page is excluded
+from its own neighbour list, or a reorder computes a key between a page and
+itself. An anchor that is no longer a sibling appends rather than failing,
+because the client's tree can be one nudge stale and landing in the right
+parent beats an error about a row that moved. And `moveDoc`'s early return had
+to learn about `afterId` — without that, a pure reorder looked like nothing
+had changed and was silently swallowed.
+
+**Reposition is a separate action from `moveDocAction`, and the reason is
+authorization.** Changing a page's container is a question about two
+containers; dragging within one is a question about the container it is
+already in, which `editorOf` has answered. One action taking both would be one
+argument list where half the arguments decide which checks run. The new parent
+and the anchor are each loaded as the viewer first, so a client cannot learn
+whether a page exists in a space it cannot see by watching a move succeed
+(invariant 6).
+
+**Subpages can be made now.** `parentPageId` had been supported by `createDoc`
+since the beginning and no screen ever sent one, so the data model had
+subpages and the product did not. The `+` on a row aims the existing new-page
+input at that parent; the container picker is disabled while it is aimed,
+because a subpage inherits its parent's container and offering the choice
+would imply the two could disagree. The server enforces that rather than
+trusting it.
+
+**Verified in Chrome** at three levels of nesting: a drop onto a row reparented
+and landed first (`Zz` before `a0` in Postgres), a drop in a gap landed
+between two neighbours (`a0V` between `a0` and `a1`), collapsing a grandparent
+hid the grandchild, and dragging a page onto its own descendant was never
+offered. Drags were dispatched as real `DragEvent`s, because synthetic drags do
+not trigger HTML5 drag-and-drop — the same tooling limit the board and the
+calendar hit.
+
+*In one sentence:* the tree was indentation pretending to be structure, and the
+fix was to compute the order from the tree and let one `afterId` express both
+things a drop can mean.

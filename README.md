@@ -45,7 +45,7 @@ demo password.
 Verify the stack end to end:
 
 ```bash
-npm test               # 486 unit tests, no database needed
+npm test               # 499 unit tests, no database needed
 npm run db:smoke       # 230 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, and the activity log
 npm run check:actions  # 152 checks that POST what a button click posts, then
@@ -218,8 +218,10 @@ back would be worse than no nudge.
       is a hand-rolled contenteditable per paragraph, because every Yjs editor
       binding binds a shared type the stored format is not — and a mention is
       one character in the string it edits, which is what makes a DOM offset, a
-      caret and a CRDT position the same number. Still owed: a page tree that is
-      more than indentation.
+      caret and a CRDT position the same number. The page tree computes its
+      order from the tree rather than the flat list it arrives as — which was
+      the real bug behind "only indentation" — and a drop onto a row or into
+      the gap below one is the same call with a different `afterId`.
 - [ ] **10 — Automations, forms, public API.**
 
 Access control moved ahead of collaboration deliberately: every collaborative

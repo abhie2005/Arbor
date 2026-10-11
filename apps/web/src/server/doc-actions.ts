@@ -64,6 +64,7 @@ async function editorOf(docId: string) {
 export async function createDocAction(
   containerId: string | null,
   title: string,
+  parentPageId: string | null = null,
 ): Promise<DocResult<{ id: string }>> {
   try {
     const [actor, workspace] = await Promise.all([requireUser(), requireWorkspace()]);
@@ -71,8 +72,19 @@ export async function createDocAction(
     if (containerId) await requireContainerAccess(containerId, actor.id, "edit");
     else await requireWorkspaceRole(workspace.id, actor.id, "admin");
 
+    // A subpage inherits its parent's container rather than being told one, so
+    // the two cannot disagree — and the parent has to be reachable as the
+    // viewer, or the id alone would say whether it exists (invariant 6).
+    if (parentPageId) {
+      const parent = await loadDoc(parentPageId, actor.id);
+      if (!parent) throw new Error("That document no longer exists");
+      if (parent.containerId !== containerId) {
+        throw new Error("A subpage lives in the same container as the page above it");
+      }
+    }
+
     const doc = await createDoc(
-      { workspaceId: workspace.id, containerId, title },
+      { workspaceId: workspace.id, containerId, parentPageId, title },
       { actorId: actor.id },
     );
 
@@ -118,6 +130,45 @@ export async function moveDocAction(
     else await requireWorkspaceRole((await requireWorkspace()).id, actor.id, "admin");
 
     await moveDoc(docId, { containerId }, { actorId: actor.id });
+    revalidatePath("/docs");
+    return { ok: true };
+  } catch (error) {
+    return failed(error);
+  }
+}
+
+/**
+ * Where a page sits in the tree: under which page, and among which siblings.
+ *
+ * **Separate from `moveDocAction`, which moves between containers** (D-119).
+ * They authorize differently and that is the whole reason: changing container
+ * is a permission question about two containers, while dragging a page inside
+ * one is a question about the container it is already in — which `editorOf`
+ * has already answered. Folding both into one action would mean one argument
+ * list where half the arguments decide which checks run.
+ *
+ * The new parent is checked for reachability as the viewer before it is used.
+ * Without that, a client could post the id of a page in a space it cannot see
+ * and learn whether it exists from whether the move succeeded (invariant 6).
+ */
+export async function repositionDocAction(
+  docId: string,
+  parentPageId: string | null,
+  afterId: string | null,
+): Promise<DocResult> {
+  try {
+    const { actor, doc } = await editorOf(docId);
+
+    for (const other of [parentPageId, afterId]) {
+      if (!other) continue;
+      const target = await loadDoc(other, actor.id);
+      if (!target) throw new Error("That document no longer exists");
+      if (target.containerId !== doc.containerId) {
+        throw new Error("A page can only be moved within the container it is in");
+      }
+    }
+
+    await moveDoc(docId, { parentPageId, afterId }, { actorId: actor.id });
     revalidatePath("/docs");
     return { ok: true };
   } catch (error) {

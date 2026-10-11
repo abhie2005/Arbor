@@ -4022,24 +4022,133 @@ select.filter-add option {
   letter-spacing: 0.04em;
 }
 
-.docs-page {
-  display: block;
-  padding: 4px var(--space-3);
-  color: var(--text-2);
-  text-decoration: none;
-  font-size: var(--text-meta);
+/* A row in the page tree (D-119). The row owns the indent, the twisty and the
+   drag; the <a> inside it is only the link, so dragging a page does not have
+   to fight the browser's own "drag this link" behaviour. */
+.docs-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: var(--space-2);
   border-left: 2px solid transparent;
 }
 
-.docs-page:hover {
+.docs-row:hover {
   background: var(--raised);
+}
+
+.docs-row.is-open {
+  border-left-color: var(--accent);
+  background: var(--raised);
+}
+
+.docs-row.is-dragging {
+  opacity: 0.4;
+}
+
+/* Dropping onto a row means "become its first child", so the feedback outlines
+   the row itself rather than drawing a line. */
+.docs-row.is-drop-into {
+  background: var(--selected);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.docs-twisty {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.docs-twisty:hover {
   color: var(--text);
 }
 
-.docs-page.is-open {
+/* Keeps a childless row's title aligned with one that has a twisty. */
+.docs-twisty-none {
+  cursor: default;
+}
+
+.docs-subpage {
+  flex: none;
+  margin-left: auto;
+  padding: 0 4px;
+  font: inherit;
+  font-size: var(--text-meta);
+  line-height: 1;
+  color: var(--text-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.docs-row:hover .docs-subpage,
+.docs-subpage:focus-visible {
+  opacity: 1;
+}
+
+.docs-subpage:hover {
+  color: var(--accent);
+}
+
+/* The gap under a row: dropping here means "become its next sibling". Four
+   pixels is enough to hit and little enough that the tree does not look
+   double-spaced; the line only appears while something is over it. */
+.docs-gap {
+  height: 4px;
+  margin: -2px 0;
+  position: relative;
+  z-index: 1;
+}
+
+.docs-gap.is-drop-after::after {
+  content: "";
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  top: 1px;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 1px;
+}
+
+.docs-parent-clear {
+  align-self: flex-start;
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: none;
+  border-radius: var(--radius-chip);
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.docs-page {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 4px var(--space-2);
+  color: var(--text-2);
+  text-decoration: none;
+  font-size: var(--text-meta);
+}
+
+.docs-page:hover,
+.docs-row.is-open .docs-page {
   color: var(--text);
-  border-left-color: var(--accent);
-  background: var(--raised);
 }
 
 .docs-none {
