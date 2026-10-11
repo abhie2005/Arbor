@@ -460,6 +460,102 @@ export function mentionMatches(
   return scored.slice(0, limit).map((hit) => hit.person);
 }
 
+/* ------------------------------------------------------------------ *
+ * The page tree, as a walk.
+ * ------------------------------------------------------------------ */
+
+/** The little a page needs to have a place in the tree. */
+export interface PageNode {
+  id: string;
+  parentPageId: string | null;
+  position: string;
+}
+
+/** One row of the rendered tree. */
+export interface PageWalkRow<T extends PageNode> {
+  page: T;
+  /** 0 for a root, 1 for its children, and so on. */
+  depth: number;
+  /** Whether anything hangs off it — what decides if there is a twisty. */
+  hasChildren: boolean;
+  /** Every ancestor's id, nearest last. A collapse hides anything naming it. */
+  ancestors: string[];
+}
+
+/**
+ * A flat list of pages, walked depth-first into the order they are drawn in.
+ *
+ * **The list cannot simply be rendered in the order it arrives.** `listDocs`
+ * sorts by container and then `position`, and a child's position is drawn from
+ * its own sibling sequence — so a child sorts against its parent's siblings,
+ * not under its parent. Two levels of `paddingLeft` hid that for as long as
+ * nothing had grandchildren. Ordering is a property of the tree, so it is
+ * computed from the tree.
+ *
+ * **A page whose parent is missing is a root** (D-119). The list is permission
+ * scoped: a reader may hold a grant on a subpage and none on the page above
+ * it, and `listDocs` will return the child alone. Walking only from
+ * `parentPageId === null` would drop it — a page somebody can open, absent
+ * from the only screen that lists pages, with nothing on screen to say so.
+ * Showing it at the root is the same "blunt in the safe direction" choice the
+ * rest of the tree makes.
+ *
+ * **Cycles cannot hang this.** `moveDoc` refuses to make a page its own
+ * ancestor, so a cycle would have to arrive from a direct write; a visited set
+ * means the walk ends either way rather than running until the tab dies.
+ */
+export function pageWalk<T extends PageNode>(pages: readonly T[]): PageWalkRow<T>[] {
+  const byParent = new Map<string | null, T[]>();
+  const present = new Set(pages.map((page) => page.id));
+
+  for (const page of pages) {
+    // A parent that is not in this list cannot be walked from, so the child
+    // stands at the root rather than disappearing with it.
+    const key = page.parentPageId && present.has(page.parentPageId) ? page.parentPageId : null;
+    byParent.set(key, [...(byParent.get(key) ?? []), page]);
+  }
+
+  for (const siblings of byParent.values()) {
+    // Position first; id breaks a tie so two pages written in the same
+    // transaction do not swap places between renders.
+    siblings.sort((a, b) => (a.position < b.position ? -1 : a.position > b.position ? 1 : a.id < b.id ? -1 : 1));
+  }
+
+  const rows: PageWalkRow<T>[] = [];
+  const seen = new Set<string>();
+
+  const visit = (page: T, depth: number, ancestors: string[]) => {
+    if (seen.has(page.id)) return;
+    seen.add(page.id);
+
+    const children = byParent.get(page.id) ?? [];
+    rows.push({ page, depth, hasChildren: children.length > 0, ancestors });
+
+    const below = [...ancestors, page.id];
+    for (const child of children) visit(child, depth + 1, below);
+  };
+
+  for (const root of byParent.get(null) ?? []) visit(root, 0, []);
+
+  return rows;
+}
+
+/**
+ * The rows that are visible, given which pages are collapsed.
+ *
+ * Collapsing hides descendants rather than children: a page three levels down
+ * disappears with the ancestor that was closed, and reopening that ancestor
+ * brings back whatever *its* own collapse state says, which is what makes the
+ * twisties feel independent rather than nested.
+ */
+export function visibleRows<T extends PageNode>(
+  rows: readonly PageWalkRow<T>[],
+  collapsed: ReadonlySet<string>,
+): PageWalkRow<T>[] {
+  if (collapsed.size === 0) return [...rows];
+  return rows.filter((row) => !row.ancestors.some((id) => collapsed.has(id)));
+}
+
 /**
  * One update folded into the stored state.
  *

@@ -358,6 +358,15 @@ export interface MoveDocInput {
   /** Omitted leaves it where it is; null moves it to the workspace root. */
   containerId?: string | null;
   parentPageId?: string | null;
+  /**
+   * Where among its new siblings it lands (D-119).
+   *
+   * Omitted appends, which is what every caller wanted while the only move
+   * was between containers. `null` puts it first. An id puts it directly
+   * after that sibling — the shape a drop between two rows produces, and the
+   * one that does not need the caller to know what a fractional index is.
+   */
+  afterId?: string | null;
 }
 
 /**
@@ -387,9 +396,22 @@ export async function moveDoc(
       }
     }
 
-    if (containerId === previous.container_id && parentPageId === previous.parent_page_id) return;
+    // A reorder among unchanged siblings is a real move, so this may only
+    // return early when the caller did not ask for a placement either.
+    if (
+      input.afterId === undefined &&
+      containerId === previous.container_id &&
+      parentPageId === previous.parent_page_id
+    ) {
+      return;
+    }
 
-    const position = await nextPosition(client, containerId, parentPageId);
+    if (input.afterId === docId) throw new ConfigError("A page cannot be placed after itself");
+
+    const position =
+      input.afterId === undefined
+        ? await nextPosition(client, containerId, parentPageId)
+        : await positionAfter(client, containerId, parentPageId, input.afterId, docId);
 
     await client.query(
       `UPDATE docs SET container_id = $2, parent_page_id = $3, position = $4, updated_at = now()
@@ -403,9 +425,18 @@ export async function moveDoc(
       objectKind: "doc",
       objectId: docId,
       verb: "doc.moved",
-      field: "container_id",
-      oldValue: previous.container_id,
-      newValue: containerId,
+      // What actually changed, so the log does not report a container move
+      // every time somebody drags a page past its neighbour. Read the verb
+      // first, then the field — that is the rule `activity.field` already has.
+      ...(containerId !== previous.container_id
+        ? { field: "container_id", oldValue: previous.container_id, newValue: containerId }
+        : parentPageId !== previous.parent_page_id
+          ? {
+              field: "parent_page_id",
+              oldValue: previous.parent_page_id,
+              newValue: parentPageId,
+            }
+          : { field: "position", oldValue: previous.position, newValue: position }),
     });
 
     // Announced where it came from as well as where it went: a page vanishing
@@ -592,6 +623,45 @@ async function descendsFrom(
 }
 
 /** After the last sibling. Fractional, so a reorder writes one row (D-012). */
+/**
+ * A position directly after one sibling, among the pages that will be its
+ * siblings once the move lands.
+ *
+ * **The moving page is excluded from its own neighbours.** It may already be
+ * in this parent — a reorder — and leaving it in the list would make it its
+ * own upper bound, producing a key between a page and itself.
+ *
+ * `afterId` of null means first. An `afterId` that is not actually a sibling
+ * is treated as "append" rather than refused: the client's picture of the
+ * tree can be one nudge out of date, and a page landing at the end of the
+ * right parent is a better answer than an error about a row that moved.
+ */
+async function positionAfter(
+  client: PoolClient,
+  containerId: string | null,
+  parentPageId: string | null,
+  afterId: string | null,
+  movingId: string,
+): Promise<string> {
+  const result = await client.query<{ id: string; position: string }>(
+    `SELECT id, position FROM docs
+     WHERE container_id IS NOT DISTINCT FROM $1
+       AND parent_page_id IS NOT DISTINCT FROM $2
+       AND id <> $3
+       AND archived_at IS NULL
+     ORDER BY position, id`,
+    [containerId, parentPageId, movingId],
+  );
+
+  const siblings = result.rows;
+  if (afterId === null) return positionBetween(null, siblings[0]?.position ?? null);
+
+  const index = siblings.findIndex((row) => row.id === afterId);
+  if (index < 0) return positionBetween(siblings[siblings.length - 1]?.position ?? null, null);
+
+  return positionBetween(siblings[index]!.position, siblings[index + 1]?.position ?? null);
+}
+
 async function nextPosition(
   client: PoolClient,
   containerId: string | null,

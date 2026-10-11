@@ -15,11 +15,13 @@ import {
   emptyDocState,
   mentionMatches,
   mentionQuery,
+  pageWalk,
   replacedRange,
   richTextFrom,
   searchTextFrom,
   stateVectorOf,
   typeable,
+  visibleRows,
 } from "./documents";
 import { renderPlain } from "./richtext";
 
@@ -439,5 +441,124 @@ describe("who an @ query could mean", () => {
   it("stops at the limit, because a picker is a menu and not a directory", () => {
     const many = Array.from({ length: 20 }, (_, i) => ({ id: `u${i}`, name: `Person ${i}` }));
     expect(mentionMatches(many, "person")).toHaveLength(6);
+  });
+});
+
+describe("the page tree, walked", () => {
+  const page = (id: string, parentPageId: string | null, position: string) => ({
+    id,
+    parentPageId,
+    position,
+  });
+
+  const shape = (rows: ReturnType<typeof pageWalk>) =>
+    rows.map((r) => `${"  ".repeat(r.depth)}${r.page.id}`).join("\n");
+
+  it("puts a child under its parent, not among its parent's siblings", () => {
+    // The bug two levels of paddingLeft hid: a child's position is drawn from
+    // its own sibling sequence, so sorting the flat list cannot produce this.
+    const rows = pageWalk([
+      page("handbook", null, "a0"),
+      page("onboarding", "handbook", "a0"),
+      page("payroll", null, "a1"),
+    ]);
+
+    expect(shape(rows)).toBe("handbook\n  onboarding\npayroll");
+  });
+
+  it("walks arbitrary depth, which the old two-level padding could not draw", () => {
+    const rows = pageWalk([
+      page("a", null, "a0"),
+      page("b", "a", "a0"),
+      page("c", "b", "a0"),
+      page("d", "c", "a0"),
+    ]);
+
+    expect(rows.map((r) => r.depth)).toEqual([0, 1, 2, 3]);
+  });
+
+  it("orders siblings by position, not by the order they arrived", () => {
+    const rows = pageWalk([
+      page("third", null, "a3"),
+      page("first", null, "a1"),
+      page("second", null, "a2"),
+    ]);
+
+    expect(rows.map((r) => r.page.id)).toEqual(["first", "second", "third"]);
+  });
+
+  it("breaks a tie on id, so two pages written together do not swap on re-render", () => {
+    const one = pageWalk([page("b", null, "a1"), page("a", null, "a1")]);
+    const two = pageWalk([page("a", null, "a1"), page("b", null, "a1")]);
+    expect(one.map((r) => r.page.id)).toEqual(two.map((r) => r.page.id));
+  });
+
+  it("shows a page whose parent the reader cannot see, rather than losing it", () => {
+    // listDocs is permission scoped (D-119): a grant on the subpage and none
+    // on the page above it returns the child alone. Walking only from null
+    // parents would drop a page somebody can open.
+    const rows = pageWalk([page("visible-child", "unreachable-parent", "a0")]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.depth).toBe(0);
+    expect(rows[0]!.ancestors).toEqual([]);
+  });
+
+  it("reports which rows have children, because that is what draws a twisty", () => {
+    const rows = pageWalk([page("parent", null, "a0"), page("child", "parent", "a0")]);
+    expect(rows.map((r) => r.hasChildren)).toEqual([true, false]);
+  });
+
+  it("carries every ancestor, nearest last", () => {
+    const rows = pageWalk([
+      page("a", null, "a0"),
+      page("b", "a", "a0"),
+      page("c", "b", "a0"),
+    ]);
+    expect(rows[2]!.ancestors).toEqual(["a", "b"]);
+  });
+
+  it("terminates on a cycle rather than hanging the tab", () => {
+    // moveDoc refuses to create one, so this would have to come from a direct
+    // write — but a tree walk that can loop is a tab that stops responding.
+    const rows = pageWalk([page("x", "y", "a0"), page("y", "x", "a0")]);
+    expect(rows.length).toBeLessThanOrEqual(2);
+  });
+
+  it("is empty for no pages", () => {
+    expect(pageWalk([])).toEqual([]);
+  });
+});
+
+describe("collapsing the page tree", () => {
+  const page = (id: string, parentPageId: string | null, position: string) => ({
+    id,
+    parentPageId,
+    position,
+  });
+
+  const rows = pageWalk([
+    page("a", null, "a0"),
+    page("b", "a", "a0"),
+    page("c", "b", "a0"),
+    page("d", null, "a1"),
+  ]);
+
+  it("hides everything beneath a collapsed page, not only its children", () => {
+    const shown = visibleRows(rows, new Set(["a"]));
+    expect(shown.map((r) => r.page.id)).toEqual(["a", "d"]);
+  });
+
+  it("leaves the collapsed page itself on screen", () => {
+    expect(visibleRows(rows, new Set(["a"])).map((r) => r.page.id)).toContain("a");
+  });
+
+  it("collapses independently at each level", () => {
+    const shown = visibleRows(rows, new Set(["b"]));
+    expect(shown.map((r) => r.page.id)).toEqual(["a", "b", "d"]);
+  });
+
+  it("shows everything when nothing is collapsed", () => {
+    expect(visibleRows(rows, new Set())).toHaveLength(4);
   });
 });

@@ -3356,6 +3356,89 @@ async function main() {
     await expectRejection(() => moveDoc(hiringDoc.id, { parentPageId: child.id }, docConfig)),
   );
 
+  // --- the page tree is more than indentation now (D-119) -------------------
+  //
+  // `position` was fractional from the start and written only on create, so
+  // every page landed at the end of its parent and stayed there. These drive
+  // the placement half: first, last, between, and the reorder that used to be
+  // swallowed by the "nothing changed" early return.
+  const siblingNames = ["Loop A", "Loop B", "Loop C"];
+  const siblings: Awaited<ReturnType<typeof createDoc>>[] = [];
+  for (const name of siblingNames) {
+    siblings.push(
+      await createDoc(
+        { workspaceId: ws.id!, containerId: founders.id!, parentPageId: hiringDoc.id, title: name },
+        docConfig,
+      ),
+    );
+  }
+
+  const orderUnder = async (parentId: string) =>
+    (await listDocs(ws.id!, owner.id!, {}, pool))
+      .filter((doc) => doc.parentPageId === parentId)
+      .sort((a, b) => (a.position < b.position ? -1 : 1))
+      .map((doc) => doc.title);
+
+  report(
+    "pages land after their siblings in the order they were made",
+    (await orderUnder(hiringDoc.id)).join(" ") === "Interview loop Loop A Loop B Loop C"
+      ? null
+      : `order is ${(await orderUnder(hiringDoc.id)).join(" ")}`,
+  );
+
+  await moveDoc(siblings[2]!.id, { afterId: null }, docConfig);
+  report(
+    "afterId null puts a page first among its siblings",
+    (await orderUnder(hiringDoc.id))[0] === "Loop C"
+      ? null
+      : `order is ${(await orderUnder(hiringDoc.id)).join(" ")}`,
+  );
+
+  await moveDoc(siblings[2]!.id, { afterId: siblings[0]!.id }, docConfig);
+  report(
+    "and an id puts it directly after that sibling",
+    (await orderUnder(hiringDoc.id)).join(" ") === "Interview loop Loop A Loop C Loop B"
+      ? null
+      : `order is ${(await orderUnder(hiringDoc.id)).join(" ")}`,
+  );
+
+  const reorderLogged = await one(
+    `SELECT verb, field FROM activity
+     WHERE object_kind = 'doc' AND object_id = $1 ORDER BY at DESC LIMIT 1`,
+    [siblings[2]!.id],
+  );
+  report(
+    "a reorder logs the position, not a container move that did not happen",
+    reorderLogged?.verb === "doc.moved" && reorderLogged.field === "position"
+      ? null
+      : `the log says ${JSON.stringify(reorderLogged)}`,
+  );
+
+  report(
+    "a page cannot be placed after itself",
+    await expectRejection(() => moveDoc(siblings[0]!.id, { afterId: siblings[0]!.id }, docConfig)),
+  );
+
+  // An anchor that is not a sibling: the client's tree can be one nudge stale,
+  // and appending beats erroring about a row that moved.
+  await moveDoc(siblings[1]!.id, { afterId: openDoc.id }, docConfig);
+  report(
+    "an anchor that is not a sibling appends rather than refusing",
+    (await orderUnder(hiringDoc.id)).join(" ") === "Interview loop Loop A Loop C Loop B"
+      ? null
+      : `order is ${(await orderUnder(hiringDoc.id)).join(" ")}`,
+  );
+
+  // Reparenting and placing in one move, which is what a drop onto a row does.
+  await moveDoc(siblings[0]!.id, { parentPageId: child.id, afterId: null }, docConfig);
+  report(
+    "a page can be reparented and placed in the same move",
+    (await orderUnder(child.id)).join(" ") === "Loop A" &&
+      !(await orderUnder(hiringDoc.id)).includes("Loop A")
+      ? null
+      : `under the new parent: ${(await orderUnder(child.id)).join(" ")}`,
+  );
+
   await archiveDoc(hiringDoc.id, true, docConfig);
   report(
     "archiving hides a document from the list without deleting it",
