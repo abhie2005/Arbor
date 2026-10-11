@@ -87,8 +87,14 @@ resource "aws_db_instance" "main" {
   # question, because either one alone is a checkbox somebody can flip.
   publicly_accessible = false
 
-  backup_retention_period    = 7
-  backup_window              = "04:00-05:00"
+  # Seven days in production. Zero disables automated backups entirely, which
+  # is the only setting an AWS Free Plan account will accept — it refuses any
+  # retention above its cap with a FreeTierRestrictionError that names the
+  # retention period rather than the account plan.
+  backup_retention_period = var.db_backup_retention_days
+  # A backup window is meaningless with retention disabled, and RDS rejects the
+  # pairing rather than ignoring it.
+  backup_window              = var.db_backup_retention_days > 0 ? "04:00-05:00" : null
   maintenance_window         = "sun:05:00-sun:06:00"
   auto_minor_version_upgrade = true
 
@@ -132,11 +138,16 @@ resource "aws_secretsmanager_secret" "database_url" {
 resource "aws_secretsmanager_secret_version" "database_url" {
   secret_id = aws_secretsmanager_secret.database_url.id
   secret_string = format(
-    "postgres://%s:%s@%s:%d/%s?sslmode=require",
+    # verify-full with the RDS CA bundle the image ships (D-118). `require`
+    # was here first, on the understanding that it encrypts without verifying;
+    # current pg treats it as an alias for verify-full, so against RDS it does
+    # not weaken the check, it breaks the connection.
+    "postgres://%s:%s@%s:%d/%s?sslmode=verify-full&sslrootcert=%s",
     var.db_username,
     urlencode(random_password.db.result),
     aws_db_instance.main.address,
     aws_db_instance.main.port,
     var.db_name,
+    "/usr/local/share/ca-certificates/rds-global-bundle.pem",
   )
 }

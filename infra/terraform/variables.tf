@@ -114,6 +114,12 @@ variable "db_skip_final_snapshot" {
   default     = false
 }
 
+variable "db_backup_retention_days" {
+  description = "Days of automated backups. 0 disables them, which is what a throwaway environment wants and what an AWS Free Plan account requires."
+  type        = number
+  default     = 7
+}
+
 variable "db_deletion_protection" {
   description = <<-EOT
     Refuse `terraform destroy` on the database.

@@ -15,7 +15,6 @@ export interface DatabaseOptions {
   connectionString?: string;
   /** Fargate tasks are long-lived, so a real pool is worth having. */
   max?: number;
-  ssl?: boolean;
 }
 
 /**
@@ -28,7 +27,13 @@ export function createPool(options: DatabaseOptions = {}): Pool {
   return new Pool({
     connectionString: connectionString(options),
     max: options.max ?? 10,
-    ssl: options.ssl ? { rejectUnauthorized: false } : undefined,
+    // **TLS is the connection string's business, not this function's** (D-118).
+    // There used to be an `ssl` option here that meant
+    // `{ rejectUnauthorized: false }`, and nothing ever passed it — so the
+    // posture it described was not the posture in force, and the deployment
+    // notes documented the option rather than the behaviour. What actually
+    // decides is `sslmode` in the URL, which for RDS is now `verify-full`
+    // against the CA bundle the image ships.
   });
 }
 

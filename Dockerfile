@@ -45,6 +45,23 @@ RUN npm run build -w @arbor/web
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+
+# The Amazon RDS certificate authority.
+#
+# **`sslmode=require` stopped meaning what the runbook said it meant** (D-118).
+# As of pg 8.23 / pg-connection-string 2.9, `require` is an alias for
+# `verify-full` rather than libpq's "encrypt but do not verify" — so a
+# connection to RDS does not silently skip verification any more, it fails
+# outright with SELF_SIGNED_CERT_IN_CHAIN. The first apply found this, because
+# nothing before it had ever opened a TLS connection to a real RDS instance.
+#
+# Shipping the bundle is the fix the deployment notes already named, and it is
+# now the only one that works: there is no posture here that both connects and
+# skips verification without explicitly asking for it.
+RUN wget -qO /usr/local/share/ca-certificates/rds-global-bundle.pem \
+      https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+ && grep -q "BEGIN CERTIFICATE" /usr/local/share/ca-certificates/rds-global-bundle.pem
+
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 # Bind all interfaces: the ALB reaches the task on its private IP, and Next's
@@ -75,6 +92,23 @@ CMD ["node", "apps/web/server.js"]
 FROM node:22-alpine AS migrator
 WORKDIR /repo
 ENV NODE_ENV=production
+
+# The Amazon RDS certificate authority.
+#
+# **`sslmode=require` stopped meaning what the runbook said it meant** (D-118).
+# As of pg 8.23 / pg-connection-string 2.9, `require` is an alias for
+# `verify-full` rather than libpq's "encrypt but do not verify" — so a
+# connection to RDS does not silently skip verification any more, it fails
+# outright with SELF_SIGNED_CERT_IN_CHAIN. The first apply found this, because
+# nothing before it had ever opened a TLS connection to a real RDS instance.
+#
+# Shipping the bundle is the fix the deployment notes already named, and it is
+# now the only one that works: there is no posture here that both connects and
+# skips verification without explicitly asking for it.
+RUN wget -qO /usr/local/share/ca-certificates/rds-global-bundle.pem \
+      https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem \
+ && grep -q "BEGIN CERTIFICATE" /usr/local/share/ca-certificates/rds-global-bundle.pem
+
 COPY --from=deps /repo/node_modules ./node_modules
 COPY package.json package-lock.json ./
 COPY packages/core ./packages/core
