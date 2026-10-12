@@ -17,5 +17,6 @@ export * from "./views/compile";
 export * from "./views/columns";
 export * from "./dashboards";
 export * from "./goals";
+export * from "./automations";
 export * from "./time";
 export * from "./mutations";

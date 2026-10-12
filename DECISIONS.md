@@ -4398,3 +4398,84 @@ falls back to the first row, the same as an id that does not exist.
 
 *In one sentence:* the actions asked the right question about one container and
 the page never asked it about any.
+
+---
+
+### D-124
+**Automations: a rule reuses three vocabularies rather than inventing one** · 2026-10-12 · active
+
+Phase 10's first code, and the first thing in the repo to read the
+`automations` table the schema has held since Phase 1. The rule shape —
+trigger, conditions, actions — was never the hard part; what is hard to take
+back is what each of the three is *made of*, and the answer in all three cases
+was to reuse something that already exists rather than declare a parallel one.
+
+**A trigger computes its verb by calling the function that writes it.** The log
+stores `task.status_id_changed`, built by `activityVerb` from an operation.
+`verbFor` hands that same function a synthetic operation and uses what comes
+back, so a trigger and the log cannot disagree about what an event is called.
+The alternative is a table of verb strings in this file, and the bug it
+produces is the worst kind: rename what an operation logs and every saved
+automation quietly stops firing, with nothing broken and no error anywhere.
+It also keeps `activity.field` — the *SQL column name*, the thing CLAUDE.md
+warns about — out of this file entirely, because the column name is already
+baked into the verb by the one function that knows how to spell it.
+
+**Conditions are a `FilterGroup`, and nothing here evaluates them.** "Status is
+Done and priority is high" is a filter; the compiler already turns filters into
+SQL; invariant 2 says a reader does not get a query of its own. So an
+automation does not get a condition evaluator of its own either — the runtime
+will ask the compiler whether this one task matches. Nested AND/OR, custom
+fields and every operator arrive for free, and a rule cannot come to mean
+something different from a saved view that says the same words. A hand-written
+evaluator here would have been quicker and would have been a second definition
+of "matches" from the day it was written.
+
+**An action compiles to an `Operation`**, because invariant 1 says
+`applyOperations` is the only thing that writes task data. The activity row
+comes free. So does the answer to the question STATUS flagged — *whose undo
+stack does the robot's action land in?* — and the answer turned out not to need
+inventing: the stack lives in the browser (`undo-store.ts`) and is filled by
+inverses the server hands back to whoever called. An automation calls nothing,
+so it lands in nobody's stack by construction. The alternatives were worse in
+instructive ways: crediting the triggering person means ⌘Z after a rename also
+reverts three things the robot did, and a `logConfigChange`-style direct write
+would make automations the second writer of task data, which is the precise
+thing invariant 1 exists to prevent.
+
+**Actions are a deliberate subset of what an operation can express.** Every one
+is something a person could do to the task the trigger fired for. An automation
+that could create a task anywhere, or edit somebody else's comment, would be a
+way to do things the permission check on the rule's own container never agreed
+to.
+
+**No-ops are dropped here as well as in the executor.** The executor already
+filters them, so this is not for correctness — it is for the run record. A rule
+that fires a hundred times and changes nothing should say it changed nothing,
+and a run reporting three applied operations against a task that was already in
+that state is a log that lies quietly.
+
+**Values compare across the JSON round trip.** A priority written by a form is
+`"3"` and the column holds `3`; `===` would make a rule that passes its unit
+test fail against Postgres for a reason invisible on screen. Null and undefined
+are one absence, because a cleared field and an absent one mean the same thing
+to a trigger. Reverting this to `===` fails the test that names it.
+
+**A rule never answers its own output, and that is not a depth question.**
+`A fires A` is the one cycle recognisable without a counter, and refusing it by
+depth would still let it run three times first. It is recorded as
+`skipped_self` rather than as a refusal, because nothing went wrong — the rule
+simply has nothing to say about what it just did. Depth, at a limit of three,
+is for the cascades somebody did design: A moves a task, B comments on the
+move. Both refusals are rows, because a quota that stops an automation
+silently is indistinguishable from a rule that is broken.
+
+**The idempotency key is `automationId:activityId`, which is a decision about
+the scan that has not been written yet.** Activity ids come from a sequence and
+a lower id can commit after a higher one, so a strict "last id seen" watermark
+silently skips whatever was still in flight. The scan will therefore overlap
+and let the unique index already on that column refuse the duplicate — which is
+the trade the schema chose in Phase 1 by putting a unique index there at all.
+
+*In one sentence:* every part of a rule is spelled in a vocabulary that already
+had a definition elsewhere, so there is nothing here that can drift.
