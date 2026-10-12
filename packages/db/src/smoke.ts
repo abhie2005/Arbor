@@ -118,6 +118,7 @@ import {
 import {
   containerAccess,
   listAccess,
+  reachableContainers,
   requireContainerAccess,
   requireListAccess,
   requireTaskAccess,
@@ -1524,6 +1525,41 @@ async function main() {
 
   await setContainerPrivacy(closable.id!, false, { actorId: owner.id!, connection: pool });
   await revokeAccess(closable.id!, "user", outsider.id!, accessConfig);
+
+  // Everything above asks about one named container, which is the shape an
+  // action needs because the id arrives with the request. A *screen* has to
+  // decide which ids to name at all, and `/settings/sharing` answered that with
+  // "every container in the workspace" — private spaces included, each with a
+  // count of how many people could see inside (D-123). So the property is that
+  // the list is cut to what the viewer may actually share.
+  const memberMayShare = await reachableContainers(ws.id!, outsider.id!, "manage", pool);
+
+  report(
+    "what a member may share excludes a private space nobody granted them",
+    !memberMayShare.has(founders.id!)
+      ? null
+      : "a private space is listed to a member who cannot share it",
+  );
+
+  report(
+    "and excludes an open space their role only lets them edit",
+    !memberMayShare.has(engineering.id!)
+      ? null
+      : `a member may share a space they hold ${String(
+          await containerAccess(engineering.id!, outsider.id!, pool),
+        )} on`,
+  );
+
+  // The other half, or the check would pass just as well against a function
+  // that always answers "nothing".
+  const ownerMayShare = await reachableContainers(ws.id!, owner.id!, "manage", pool);
+
+  report(
+    "while the owner's includes it, because the filter is the index and not a blanket no",
+    ownerMayShare.has(founders.id!) && ownerMayShare.has(engineering.id!)
+      ? null
+      : `the owner may share ${ownerMayShare.size} of their own containers`,
+  );
 
   // --- comments -------------------------------------------------------------
   console.log("\ncomments → operations, not a comment service\n");

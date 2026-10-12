@@ -4349,3 +4349,52 @@ rather than changed here, where the question was what a mention may name.
 
 *In one sentence:* resolving a name against every account in the installation
 made a refusal into a directory.
+
+---
+
+### D-123
+**A screen lists what the viewer may share, not what exists** · 2026-10-11 · active
+
+`/settings/sharing` loaded the whole container tree for the workspace and
+rendered all of it: every space and list, private ones included, each with a
+count of how many people could reach inside. Any signed-in member saw it. The
+actions behind the page had been correctly scoped to `manage` on the container
+since D-109; the page had never been scoped at all, and it never called
+`requireUser`.
+
+**It was the one read in the app that did not join the access index**
+(invariant 5), and the reason is a shape rather than an oversight.
+`requireContainerAccess` answers "may this person touch *that* id", which fits
+an action, because the id arrives with the request. A screen has to decide
+which ids to name in the first place, and there was no function for that — so
+the page answered it with "all of them". `reachableContainers` is that
+function, and it lives in `packages/db` beside the one-id checks because the
+worker will ask the same question.
+
+**`manage`, matching the actions exactly.** Listing a container the viewer can
+see but not share would render a row whose every control refuses. `view` was
+the alternative and it is the wrong trade: it would make the screen an
+inventory of the workspace again, with the buttons as the only thing stopping
+anybody.
+
+**The ladder is applied with `satisfies`, not as SQL equality.** `manage` is
+the top of `view < comment < edit < manage` today, so `permission = 'manage'`
+would work and would silently exclude anything added above it later. The filter
+is in TypeScript against the same comparison every other check uses.
+
+**The tree is still loaded whole, which is not the same leak.** Privacy is
+inherited, so deciding whether a list you manage sits inside a private space
+means knowing about that space. What changed is what reaches the client.
+
+**Depth counts visible ancestors**, so the indentation describes what is on
+screen. Counting all of them would indent a list two steps under a space that
+is not listed, which reads as a rendering bug and invites someone to "fix" it
+by showing the parent.
+
+**A container named in the URL falls back rather than refusing.** Honouring
+`?container=` for something the viewer cannot share would select it; refusing
+differently from "no such container" would say which of the two it was. It
+falls back to the first row, the same as an id that does not exist.
+
+*In one sentence:* the actions asked the right question about one container and
+the page never asked it about any.

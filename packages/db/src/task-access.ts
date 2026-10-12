@@ -233,6 +233,44 @@ export async function requireContainerAccess(
 export const listAccess = containerAccess;
 
 /**
+ * Every container in a workspace the viewer holds at least `need` on.
+ *
+ * **The set-shaped version of the question, for a screen that lists containers
+ * rather than checking one.** `requireContainerAccess` answers "may this person
+ * touch *that* id", which is the right shape for an action — the id arrives
+ * with the request. A screen that has to decide *which ids to name in the first
+ * place* cannot use it, and that is how `/settings/sharing` came to list every
+ * container in the workspace, private ones included, with how many people reach
+ * each one, to anybody who opened it (D-123). The actions behind that page were
+ * scoped correctly the whole time; the page was not, which is the pattern
+ * invariant 5 exists to catch — a read that does not join the index.
+ *
+ * The ladder is applied with `satisfies` rather than as SQL equality, so a
+ * permission added above `manage` is included here without anyone having to
+ * remember this query.
+ */
+export async function reachableContainers(
+  workspaceId: string,
+  viewerId: string,
+  need: Permission = "view",
+  connection: Connection = pool(),
+): Promise<Map<string, Permission>> {
+  if (!isId(workspaceId) || !isId(viewerId)) return new Map();
+
+  const result = await connection.query<{ container_id: string; permission: Permission }>(
+    `SELECT container_id, permission FROM access_index
+     WHERE workspace_id = $1 AND principal_id = $2`,
+    [workspaceId, viewerId],
+  );
+
+  return new Map(
+    result.rows
+      .filter((row) => satisfies(row.permission, need))
+      .map((row) => [row.container_id, row.permission] as const),
+  );
+}
+
+/**
  * Ordered by privilege, so a minimum can be expressed as an index.
  *
  * This is a *workspace* role, which is a different axis from the container

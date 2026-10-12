@@ -15,16 +15,58 @@ commands, gotchas. It loads automatically. This file is only *current state and
 what is next*, so start here when resuming and do not read the tree to orient
 yourself.
 
-**One open bug**, found on 2026-10-11 while building backlinks and deliberately
-not fixed there because it predates the phase: `task-history.tsx` formats
-timestamps with `toLocaleString("en-GB")` and no `timeZone`, so the server
-renders in its zone and the browser re-renders in the viewer's — React throws
-the tree away and says so in the console. It will happen in any deployment,
-since a server and a browser are rarely in the same zone, and it contradicts
-invariant 9. Details under "Found while building this".
+**The three bugs that were open are fixed** (2026-10-11), each as its own
+commit: the hydration mismatch on every timestamp (D-121), the sharing screen
+that listed every container in the workspace (D-123), and mentions that
+resolved against every user in the database (D-122). Each one turned out to be
+wider than it was written up as, and the extra doors are in the entries.
+
+**Three things were found while fixing them and are deliberately not fixed.**
+They are the next small jobs, under "Open bugs" below: a latent copy of the
+hydration bug in the four view renderers that **no check in this repo can
+reach**, five people-lists that are still workspace-wide, and no fixture
+anywhere for a second workspace.
 
 The archaeology of the bugs that are fixed, and what browser verification found
 in each phase, is in `docs/HISTORY.md`.
+
+---
+
+## Open bugs
+
+**1. The four view renderers format an instant with no zone — latent, and
+unreachable by every check here.** `task-row.tsx`, `task-table.tsx`,
+`board.tsx` and `task-detail.tsx` all format due dates through
+`dateFrame(hasTime)`, which correctly returns `{}` for an instant — and `{}`
+means the ambient zone, which is the server's on the server and the viewer's in
+the browser. That is D-121 exactly, in four more places.
+
+It has never shown because **the seed has no task with `dueHasTime: true`**.
+Every seeded due date is a calendar day, so only the UTC branch is ever taken,
+and the instant branch cannot be exercised by `npm test`, `db:smoke`,
+`check:actions` or a browser pass over seeded data. `isOverdue` on the same
+path compares against `Date.now()` and has the same shape of problem.
+
+The fix is `Timestamp`'s two renders pushed into those four, which is more
+invasive than it sounds — the label comes out of a `formatDue` helper that
+returns `{ label, overdue }` and is read inside drag-heavy markup. **Seed one
+task with `dueHasTime: true` first**, or the fix cannot be verified either.
+
+**2. Five people-lists are still every user in the database.** `views.ts:420`,
+`task.ts:279`, `goals.ts:33`, `dashboards.ts:54` and `column-values.ts:160`
+each read `FROM users` with no workspace join, to label an id or fill a picker.
+D-122 fixed the two that turn typed text into a *stored* mention and left
+these, which only display: an assignee picker offering somebody from another
+workspace is a real bug and a smaller one. They want `mentionableIn`, or its
+read-only equivalent.
+
+**3. There is no second workspace anywhere, and that is why both of the above
+hide.** All four seeded users are members of the one workspace, so every
+cross-workspace question answers correctly by accident. `check:actions` now
+makes a non-member user inline for one assertion (D-122) and deletes it again,
+which is the narrowest possible version of the fixture. A second seeded
+workspace would make a whole class of check expressible, and would probably
+find more than the two above.
 
 ---
 
@@ -340,27 +382,30 @@ them — the schema was drawn in Phase 1 and has been waiting since.
 
 **Found while building this, older than it**
 
-- **The task history's timestamps cause a hydration mismatch.**
-  `task-history.tsx` formats with `toLocaleString("en-GB")` and no `timeZone`,
-  so the server renders in *its* zone and the browser re-renders in the
-  viewer's — React discards the tree and says so in the console. In the
-  container dev server (UTC) against a Pacific browser it reads "10 Oct" on the
-  server and "9 Oct" on the client. It predates Phase 9 and will happen in any
-  deployment, because a server and a browser are rarely in the same zone. The
-  fix is to pick the zone explicitly, which is what invariant 9 already demands
-  of every other date in this app.
+- ~~**The task history's timestamps cause a hydration mismatch.**~~ **Fixed**
+  (D-121), and it was three screens rather than one — the inbox and a comment
+  header carried the same construct, and a time entry's row and the search
+  results carried it through `relative`. The zone turned out not to be missing
+  but *implied*, which is why the code read as correct: `toLocaleString` with no
+  `timeZone` does read an instant in the viewer's zone, and a server render has
+  no viewer. `Timestamp` renders a pinned UTC form before hydration and the
+  viewer's own zone and clock after it. A latent fourfold copy on an
+  unreachable path is under "Open bugs".
 
-**Two things older than this phase, found while building it**
+**Two things older than this phase, found while building it — both now fixed**
 
-- **`/settings/sharing` lists every container in the workspace to anybody who
-  opens it**, private ones included, with how many people reach them. The
-  actions are correctly scoped; the page is not. It predates this phase and is
-  now the most visible thing the container rows make fixable.
-- **A comment's mention candidates are every user in the database**, not the
-  members of that workspace (`comment-actions.ts`). `documents.ts` asks for
-  members, and so does the editor's picker now (D-117, `mentionableIn`) — so
-  the older path is the only one left that does not, and with one workspace
-  nobody can tell.
+- ~~**`/settings/sharing` lists every container in the workspace to anybody who
+  opens it**~~ **Fixed** (D-123). It was the one read in the app that did not
+  join the access index, and the cause was a missing *shape*: there was no
+  function for "which containers may this person share", only one for "may they
+  share this id". `reachableContainers` is that function. The page also never
+  called `requireUser` at all.
+- ~~**A comment's mention candidates are every user in the database**~~
+  **Fixed** (D-122), and a task description had the same bug — the same
+  `parseRichText` call behind a second door. The sharp edge was not the wrong
+  mention but the refusal: a resolved stranger is unreachable by definition, so
+  the consent flow refused the comment and reported their name back, turning a
+  permission boundary into a way to confirm an account exists.
 
 ### Done — the decision Phase 9 turned on
 

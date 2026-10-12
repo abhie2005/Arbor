@@ -130,6 +130,7 @@ export {
   AccessDenied,
   containerAccess,
   listAccess,
+  reachableContainers,
   requireContainerAccess,
   requireListAccess,
   requireTaskAccess,
