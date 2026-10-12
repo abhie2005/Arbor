@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
+import { ensureAutomationLoop } from "@/server/automation-loop";
+
 import "@arbor/ui/tokens.css";
 import "./app.css";
 
@@ -10,6 +12,11 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
+  // The other guaranteed entry point, and the one that covers development:
+  // nothing hits `/api/health` on a laptop, and an engine that only runs in
+  // production is one nobody notices is broken until it is deployed (D-125).
+  ensureAutomationLoop();
+
   return (
     <html lang="en">
       <head>

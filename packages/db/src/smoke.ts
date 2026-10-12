@@ -118,6 +118,7 @@ import {
 import {
   claimDueRuns,
   createAutomation,
+  drainAutomations,
   ensureAutomationActor,
   scanForAutomations,
   setAutomationEnabled,
@@ -3824,14 +3825,23 @@ async function main() {
     ),
   );
 
-  // The scan reads forward from a cursor, so it must not fire on history that
-  // predates the rule — otherwise enabling an automation would replay the log.
-  // The cursor is placed *without* scanning, because scanning is what enqueues.
-  await pool.query(
-    `INSERT INTO automation_cursors (workspace_id, last_activity_id)
-     VALUES ($1, (SELECT COALESCE(max(id), 0) FROM activity WHERE workspace_id = $1))
-     ON CONFLICT (workspace_id) DO UPDATE SET last_activity_id = EXCLUDED.last_activity_id`,
+  // A rule is not retroactive, and this is the check that says so. The cursor
+  // was deleted above, so the scan starts cold with a log full of older status
+  // changes this rule's trigger matches — the exact situation that produced
+  // three runs from one change on a real server.
+  const historyBefore = await one(
+    `SELECT count(*) AS n FROM activity WHERE workspace_id = $1 AND verb = 'task.status_id_changed'`,
     [ws.id],
+  );
+  report(
+    "there is history a new rule could wrongly replay, so the next check means something",
+    Number(historyBefore?.n ?? 0) > 0 ? null : "no prior status changes exist to replay",
+  );
+
+  const cold = await tickAutomations(ws.id!, pool);
+  report(
+    "a brand-new rule fires on none of it, however the cursor happens to sit",
+    cold.enqueued === 0 ? null : `a new rule replayed ${cold.enqueued} historical rows`,
   );
 
   await applyOperations(
@@ -3849,8 +3859,12 @@ async function main() {
 
   const fired = await tickAutomations(ws.id!, pool);
 
+  // One run, from a log full of older status changes the rule could have matched.
+  // Found on a real server: the scan re-reads an overlap behind the cursor, and
+  // the idempotency key only dedupes a rule against activity it has already been
+  // offered — a brand-new rule has been offered none, so it fired on history.
   report(
-    "a status change the rule was watching produces exactly one run",
+    "a status change the rule was watching produces one run, not one per old row",
     fired.enqueued === 1 && fired.executed === 1 && fired.outcomes[0] === "success"
       ? null
       : `enqueued ${fired.enqueued}, executed ${fired.executed}, ${JSON.stringify(fired.outcomes)}`,
@@ -4064,6 +4078,105 @@ async function main() {
     "a disabled rule is not scanned for at all",
     quiet.enqueued === 0 ? null : `a disabled rule enqueued ${quiet.enqueued}`,
   );
+
+  // What the loop in `apps/web` actually calls. `tickAutomations` takes a
+  // workspace; the server has no workspace in hand, so the drain finds its own
+  // work — and checking the engine through the entry point the loop uses is the
+  // difference between proving the engine and proving the thing that runs.
+  await pool.query(`DELETE FROM task_watchers WHERE task_id = $1 AND user_id = $2`, [
+    autoTask.id,
+    outsider.id,
+  ]);
+
+  const drainRule = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "What the drain finds",
+      trigger: { kind: "fieldChanged", field: "statusId", to: inReview.id },
+      actions: [{ kind: "addRelation", relation: "watcher", targetId: outsider.id }],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: autoTask.id!,
+        field: "statusId",
+        from: autoTodo.id!,
+        to: inReview.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const drained = await drainAutomations(pool);
+  const drainWatched = await one(
+    `SELECT 1 AS ok FROM task_watchers WHERE task_id = $1 AND user_id = $2`,
+    [autoTask.id, outsider.id],
+  );
+
+  report(
+    "the drain finds its own work, without being told which workspace",
+    drained.executed >= 1 && drainWatched
+      ? null
+      : `executed ${drained.executed}, watcher ${String(drainWatched?.ok)}`,
+  );
+
+  await setAutomationEnabled(drainRule, false, { actorId: owner.id!, connection: pool });
+  await pool.query(`UPDATE tasks SET status_id = $2 WHERE id = $1`, [autoTask.id, autoTodo.id]);
+
+  // Container scope: a rule belongs to the container it was created on, and a
+  // task carries its space, folder and list — so a rule on one list must not
+  // fire for a task in another, which would be wider than the `manage` grant
+  // that allowed the rule to be written at all.
+  // Any task outside the rule's list — named by the property under test rather
+  // than by a list that happens to have tasks today.
+  const elsewhere = await one(
+    `SELECT id, status_id, home_list_id FROM tasks
+     WHERE workspace_id = $1 AND home_list_id <> $2 AND deleted_at IS NULL LIMIT 1`,
+    [ws.id, autoList.id],
+  );
+
+  const scopedRule = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "Scoped to Sprint 24",
+      trigger: { kind: "fieldChanged", field: "statusId" },
+      actions: [{ kind: "addRelation", relation: "watcher", targetId: promoted.id }],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: elsewhere.id!,
+        field: "statusId",
+        from: elsewhere.status_id!,
+        to: inReview.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const outOfScope = await tickAutomations(ws.id!, pool);
+  report(
+    "a rule does not fire for a task in a container it was not created on",
+    outOfScope.enqueued === 0
+      ? null
+      : `a Sprint 24 rule enqueued ${outOfScope.enqueued} runs for a Backlog task`,
+  );
+
+  await pool.query(`UPDATE tasks SET status_id = $2 WHERE id = $1`, [
+    elsewhere.id,
+    elsewhere.status_id,
+  ]);
+  await setAutomationEnabled(scopedRule, false, { actorId: owner.id!, connection: pool });
 
   report(
     "the automation actor is made once and found thereafter",

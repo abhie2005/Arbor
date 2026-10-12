@@ -4616,3 +4616,70 @@ when the public API needs tokens that belong to one of these.
 *In one sentence:* an integration that is a user is one the permission model
 already understands, and everything else about this decision follows from
 refusing to invent a second kind of principal.
+
+---
+
+### D-127
+**The drain starts from the server's own graph, and a rule is not retroactive** · 2026-10-12 · active
+
+D-125 built the engine and left one sentence in `docs/STATUS.md`: nothing called
+it outside the smoke run. This is the loop, and the two bugs that only a running
+server could have found.
+
+**`instrumentation.ts` is the textbook place and it does not work here.**
+`register` is compiled for every runtime including the edge one, and that
+compilation follows the import into `@arbor/db`, then `pg`, then `fs` and
+`path`. Next's documented remedy — a conditional import of a relative node-only
+file — was tried and the trace followed that too, because `transpilePackages`
+means the workspace packages are compiled into whatever bundle references them.
+Worth recording precisely because the symptom is not a bundling error: every
+page 500s with `Can't resolve 'path'`, which reads exactly like Postgres being
+unreachable, and the first instinct is to go looking at the database.
+
+So the loop starts from code already in the node server graph that already
+imports this package successfully — `ensureAutomationLoop()`, called from
+`/api/health` and from the root layout. Two call sites on purpose and the
+function is idempotent: the load balancer hits the health route for the life of
+a production task, and nothing hits it on a laptop, so between them an engine
+cannot be running in one place and silently absent in the other. No bundler
+configuration, and no special case to remember later.
+
+`setTimeout` measured from the *end* of a drain rather than `setInterval`: an
+interval firing faster than the work takes queues callbacks up behind each other
+and turns one slow tick into a backlog. The timer is `unref`'d so the loop is
+never what keeps the process alive, and the tick never throws — an unhandled
+rejection in a timer takes the server down, and an engine that cannot reach
+Postgres is a reason to retry rather than to stop serving pages.
+
+**A rule was retroactive, and a real server is what showed it.** Arming one
+rule and making one change produced *three* runs. Two of them were a task's
+status changes from an earlier test. The scan deliberately re-reads an overlap
+behind the cursor (D-125), and the idempotency key only dedupes a rule against
+activity it has *already been offered* — a rule created a moment ago has been
+offered none, so the overlap handed it fifty rows of history and it fired on all
+of them. Creating an automation replayed the recent past. Two changes fix it and
+both are needed: a rule ignores activity older than its own `created_at`, and a
+cursor that has never existed starts at the *end* of the log rather than at
+zero. The second matters on its own — starting at zero means a workspace
+enabling its first automation crawls its whole history five hundred rows at a
+tick before reaching anything current, looking broken the entire time.
+
+**A rule was also unscoped**, found while reading the same three rows. Nothing
+compared the rule's container to the task's, so a rule created on one list would
+fire for every task in the workspace. That is not only wrong, it is wider than
+the `manage` grant on one container that allowed the rule to be written at all
+(D-109). A task carries its space, folder and list, so the check is a three-way
+comparison and a rule on a space covers everything beneath it.
+
+**The same fixture bug appeared a third time.** A test sets a status to the
+value the rule watches for, a previous run already left it there,
+`applyOperations` correctly filters the no-op, nothing reaches the log, and the
+engine is blamed for a fixture that did nothing. It has now cost time in
+`db:smoke` twice and in the browser verification once. The rule to take from it:
+**a fixture must set the state it intends to change away from**, never assume
+it. Both smoke fixtures and the verification script do that now, and the smoke
+section is checked to pass on consecutive runs.
+
+*In one sentence:* the engine was correct and the two things wrong with it —
+replaying history and ignoring its own container — were both invisible until
+something other than a test called it.

@@ -65,6 +65,8 @@ export interface AutomationRecord {
   name: string;
   rule: AutomationRule;
   isEnabled: boolean;
+  /** A rule is not retroactive. See the note in `scanForAutomations`. */
+  createdAt: Date;
 }
 
 /**
@@ -128,8 +130,10 @@ export async function loadAutomations(
     actions: unknown;
     applies_to: string;
     is_enabled: boolean;
+    created_at: Date;
   }>(
-    `SELECT id, workspace_id, container_id, name, trigger, conditions, actions, applies_to, is_enabled
+    `SELECT id, workspace_id, container_id, name, trigger, conditions, actions, applies_to,
+            is_enabled, created_at
      FROM automations WHERE workspace_id = $1 AND is_enabled = true`,
     [workspaceId],
   );
@@ -143,6 +147,7 @@ export async function loadAutomations(
         containerId: row.container_id,
         name: row.name,
         isEnabled: row.is_enabled,
+        createdAt: row.created_at,
         rule: parseAutomationRule({
           trigger: row.trigger,
           conditions: row.conditions,
@@ -162,6 +167,7 @@ export async function loadAutomations(
 
 interface ActivityRow {
   id: string;
+  at: Date;
   verb: string;
   object_id: string;
   actor_id: string | null;
@@ -169,6 +175,9 @@ interface ActivityRow {
   new_value: unknown;
   list_id: string | null;
   parent_task_id: string | null;
+  home_list_id: string | null;
+  folder_id: string | null;
+  space_id: string | null;
   cause_automation_id: string | null;
   cause_depth: number | null;
 }
@@ -188,8 +197,16 @@ export async function scanForAutomations(
   const rules = await loadAutomations(workspaceId, connection);
   if (rules.length === 0) return { scanned: 0, enqueued: 0 };
 
+  // **A cursor that has never existed starts at the end of the log, not at the
+  // beginning.** Starting at zero means a workspace that enables its first
+  // automation crawls its entire history 500 rows at a time before it reaches
+  // anything current — minutes of ticks during which the engine looks broken,
+  // all of it to consider rows no rule may act on anyway. Beginning at `now`
+  // makes a cold start immediate, and makes "a rule is not retroactive" true of
+  // the very first scan rather than only of the filter below.
   const cursor = await connection.query<{ last_activity_id: string }>(
-    `INSERT INTO automation_cursors (workspace_id) VALUES ($1)
+    `INSERT INTO automation_cursors (workspace_id, last_activity_id)
+     VALUES ($1, (SELECT COALESCE(max(id), 0) FROM activity WHERE workspace_id = $1))
      ON CONFLICT (workspace_id) DO UPDATE SET workspace_id = EXCLUDED.workspace_id
      RETURNING last_activity_id`,
     [workspaceId],
@@ -201,8 +218,8 @@ export async function scanForAutomations(
   // the log has no column for; the join to automation_runs supplies the depth
   // of whatever produced this row, which is how a cascade counts itself.
   const events = await connection.query<ActivityRow>(
-    `SELECT a.id, a.verb, a.object_id, a.actor_id, a.old_value, a.new_value, a.list_id,
-            t.parent_task_id,
+    `SELECT a.id, a.at, a.verb, a.object_id, a.actor_id, a.old_value, a.new_value, a.list_id,
+            t.parent_task_id, t.home_list_id, t.folder_id, t.space_id,
             r.automation_id AS cause_automation_id,
             r.depth         AS cause_depth
      FROM activity a
@@ -235,6 +252,7 @@ export async function scanForAutomations(
     };
 
     for (const rule of rules) {
+      if (!appliesHere(rule, row)) continue;
       if (!matches(rule.rule, event)) continue;
       if (await enqueue(rule, event, connection)) enqueued += 1;
     }
@@ -290,6 +308,38 @@ async function enqueue(
   );
 
   return (result.rowCount ?? 0) > 0 && !settled;
+}
+
+/**
+ * Is this event in this rule's scope, and new enough for it to be about?
+ *
+ * **Two filters the scan cannot express in SQL**, because they are per rule and
+ * the query reads the log once for all of them.
+ *
+ * **A rule is not retroactive**, which the overlap made untrue and a real server
+ * caught. The scan deliberately re-reads rows behind the cursor (see
+ * `automationCursors`), and the idempotency key only dedupes a rule against
+ * activity *it has already been offered*. A rule created a moment ago has been
+ * offered none — so the overlap handed it fifty rows of history and it fired on
+ * all of them. Found by arming one rule, making one change, and getting three
+ * runs: two of them were a task's transitions from the previous test run.
+ * Comparing against `created_at` is what makes "enabling an automation does not
+ * replay the log" true rather than merely intended.
+ *
+ * **A rule only sees its own container's subtree.** A task carries its space,
+ * folder and list, so a rule on a space covers every list inside it and a rule
+ * on a list covers exactly that list. Without this, a rule somebody created on
+ * one list fires for every task in the workspace — which is both wrong and
+ * wider than the `manage` grant that allowed the rule to be written.
+ */
+function appliesHere(rule: AutomationRecord, row: ActivityRow): boolean {
+  if (row.at && row.at < rule.createdAt) return false;
+
+  return (
+    rule.containerId === row.home_list_id ||
+    rule.containerId === row.folder_id ||
+    rule.containerId === row.space_id
+  );
 }
 
 async function runsThisMonth(workspaceId: string, connection: Connection): Promise<number> {
@@ -520,6 +570,38 @@ export async function tickAutomations(
   }
 
   return { enqueued, executed: claimed.length, outcomes };
+}
+
+/**
+ * One turn for every workspace that has a rule to run.
+ *
+ * **The scan is per workspace and the claim is not**, which is why this is not
+ * simply `tickAutomations` in a loop. A cursor belongs to a workspace, so one
+ * busy workspace cannot hold up another's scan; a claim is a question about due
+ * work and the queue does not care whose it is, so asking once is both cheaper
+ * and fairer than asking per workspace in a fixed order.
+ *
+ * The workspace list is filtered to those with an enabled rule, so an install
+ * with no automations costs two cheap queries a tick and nothing else.
+ */
+export async function drainAutomations(
+  connection: Connection = pool(),
+): Promise<{ enqueued: number; executed: number }> {
+  const workspaces = await connection.query<{ workspace_id: string }>(
+    `SELECT DISTINCT workspace_id FROM automations WHERE is_enabled = true`,
+  );
+
+  let enqueued = 0;
+  for (const row of workspaces.rows) {
+    enqueued += (await scanForAutomations(row.workspace_id, connection)).enqueued;
+  }
+
+  const claimed = await claimDueRuns(connection);
+  for (const run of claimed) {
+    await executeRun(run, connection);
+  }
+
+  return { enqueued, executed: claimed.length };
 }
 
 /**

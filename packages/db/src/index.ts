@@ -131,6 +131,7 @@ export {
   claimDueRuns,
   createAutomation,
   deleteAutomation,
+  drainAutomations,
   ensureAutomationActor,
   executeRun,
   loadAutomations,

@@ -1,5 +1,7 @@
 import { pool } from "@arbor/db";
 
+import { ensureAutomationLoop } from "@/server/automation-loop";
+
 /**
  * `/api/health` — what the load balancer asks before sending traffic (D-114).
  *
@@ -21,6 +23,12 @@ export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<Response> {
   const headers = { "cache-control": "no-store", "content-type": "text/plain" };
+
+  // The load balancer asks this every few seconds for the life of the task, so
+  // it is the one request a production container is guaranteed to receive —
+  // which makes it the dependable place to be sure the drain is running (D-125).
+  // Idempotent, and it starts a timer rather than doing any work here.
+  ensureAutomationLoop();
 
   try {
     await pool().query("SELECT 1");
