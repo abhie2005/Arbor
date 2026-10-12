@@ -227,18 +227,25 @@ Each is a decision entry, and the reasoning is there rather than here:
    open and is noted below.
 
 **What exists:** `packages/core/src/automations.ts` (pure: the rule, trigger
-matching, action compilation, the guards — 37 unit tests) and
-`packages/db/src/automations.ts` (the scan, the claim, execution, and rule
-CRUD). Migrations 0013 and 0014. Fourteen `db:smoke` checks, verified to pass on
-a repeat run — which is the thing they failed first, for a reason worth reading
-in D-125.
+matching, action compilation, the guards — 37 unit tests),
+`packages/db/src/automations.ts` (the scan, the claim, execution, rule CRUD),
+and `apps/web/src/server/automation-loop.ts` — **the drain runs in the server
+process**, started from `/api/health` and the root layout. Migrations 0013 and
+0014. Eighteen `db:smoke` checks, verified across consecutive runs.
+
+**It is verified running, not only tested**: arm a rule, make one change, call
+nothing, and the run appears — right task, written as the service account,
+attributed to the right rule. That verification is what found both bugs in
+D-127, and neither was visible to any test in the repo.
+
+**`instrumentation.ts` does not work for this** and D-127 says why at length.
+Short version: it is compiled for the edge runtime too, that compilation follows
+`@arbor/db` into `pg` into `fs`, and the symptom is every page 500ing with
+"Can't resolve 'path'" — which reads like the database being down. Do not move
+the loop there.
 
 **What does not exist yet, in the order it probably wants doing:**
 
-- **Nothing calls `tickAutomations` outside the smoke run.** The loop host is
-  the next piece: a drain started once in `apps/web`, safe to run in both
-  replicas because the claim already is. This is a small change and it is what
-  turns the engine from "proven" into "running".
 - **No UI at all.** A rule can only be created by calling `createAutomation`.
   The screen wants the filter bar's own menus for conditions, since conditions
   *are* a `FilterGroup` and `filterable.ts` already publishes what may be
@@ -246,7 +253,15 @@ in D-125.
 - **Only immediate triggers.** `run_after` is honoured by the claim and proven
   by a check, but nothing *sets* it to the future — "in 3 days, if still open"
   needs a delay on the rule, and a re-check of conditions at execution time,
-  which the executor already does.
+  which the executor already does. This is the smallest remaining piece of the
+  automation half and the one the schema was most obviously drawn for.
+- **A run that fails is not retried.** `attempts` is incremented by the claim
+  and nothing reads it: a `failed` run stays failed. Deliberate for now —
+  retrying a half-applied batch needs a rule about which actions already
+  happened, and operations are applied in one transaction so today it is all or
+  nothing.
+- **Quota is counted and never surfaced.** `MONTHLY_RUN_QUOTA` is 1000 and a
+  workspace that reaches it gets `refused_quota` rows and no warning anywhere.
 - **No relative dates in actions.** "Due in 3 days" is the obvious next action
   kind; `to` is currently a literal value.
 - **Forms and the public API.** Untouched. The API needs tokens belonging to a
