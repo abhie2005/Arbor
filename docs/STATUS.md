@@ -2,7 +2,7 @@
 
 Last updated 2026-10-11. Repo: https://github.com/abhie2005/Arbor (`main`).
 
-**Phases 1–9 are done; Phase 10 is next and has nothing built against it.**
+**Phases 1–9 are done. Phase 10 is under way: automations run.**
 Phase 9's roadmap line read "CRDT editor, nested pages, backlinks" and all
 three now exist: documents are editable *including the paragraphs that name
 somebody*, ⌘Z in one is the CRDT's and puts the caret back where the edit was,
@@ -86,6 +86,7 @@ find more than the two above.
 | **Timeline (Gantt)** | Bars from start to due across a month of day columns. The renderer that made the compiler learn nested filter clauses, because "overlaps this window" is irreducibly mixed AND and OR. Read-only so far — no dragging, no dependencies. |
 | **Filters** | Conditions may nest, so a clause can say `(a OR b) AND (c OR d)`. The filter bar and the URL stay flat; nesting exists for renderer scope. |
 | **Dates** | A due date flagged as a calendar day is stored at midnight UTC and read in UTC, everywhere. Overdue means the day is over, not that the clock has passed midnight. |
+| **Automations** | A rule is a trigger, a `FilterGroup` of conditions and actions that compile to operations. Fires from the activity log, runs as a per-workspace service account, claimed with `SKIP LOCKED`. No UI, and nothing starts the loop in production yet (D-124, D-125, D-126). |
 | **Saved views** | The tab strip is the list of saved views. Create, rename, duplicate, set default, delete — validated by compiling the definition before it is written. Personal views are invisible to others. |
 | **Filter bar** | On all three renderers. Menus are built from the same declaration the compiler validates against, so an invalid filter cannot be expressed. Filter state lives in the URL and is shareable; a malformed link errors instead of showing everything. |
 | **Field types** | All 20 declared in one place: storage column, legal operators, config parser, value parser. |
@@ -156,9 +157,17 @@ page tree is a tree that can be rearranged, and `[[` links a page or a task
 with the reverse lookup shown on both ends. Search reads them. What remains is
 not a numbered item but the gaps below.
 
-**Next is Phase 10 — automations, forms, public API**, which is the first phase
-with nothing built against it at all. `packages/sdk` is empty and waiting for
-exactly that, and `apps/worker` has had nothing to run since Phase 1.
+**Phase 10 — automations, forms, public API — is started.** The engine is
+built and proven against Postgres: a rule fires from the activity log, runs as a
+service account, and writes through `applyOperations` like anything else.
+**Forms and the public API have nothing built against them**, and automations
+have no UI and nothing starting the loop in production — see "Where Phase 10
+actually is" below.
+
+Correcting this file: it used to say `packages/sdk` was empty and `apps/worker`
+had had nothing to run since Phase 1. **Neither directory exists.** The
+workspaces are `apps/web` and `packages/{core,db,ui}`, and that is all there has
+ever been.
 
 Two things that were owed before Phase 9 are done and are why the docs screen
 was short rather than long:
@@ -195,34 +204,55 @@ And the roadmap word that had no code at all:
    plus an id; `doc_links` is maintained where `search_text` is and answers
    the reverse question, scoped to pages the *viewer* can read.
 
-### Next — Phase 10, and what to settle before writing any of it
+### Where Phase 10 actually is
 
-**Automations, forms, public API.** The first phase with nothing built against
-it, and the first since Phase 1 that would give `apps/worker` something to run.
-Three questions are worth answering deliberately, the way the editor fork and
-the link format were, because each has a shape that is hard to take back:
+**The three questions this file said to settle are settled, by building them.**
+Each is a decision entry, and the reasoning is there rather than here:
 
-- **Does an automation run in-process or in a worker?** Every transport
-  question so far has been settled *against* a separate service: Postgres
-  carries changes (D-090), presence within a process (D-092) and between them
-  (D-100), and document updates (D-112). A collaborative editor was the last
-  thing that might have needed a gateway and it did not. An automation with a
-  delay ("in 3 days, if still open") is the first thing that genuinely cannot
-  be answered by a connection somebody is holding open — which is what makes
-  this a real decision rather than a repeat of one.
-- **Is an automation's action an `Operation`?** Invariant 1 says
-  `applyOperations` is the only thing that writes task data, so an automation
-  that sets a status should be an operation — which means it gets an activity
-  row and lands in somebody's undo stack. Whose? "The robot did it and I
-  pressed ⌘Z" is a question the operation layer has never been asked.
-- **What does the public API authenticate as?** Every read in the app joins
-  `access_index` for a *person*. A token is not a person, and inventing a
-  synthetic one is how the permission model gets quietly widened.
-  `packages/sdk` is empty and waiting for the answer.
+1. **In-process or a worker?** → D-125. **A table.** A run due in three days is
+   a row with `run_after` three days out, and `automation_runs` *is* the queue
+   rather than having one beside it. Nothing in the engine knows which process
+   drains it, so lifting it into a worker service later is a deployment
+   decision and not a rewrite — and the app still reads three environment
+   variables rather than growing a fourth (invariant 14). `desired_count = 2`
+   already, so `FOR UPDATE SKIP LOCKED` is not a precaution.
+2. **Is an action an `Operation`, and whose undo stack?** → D-124. **Yes, and
+   nobody's.** The undo stack lives in the browser and is filled by inverses
+   handed back to whoever called; an automation calls nothing, so the question
+   answered itself once you look at where the stack is.
+3. **What does the API authenticate as?** → D-126. **A service account** — a
+   real `users` row with an ordinary membership, so it is a principal every
+   existing query already understands and no permission code path was added.
+   Answered for automations, which needed it first; the token half is still
+   open and is noted below.
 
-`automations`, `automation_runs`, `webhooks` and `templates` already exist as
-tables (`packages/db/src/schema/automation.ts`) and nothing reads or writes
-them — the schema was drawn in Phase 1 and has been waiting since.
+**What exists:** `packages/core/src/automations.ts` (pure: the rule, trigger
+matching, action compilation, the guards — 37 unit tests) and
+`packages/db/src/automations.ts` (the scan, the claim, execution, and rule
+CRUD). Migrations 0013 and 0014. Fourteen `db:smoke` checks, verified to pass on
+a repeat run — which is the thing they failed first, for a reason worth reading
+in D-125.
+
+**What does not exist yet, in the order it probably wants doing:**
+
+- **Nothing calls `tickAutomations` outside the smoke run.** The loop host is
+  the next piece: a drain started once in `apps/web`, safe to run in both
+  replicas because the claim already is. This is a small change and it is what
+  turns the engine from "proven" into "running".
+- **No UI at all.** A rule can only be created by calling `createAutomation`.
+  The screen wants the filter bar's own menus for conditions, since conditions
+  *are* a `FilterGroup` and `filterable.ts` already publishes what may be
+  offered.
+- **Only immediate triggers.** `run_after` is honoured by the claim and proven
+  by a check, but nothing *sets* it to the future — "in 3 days, if still open"
+  needs a delay on the rule, and a re-check of conditions at execution time,
+  which the executor already does.
+- **No relative dates in actions.** "Due in 3 days" is the obvious next action
+  kind; `to` is currently a literal value.
+- **Forms and the public API.** Untouched. The API needs tokens belonging to a
+  service account, which is where D-126's synthetic-email wart gets revisited.
+- **`webhooks` and `templates` are still unread**, as they have been since
+  Phase 1.
 
 ### Known gaps carried into Phase 10
 
