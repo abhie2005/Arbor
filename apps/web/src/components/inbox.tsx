@@ -6,7 +6,8 @@ import { useState, useTransition } from "react";
 import type { InboxEntry } from "@/server/inbox";
 import { markEverythingRead, markNotificationRead } from "@/server/inbox-actions";
 
-import { relative } from "./relative-time";
+import { Timestamp } from "./timestamp";
+
 
 /**
  * What is mine, anywhere.
@@ -185,13 +186,7 @@ export function Inbox({
                   {entry.excerpt ? <span className="inbox-excerpt">{entry.excerpt}</span> : null}
                 </span>
 
-                <time
-                  className="inbox-when"
-                  dateTime={entry.at}
-                  title={new Date(entry.at).toLocaleString("en-GB")}
-                >
-                  {relative(entry.at)}
-                </time>
+                <Timestamp className="inbox-when" at={entry.at} />
               </Link>
 
               {/* A sibling of the link rather than inside it: a button in an

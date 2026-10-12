@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   addMonths,
+  instantDay,
+  instantStamp,
   daysOfMonth,
   monthBounds,
   addUtcDays,
@@ -154,5 +156,55 @@ describe("a month's own days", () => {
     // The grid pads to six weeks so squares line up; a timeline's columns must
     // not include days from another month.
     expect(daysOfMonth("2026-09").length).toBeLessThan(monthGrid("2026-09").flat().length);
+  });
+});
+
+describe("an instant has no implied zone", () => {
+  // The other half of this module's rule, and the one that shipped a bug. The
+  // three screens that print "5m ago" also render on the server, so each
+  // instant was formatted twice — once in the server's zone, once in the
+  // viewer's — and React threw the tree away when the two disagreed (D-121).
+  //
+  // The disagreement needs no React to reproduce. Flipping the ambient zone is
+  // exactly what moving from the server to the browser does.
+  const stored = "2026-10-10T03:12:11.034Z";
+
+  const inZone = <T,>(timeZone: string, read: () => T): T => {
+    const before = process.env.TZ;
+    process.env.TZ = timeZone;
+    try {
+      return read();
+    } finally {
+      process.env.TZ = before;
+    }
+  };
+
+  it("reads the zone it is running in when none is named — the server's, on a server", () => {
+    expect(inZone("America/Los_Angeles", () => instantDay(stored))).toBe("9 Oct");
+    expect(inZone("Asia/Tokyo", () => instantDay(stored))).toBe("10 Oct");
+  });
+
+  it("gives one answer everywhere once a zone is named, which is what hydration needs", () => {
+    expect(inZone("America/Los_Angeles", () => instantDay(stored, "UTC"))).toBe("10 Oct");
+    expect(inZone("Asia/Tokyo", () => instantDay(stored, "UTC"))).toBe("10 Oct");
+  });
+
+  it("says which zone it pinned, so a pinned time is not read as a local one", () => {
+    expect(inZone("America/Los_Angeles", () => instantStamp(stored, "UTC"))).toBe(
+      "10 Oct 2026, 03:12 UTC",
+    );
+    expect(inZone("Asia/Tokyo", () => instantStamp(stored, "UTC"))).toBe(
+      "10 Oct 2026, 03:12 UTC",
+    );
+  });
+
+  it("and leaves the name off when the zone is the reader's own", () => {
+    expect(inZone("Asia/Tokyo", () => instantStamp(stored))).toBe("10 Oct 2026, 12:12");
+    expect(inZone("America/Los_Angeles", () => instantStamp(stored))).toBe("9 Oct 2026, 20:12");
+  });
+
+  it("throws on a value that is not a date rather than printing one", () => {
+    expect(() => instantStamp("not a date")).toThrow(RangeError);
+    expect(() => instantDay("not a date")).toThrow(RangeError);
   });
 });

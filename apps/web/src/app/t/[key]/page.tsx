@@ -1,3 +1,5 @@
+import { instantDay } from "@arbor/core";
+
 import { AppShell, FooterNote, type ShellChrome } from "@/components/app-shell";
 import { TaskDetail } from "@/components/task-detail";
 import { getCurrentUser, listSwitchableUsers } from "@/server/auth";
@@ -111,7 +113,7 @@ export default async function TaskPage({ params }: { params: Promise<{ key: stri
       <FooterNote>
         {task.archivedAt ? "archived · " : null}
         created {task.createdByName ? `by ${task.createdByName} ` : ""}
-        {task.createdAt ? new Date(task.createdAt).toLocaleDateString("en-GB") : "—"} · acting as{" "}
+        {task.createdAt ? instantDay(task.createdAt, "UTC") : "—"} · acting as{" "}
         {viewer.name} · you hold {task.permission} on {task.listName}
       </FooterNote>
     </AppShell>

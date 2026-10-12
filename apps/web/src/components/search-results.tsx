@@ -99,7 +99,7 @@ export function SearchResultsList({ results }: { results: SearchResults }) {
 
                   <span className="search-hit-meta">
                     <span className="search-path">{doc.containerName ?? "Workspace"}</span>
-                    <span className="search-when">{relative(doc.updatedAt.toISOString())}</span>
+                    <span className="search-when">{relative(doc.updatedAt.toISOString(), "UTC")}</span>
                   </span>
                 </a>
               </li>

@@ -18,7 +18,7 @@ import {
   updateTimeEntry,
 } from "@/server/time-actions";
 
-import { relative } from "./relative-time";
+import { Timestamp } from "./timestamp";
 
 /**
  * Tracked time on a task.
@@ -352,9 +352,13 @@ function Entry({
       {entry.description ? <span className="time-note">{entry.description}</span> : null}
       {entry.isBillable ? <span className="time-flag">billable</span> : null}
 
-      <time className="time-when" dateTime={entry.startedAt}>
-        {runningNow ? "running" : relative(entry.endedAt ?? entry.startedAt)}
-      </time>
+      {runningNow ? (
+        <time className="time-when" dateTime={entry.startedAt}>
+          running
+        </time>
+      ) : (
+        <Timestamp className="time-when" at={entry.endedAt ?? entry.startedAt} />
+      )}
 
       {mine && !runningNow ? (
         <span className="time-actions">

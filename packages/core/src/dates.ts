@@ -16,6 +16,10 @@
  * **The rule.** A calendar day is stored at UTC midnight and read back in UTC.
  * An instant is stored and read in the viewer's zone. Both are the same column;
  * the flag decides which frame to use, and it is the only thing that may.
+ *
+ * A server render has no viewer, so "the viewer's zone" is a frame it cannot
+ * supply — which is a second bug wearing the first one's clothes. See
+ * `instantStamp` below (D-121).
  */
 
 /** `YYYY-MM-DD` for the day a value falls on, in UTC. */
@@ -44,6 +48,65 @@ export function addUtcDays(value: string | Date, days: number): Date {
  */
 export function dateFrame(hasTime: boolean): { timeZone?: string } {
   return hasTime ? {} : { timeZone: "UTC" };
+}
+
+/**
+ * An instant in words, in a frame that was named rather than implied.
+ *
+ * **The other half of the rule above, and the half that had a bug in it.**
+ * A calendar day is read in UTC and `dateFrame` says so. An instant is read in
+ * the viewer's zone — and `toLocaleString` with no `timeZone` *does* read it in
+ * the viewer's zone, so the three screens that formatted one looked correct.
+ * They were, in the browser. The same component had already rendered on the
+ * server, where "the viewer's zone" is the server's, and React compares the two
+ * renders, finds "10 Oct" against "9 Oct", and throws the tree away (D-121).
+ *
+ * So the zone is a parameter with no default behaviour hidden in it:
+ *
+ * - **a named zone pins the result**, which is what a server render and the
+ *   hydrating client both have to use, since it is the only answer the two of
+ *   them can agree on before the browser is the only one rendering. The name is
+ *   appended, because a time with no zone beside it reads as local and would be
+ *   quietly wrong for the few hundred milliseconds it is on screen;
+ * - **no zone means wherever this is running**, which is correct once only the
+ *   browser is running it.
+ *
+ * `Intl` rather than `toLocaleString` for both: the options are the same, and
+ * a formatter that takes a zone by name is the thing that makes the first case
+ * expressible at all.
+ */
+export function instantStamp(value: string | Date, timeZone?: string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new RangeError(`Not a date: ${String(value)}`);
+
+  const text = new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+  }).format(date);
+
+  return timeZone ? `${text} ${timeZone}` : text;
+}
+
+/**
+ * The same instant, short enough to sit where a relative time sits.
+ *
+ * What a server render puts in a line that will say "5m ago" once the browser
+ * takes over. Same shape as the day the history and table columns already
+ * print, so the swap moves a few characters rather than a whole row.
+ */
+export function instantDay(value: string | Date, timeZone?: string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new RangeError(`Not a date: ${String(value)}`);
+
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone,
+  }).format(date);
 }
 
 /**

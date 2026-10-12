@@ -3,7 +3,7 @@
 import { summarizeChanges } from "@arbor/core";
 import type { HistoryEntry } from "@arbor/db";
 
-import { relative } from "./relative-time";
+import { Timestamp } from "./timestamp";
 
 /**
  * What has happened to this task.
@@ -85,13 +85,7 @@ export function TaskHistory({
                   {to ? <span className="history-to">{to}</span> : null}
                 </span>
               ) : null}
-              <time
-                className="history-when"
-                dateTime={entry.at}
-                title={new Date(entry.at).toLocaleString("en-GB")}
-              >
-                {relative(entry.at)}
-              </time>
+              <Timestamp className="history-when" at={entry.at} />
             </li>
           );
         })}

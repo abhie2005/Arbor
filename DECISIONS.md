@@ -4240,3 +4240,69 @@ run 0011, which is all of them. Caught by applying it rather than by reading it.
 *In one sentence:* a link is a mention with a different payload, which is why
 the format absorbed it in one node and the editor absorbed it in none — and the
 work that remained was the index that can answer the question backwards.
+
+---
+
+### D-121
+**An instant has no implied zone, so a server render cannot print one** · 2026-10-11 · active
+
+The bug `docs/STATUS.md` carried as the only open one, and it was older than
+the phase that found it. `task-history.tsx` formatted `activity.at` with
+`toLocaleString("en-GB")` and no `timeZone`, so a UTC container rendered
+"10 Oct" and a Pacific browser re-rendered "9 Oct" — React discarded the tree
+and said so in the console of every deployment where the two zones differ,
+which is nearly all of them. Invariant 9 already demanded the zone be chosen;
+three screens had not been asked.
+
+**The diagnosis is the interesting part, because the code looked right.**
+`toLocaleString` with no zone *does* read an instant in the viewer's zone,
+which is exactly what this module's rule says to do. What the rule did not say
+is that the same component renders twice — once where there is no viewer — and
+that "the viewer's zone" is therefore not one answer but two. The note now
+lives beside the rule it qualifies.
+
+**Two renders rather than one pinned one.** `instantStamp(value, timeZone?)`
+makes the frame a parameter with no hidden default: a named zone pins the
+result *and appends the name*, because a pinned time with nothing beside it
+reads as local and would be quietly wrong for the few hundred milliseconds it
+is on screen. `Timestamp` renders the pinned UTC form before hydration and the
+viewer's own zone and clock after it, swapping in an effect — late enough that
+hydration compares against the markup it was given, early enough that nobody
+reads the pinned value.
+
+**`suppressHydrationWarning` was rejected**, and it was the obvious fix. It
+silences the report and keeps the re-render, which turns a visible bug into an
+invisible one. **Pinning everything to UTC** was the other candidate: one
+render, no swap, and every reader shown a time nobody asked for.
+
+**Threading the server's clock down as a prop was rejected too.** It would make
+the first render agree exactly — the server's `now` is in the payload, so both
+ends compute the same "5m ago" — but it hands every screen a `now` prop to
+carry, and it fixes only the clock. The zone would still be the server's.
+
+**What made `relative`'s `Date.now()` sound is where it is now called from.**
+The server never calls it, because `Timestamp` calls it only after hydration,
+so the server's clock and the browser's are never compared. Its one
+zone-sensitive branch — the fallback that prints a date past 24 hours — takes
+an explicit zone, and `search-results.tsx` passes UTC because it is a server
+component on purpose (D-113) and has no viewer to be local to.
+
+**The test reproduces it without React.** Flipping `process.env.TZ` is what
+moving from a server to a browser does to `Intl`, and the assertion is that a
+named zone gives one answer across two ambient ones. Reverting the pass-through
+fails it with "expected '9 Oct' to be '10 Oct'" — the same two strings the bug
+report named.
+
+**Found while fixing it, and not fixed: the four view renderers have the same
+hole on a path nothing exercises.** `task-row.tsx`, `task-table.tsx`,
+`board.tsx` and `task-detail.tsx` format due dates through `dateFrame(hasTime)`,
+which returns `{}` for an instant — correct per the rule, and a mismatch for
+the same reason this entry exists. It has never shown because **the seed
+contains no task with `dueHasTime: true`**: every seeded due date is a calendar
+day, which takes the UTC branch. So the instant branch is unreachable by every
+check in this repo, which is why a latent bug sat behind a fixed one. Listed in
+`docs/STATUS.md`; it needs the two-render treatment pushed into those four
+renderers and all four re-verified in a browser.
+
+*In one sentence:* the zone was not missing, it was implied, and an implied
+frame means one thing on a server and another in a browser.

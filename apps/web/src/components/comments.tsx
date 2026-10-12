@@ -6,8 +6,8 @@ import { useRef, useState } from "react";
 
 import { type CommentResult, deleteComment, editComment, postComment } from "@/server/comment-actions";
 import { linkHref } from "./doc-links";
+import { Timestamp } from "./timestamp";
 
-import { relative } from "./relative-time";
 import { useTaskAction } from "./use-task-action";
 
 /**
@@ -121,9 +121,7 @@ function Comment({
     <article className="comment" data-reply={isReply || undefined} data-pending={pending || undefined}>
       <header>
         <span className="comment-author">{comment.author.name}</span>
-        <time dateTime={comment.createdAt} title={new Date(comment.createdAt).toLocaleString("en-GB")}>
-          {relative(comment.createdAt)}
-        </time>
+        <Timestamp at={comment.createdAt} />
         {comment.edited ? <span className="comment-edited">edited</span> : null}
 
         {mine ? (
