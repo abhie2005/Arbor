@@ -575,9 +575,13 @@ async function one(client: PoolClient, docId: string): Promise<DocRow> {
  * **Members, not every user in the database.** A first draft parsed from plain
  * text resolves "@Riley Kaur" against this list, and so does the editor's
  * picker — so a name that is not in the workspace stays text rather than
- * becoming a reference to somebody who cannot open the page. `comment-actions.ts`
- * still asks for every user, which is a real difference and invisible in a
- * one-workspace install.
+ * becoming a reference to somebody who cannot open the page.
+ *
+ * **Every path that turns typed text into a mention asks this now** (D-122).
+ * A comment and a task description were resolving against every user in the
+ * database, which is the same bug this function exists to prevent and was
+ * invisible in a one-workspace install. The picker lists that only *display*
+ * people are still workspace-wide and are listed in `docs/STATUS.md`.
  *
  * Deactivated users are excluded: they are a name nobody should be able to
  * newly notify, while a mention already written keeps its label (D-083).

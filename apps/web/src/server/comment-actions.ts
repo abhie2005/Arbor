@@ -7,6 +7,7 @@ import {
   applyOperations,
   commentOwnership,
   grantAccess,
+  mentionableIn,
   pool,
   requireTaskAccess,
   requireWorkspaceRole,
@@ -22,6 +23,13 @@ import { requireUser } from "./auth";
  * `applyOperations`, never write SQL. Comments are operations (D-083), so the
  * activity row and a working undo arrive without this file doing anything for
  * them.
+ *
+ * **Who may be named is the workspace's members** (D-122). `parseRichText`
+ * turns "@Riley Kaur" into a mention node by matching the typed name against a
+ * list of people, and that list was every user in the database — so a name
+ * belonging to another workspace became a reference to somebody who could not
+ * open the task, and the refusal below then said their name out loud. It asks
+ * `mentionableIn` now, the same way the document editor does.
  *
  * **The one thing here that is not a comment concern is sharing.** Mentioning
  * someone who cannot see the task produces a notification pointing at a page
@@ -61,11 +69,10 @@ export async function postComment(
   const actor = await requireUser();
   const access = await requireTaskAccess(taskId, actor.id, "edit");
 
-  const people = await pool().query<{ id: string; name: string }>(
-    `SELECT id, name FROM users WHERE deactivated_at IS NULL`,
-  );
+  // Members of this workspace, not every user in the database (D-122).
+  const people = await mentionableIn(access.workspaceId);
 
-  const body = parseRichText(text, people.rows);
+  const body = parseRichText(text, people);
   if (body.content.length === 0) throw new Error("A comment needs something in it");
 
   const mentioned = mentionedIds(body).filter((id) => id !== actor.id);
@@ -80,7 +87,7 @@ export async function postComment(
     ).rows.map((row) => row.principal_id),
   );
 
-  const unreachable = people.rows.filter(
+  const unreachable = people.filter(
     (person) => mentioned.includes(person.id) && !reachable.has(person.id),
   );
 
@@ -154,11 +161,9 @@ export async function editComment(commentId: string, text: string): Promise<Oper
   const actor = await requireUser();
   const owned = await requireOwnComment(commentId, actor.id);
 
-  const people = await pool().query<{ id: string; name: string }>(
-    `SELECT id, name FROM users WHERE deactivated_at IS NULL`,
-  );
+  const people = await mentionableIn(owned.workspaceId);
 
-  const to = parseRichText(text, people.rows);
+  const to = parseRichText(text, people);
   if (to.content.length === 0) throw new Error("A comment needs something in it");
 
   const current = await pool().query<{ body: unknown }>(
@@ -191,16 +196,20 @@ export async function deleteComment(commentId: string): Promise<Operation[]> {
 async function requireOwnComment(
   commentId: string,
   actorId: string,
-): Promise<{ taskId: string }> {
+): Promise<{ taskId: string; workspaceId: string }> {
   const owned = await commentOwnership(commentId);
   if (!owned) throw new Error("That comment no longer exists");
 
   // The list first: a comment on a task you can no longer reach is not yours to
   // change, whoever wrote it.
-  await requireTaskAccess(owned.taskId, actorId, "edit");
+  const access = await requireTaskAccess(owned.taskId, actorId, "edit");
 
   if (owned.authorId !== actorId) throw new Error("Only the author can change a comment");
-  return { taskId: owned.taskId };
+
+  // The workspace comes from the access check rather than from a second query:
+  // an edit resolves mentions too, and the list of who may be mentioned is
+  // scoped to the workspace the task is in (D-122).
+  return { taskId: owned.taskId, workspaceId: access.workspaceId };
 }
 
 async function isAdmin(workspaceId: string, userId: string): Promise<boolean> {

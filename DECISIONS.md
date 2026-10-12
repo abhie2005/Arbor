@@ -4306,3 +4306,46 @@ renderers and all four re-verified in a browser.
 
 *In one sentence:* the zone was not missing, it was implied, and an implied
 frame means one thing on a server and another in a browser.
+
+---
+
+### D-122
+**A mention may only name a member of the workspace** · 2026-10-11 · active
+
+`mentionableIn` was written for the document editor (D-117) and its own note
+named the file that still did not call it. Two did: `postComment` and
+`setTaskDescription` resolved "@Riley Kaur" against `SELECT id, name FROM users`
+— every user in the database, in every workspace.
+
+**The harm is not that the mention was wrong, it is what the refusal then
+said.** A name from another workspace resolved to a real id; the reachability
+check found that person could not open the task, which is true and always will
+be, since `resolveAccess` only indexes members; and the consent flow refused
+the comment *and reported the stranger's name back* to the author. So a path
+built to protect a permission boundary (D-084) became a way to confirm that an
+account exists and to learn its display name, which is invariant 6 in the one
+place nobody had looked.
+
+**Both doors, because it is one act.** A description is parsed by the same
+`parseRichText` into the same stored node as a comment; fixing the comment and
+leaving the description would be the bug with a different entry point. The
+workspace id comes from the access check that already ran, not from a second
+query — `requireOwnComment` now carries it out, since an edit resolves mentions
+too.
+
+**The check needed a fixture the seed cannot provide.** All four seeded users
+are members of the one workspace, which is exactly why this was invisible, so
+`check:actions` makes a non-member, names them in a comment, and asserts the
+name stays text *and the comment posts*. Reverting the comment path fails that
+check and leaves the description check passing, which is how each is known to
+guard its own door.
+
+**Still workspace-wide, and deliberately left: the lists that only display
+people.** `views.ts`, `task.ts`, `goals.ts`, `dashboards.ts` and
+`column-values.ts` each read every user in the database to label an id or fill
+a picker. That is the same class and a different severity — none of them turns
+typed text into a stored reference — so they are listed in `docs/STATUS.md`
+rather than changed here, where the question was what a mention may name.
+
+*In one sentence:* resolving a name against every account in the installation
+made a refusal into a directory.

@@ -12,6 +12,7 @@ import {
 } from "@arbor/core";
 import {
   applyOperations,
+  mentionableIn,
   pool,
   requireListAccess,
   requireTaskAccess,
@@ -380,13 +381,14 @@ export async function setTaskDate(
  */
 export async function setTaskDescription(taskId: string, text: string): Promise<Operation[]> {
   const actor = await requireUser();
-  await requireTaskAccess(taskId, actor.id, "edit");
+  const access = await requireTaskAccess(taskId, actor.id, "edit");
 
-  const people = await pool().query<{ id: string; name: string }>(
-    `SELECT id, name FROM users WHERE deactivated_at IS NULL`,
-  );
+  // Members of this workspace, not every user in the database (D-122). A
+  // description resolves "@Name" into a stored mention node exactly as a
+  // comment does, so it is the same bug behind a second door.
+  const people = await mentionableIn(access.workspaceId);
 
-  const parsed = parseRichText(text, people.rows);
+  const parsed = parseRichText(text, people);
   const to = parsed.content.length === 0 ? null : parsed;
 
   const current = await pool().query<{ description: unknown }>(

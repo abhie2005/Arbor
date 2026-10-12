@@ -1001,6 +1001,59 @@ const nowWatching = await one(
 );
 report("commenting makes you a watcher", nowWatching ? null : "the author is not watching");
 
+// --- a name from outside the workspace ---------------------------------------
+//
+// The candidate list `parseRichText` matches against was every user in the
+// database (D-122), which only shows with a user who is not a member — and the
+// seed has one workspace that everybody is in, so the fixture has to be made
+// here. The failure it hides is specific: the stranger's name resolved, the
+// reachability check then found they could not open the task, and the post was
+// refused *and said their name back* — so the bug surfaced as a consent prompt
+// about somebody the author had never heard of.
+await db.query(`DELETE FROM users WHERE email = 'outside@example.test'`);
+await one(
+  `INSERT INTO users (email, name) VALUES ('outside@example.test', 'Outside Person') RETURNING id`,
+);
+await db.query(`DELETE FROM comments WHERE object_id = $1`, [commentedTask.id]);
+
+const namedAStranger = await callOn(DETAIL_URL, DETAIL_ACTIONS.postComment!, [
+  commentedTask.id,
+  "Not one of us, @Outside Person",
+  null,
+  false,
+]);
+const strangerComment = await one(`SELECT body FROM comments WHERE object_id = $1`, [
+  commentedTask.id,
+]);
+const strangerBody = JSON.stringify(strangerComment?.body ?? null);
+report(
+  "a name belonging to nobody in this workspace stays text, and the comment posts",
+  strangerComment && !strangerBody.includes(`"type":"mention"`)
+    ? null
+    : strangerComment
+      ? `it became a mention: ${strangerBody.slice(0, 140)}`
+      : `nothing was written: ${namedAStranger.text.slice(0, 160)}`,
+);
+
+// A description is the same act behind a second door, and had the same bug.
+// It is overwritten by the description check further down, so this leaves
+// nothing behind for it to trip over.
+await callOn(DETAIL_URL, DETAIL_ACTIONS.setTaskDescription!, [
+  commentedTask.id,
+  "Owned by @Outside Person",
+]);
+const storedDescription = await one(`SELECT description FROM tasks WHERE id = $1`, [
+  commentedTask.id,
+]);
+report(
+  "and a description does not resolve one either",
+  JSON.stringify(storedDescription?.description ?? null).includes(`"type":"mention"`)
+    ? `it became a mention: ${JSON.stringify(storedDescription.description).slice(0, 140)}`
+    : null,
+);
+
+await db.query(`DELETE FROM users WHERE email = 'outside@example.test'`);
+
 // The consent flow. Sam has no grant on the private list, so mentioning him
 // there must refuse and write nothing — not the comment, and not the grant.
 await revokeHiring(samUserId);
