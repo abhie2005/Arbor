@@ -83,6 +83,12 @@ const RELATION_TABLES = {
 
 export class MutationRejected extends Error {}
 
+/** The automation run a batch is the output of (D-125). */
+export interface OperationCause {
+  automationId: string;
+  runId: string;
+}
+
 export interface ApplyResult {
   applied: number;
   skipped: number;
@@ -106,6 +112,16 @@ export interface ApplyContext {
    * did not open.
    */
   client?: PoolClient;
+  /**
+   * The automation run these operations are the output of (D-125).
+   *
+   * Stamped onto every activity row the batch writes, which is what lets the
+   * next scan work out that a cascade is one step deeper and refuse a rule that
+   * is answering itself. `actorId` is still required and still names a real
+   * principal — the service account the rule runs as (D-126) — because an
+   * activity row whose author is null is worse than no row at all.
+   */
+  cause?: OperationCause;
 }
 
 export async function applyOperations(
@@ -136,7 +152,13 @@ export async function applyOperations(
   if (context.client) {
     const heard = new Announcements(context.actorId);
     for (const op of meaningful) {
-      result.notified += await applyAndNotify(context.client, op, context.actorId, heard);
+      result.notified += await applyAndNotify(
+        context.client,
+        op,
+        context.actorId,
+        heard,
+        context.cause,
+      );
     }
     await heard.announce(context.client);
     return result;
@@ -149,7 +171,7 @@ export async function applyOperations(
 
     const heard = new Announcements(context.actorId);
     for (const op of meaningful) {
-      result.notified += await applyAndNotify(client, op, context.actorId, heard);
+      result.notified += await applyAndNotify(client, op, context.actorId, heard, context.cause);
     }
     await heard.announce(client);
 
@@ -239,8 +261,9 @@ async function applyAndNotify(
   op: Operation,
   actorId: string,
   heard: Announcements,
+  cause?: OperationCause,
 ): Promise<number> {
-  const logged = await applyOne(client, op, actorId, heard);
+  const logged = await applyOne(client, op, actorId, heard, cause);
   if (!mayNotify(op)) return 0;
 
   const target = await fanOutTarget(client, op.taskId, actorId);
@@ -266,6 +289,7 @@ async function applyOne(
   op: Operation,
   actorId: string,
   heard: Announcements,
+  cause?: OperationCause,
 ): Promise<Logged> {
   switch (op.kind) {
     case "setField": {
@@ -293,7 +317,7 @@ async function applyOne(
       );
 
       const row = requireRow(result.rows[0], op.taskId);
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: row.workspace_id,
@@ -334,7 +358,7 @@ async function applyOne(
       );
 
       const meta = await taskMeta(client, op.taskId);
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -366,7 +390,7 @@ async function applyOne(
       }
 
       const meta = await taskMeta(client, op.taskId);
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -411,7 +435,7 @@ async function applyOne(
         [op.taskId, op.listId, v.position],
       );
 
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: row.workspace_id,
@@ -432,7 +456,7 @@ async function applyOne(
       );
 
       const row = requireRow(result.rows[0], op.taskId);
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: row.workspace_id,
@@ -488,7 +512,7 @@ async function applyOne(
         [op.commentId, meta.workspace_id, op.taskId, op.parentId, actorId, JSON.stringify(body)],
       );
 
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -515,7 +539,7 @@ async function applyOne(
 
       if (result.rowCount === 0) throw new MutationRejected("That comment no longer exists");
 
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -539,7 +563,7 @@ async function applyOne(
 
       if (result.rowCount === 0) throw new MutationRejected("That comment no longer exists");
 
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -566,7 +590,7 @@ async function applyOne(
         op.taskId,
       ]);
 
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -615,7 +639,7 @@ async function applyOne(
         ],
       );
 
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -664,7 +688,7 @@ async function applyOne(
         ],
       );
 
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -694,7 +718,7 @@ async function applyOne(
       );
       if (result.rowCount === 0) throw new MutationRejected("That time entry no longer exists");
 
-      return await logActivity(client, heard, {
+      return await logActivity(client, heard, cause, {
         op,
         actorId,
         workspaceId: meta.workspace_id,
@@ -816,12 +840,14 @@ interface LogArgs {
 async function logActivity(
   client: PoolClient,
   heard: Announcements,
+  cause: OperationCause | undefined,
   args: LogArgs,
 ): Promise<Logged> {
   const result = await client.query<{ id: string }>(
     `INSERT INTO activity
-       (workspace_id, actor_id, object_kind, object_id, verb, field, old_value, new_value, list_id)
-     VALUES ($1, $2, 'task', $3, $4, $5, $6, $7, $8)
+       (workspace_id, actor_id, object_kind, object_id, verb, field, old_value, new_value, list_id,
+        automation_id, automation_run_id)
+     VALUES ($1, $2, 'task', $3, $4, $5, $6, $7, $8, $9, $10)
      RETURNING id`,
     [
       args.workspaceId,
@@ -832,6 +858,8 @@ async function logActivity(
       args.oldValue === undefined ? null : JSON.stringify(args.oldValue),
       args.newValue === undefined ? null : JSON.stringify(args.newValue),
       args.listId,
+      cause?.automationId ?? null,
+      cause?.runId ?? null,
     ],
   );
 

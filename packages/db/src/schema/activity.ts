@@ -35,7 +35,18 @@ export const activity = pgTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * The rule that caused this, when one did (D-125).
+     *
+     * Declared in Phase 1 and unwritten until Phase 10. `actorId` still names
+     * the automation's service account, because something has to be nameable
+     * as the actor and a null one is worse than no log at all — this says
+     * *which rule*, so a history can read "Sprint triage closed it" rather than
+     * attributing it to a robot with one name for every rule.
+     */
     automationId: uuid("automation_id"),
+    /** The specific run, which is how a cascade counts its own depth. */
+    automationRunId: uuid("automation_run_id"),
 
     objectKind: objectKind("object_kind").notNull(),
     objectId: uuid("object_id").notNull(),

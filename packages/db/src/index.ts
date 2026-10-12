@@ -127,6 +127,21 @@ export {
   type DocWithState,
 } from "./documents";
 export {
+  MONTHLY_RUN_QUOTA,
+  claimDueRuns,
+  createAutomation,
+  deleteAutomation,
+  ensureAutomationActor,
+  executeRun,
+  loadAutomations,
+  scanForAutomations,
+  setAutomationEnabled,
+  tickAutomations,
+  type AutomationRecord,
+  type ClaimedRun,
+  type RunOutcome,
+} from "./automations";
+export {
   AccessDenied,
   containerAccess,
   listAccess,

@@ -57,6 +57,7 @@ export interface ConfigEvent {
     | "goal"
     | "key_result"
     | "dashboard"
+    | "automation"
     | "doc";
   objectId: string;
   verb: string;

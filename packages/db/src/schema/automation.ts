@@ -69,9 +69,23 @@ export const automationRuns = pgTable(
     triggeredByActivityId: bigint("triggered_by_activity_id", { mode: "bigint" }),
     idempotencyKey: text("idempotency_key").notNull(),
     depth: integer("depth").notNull().default(0),
-    /** "success" | "failed" | "skipped_conditions" | "refused_depth" | "refused_quota" */
+    /**
+     * "pending" | "success" | "failed" | "skipped_conditions" | "skipped_self"
+     * | "refused_depth" | "refused_quota"
+     *
+     * **`pending` is why this table is also the queue** (D-125). A run that has
+     * not happened yet is still an execution, so giving it a second table would
+     * mean two rows per run and a moment where one exists and the other does
+     * not. The unique index on `idempotencyKey` is then exactly what makes an
+     * overlapping activity scan harmless.
+     */
     status: text("status").notNull(),
     error: text("error"),
+    /** When this becomes due. Now for an immediate rule, later for a delay. */
+    runAfter: timestamp("run_after", { withTimezone: true }).notNull().defaultNow(),
+    /** Set by the claim, so a second replica skips it. */
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    attempts: integer("attempts").notNull().default(0),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
@@ -81,6 +95,25 @@ export const automationRuns = pgTable(
     index("automation_runs_automation_idx").on(t.automationId, t.startedAt),
   ],
 );
+
+/**
+ * How far the activity scan has read, per workspace.
+ *
+ * **A watermark with deliberate slack** (D-125). Activity ids come from a
+ * sequence, and a transaction that took a lower id can commit after one that
+ * took a higher id — so a strict "last id seen" silently skips whatever was
+ * still in flight at the moment of the read. The scan therefore re-reads a
+ * short overlap every time and lets the unique index on
+ * `automation_runs.idempotency_key` refuse the duplicate, which is the trade
+ * the Phase 1 schema already chose by putting that index there.
+ */
+export const automationCursors = pgTable("automation_cursors", {
+  workspaceId: uuid("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  lastActivityId: bigint("last_activity_id", { mode: "bigint" }).notNull().default(0n),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 export const webhooks = pgTable(
   "webhooks",
@@ -227,6 +260,7 @@ export const docLinks = pgTable(
 export type DocLink = typeof docLinks.$inferSelect;
 
 export type Automation = typeof automations.$inferSelect;
+export type AutomationCursor = typeof automationCursors.$inferSelect;
 export type AutomationRun = typeof automationRuns.$inferSelect;
 export type Webhook = typeof webhooks.$inferSelect;
 export type Template = typeof templates.$inferSelect;

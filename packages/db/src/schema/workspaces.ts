@@ -24,6 +24,15 @@ export const users = pgTable(
     email: text("email").notNull(),
     emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     name: text("name").notNull(),
+    /**
+     * "person" | "service" (D-126).
+     *
+     * A service account is a real row here on purpose: every read joins
+     * `access_index` for a principal, so an integration that is a user is one
+     * the permission model already understands. The alternative — minting a
+     * synthetic principal per request — is how that model gets quietly widened.
+     */
+    kind: text("kind").notNull().default("person"),
     avatarUrl: text("avatar_url"),
     /** argon2id hash. Null when the user only ever signs in via a federated provider. */
     passwordHash: text("password_hash"),

@@ -4479,3 +4479,140 @@ the trade the schema chose in Phase 1 by putting a unique index there at all.
 
 *In one sentence:* every part of a rule is spelled in a vocabulary that already
 had a definition elsewhere, so there is nothing here that can drift.
+
+---
+
+### D-125
+**The queue is a table, so the worker is a loop and not a service** · 2026-10-12 · active
+
+The first of the three questions `docs/STATUS.md` said to settle before writing
+any of Phase 10: *does an automation run in-process or in a worker?* Every
+transport question in this system so far has been answered against a separate
+service — Postgres carries changes (D-090), presence within a process (D-092)
+and between them (D-100), and document updates (D-112) — and a collaborative
+editor was the last thing that might have needed a gateway and did not. An
+automation with a delay is the first thing that genuinely cannot be answered by
+a connection somebody is holding open, which is what made this a real decision
+rather than a repeat of one.
+
+**It is still answered by Postgres.** A run due in three days is a row with
+`run_after` three days out. `automation_runs` *is* the queue rather than having
+one beside it, because a pending run is an execution that has not happened yet:
+a second table would mean two rows per run and a moment where one exists and the
+other does not. The unique index Phase 1 put on `idempotency_key` is then
+exactly what makes the producer safe.
+
+**Nothing in the engine knows which process drains it**, which is the property
+worth having. `tickAutomations` is what a loop calls and what `db:smoke` calls,
+and those being the same function is what makes the test worth anything.
+Lifting it into `apps/worker` later is a deployment decision, not a rewrite —
+and the app still reads three environment variables (invariant 14) instead of
+growing a fourth for a queue URL.
+
+**`desired_count = 2`, so the claim is not a precaution.** Production runs two
+web replicas today; a scheduler that assumed one process would have doubled
+every automation on the first deploy. `FOR UPDATE SKIP LOCKED` rather than a
+lease column with a timestamp: the lock belongs to the transaction, so a replica
+that dies mid-claim releases its rows when the connection drops, instead of
+stranding them until a reaper nobody wrote comes to find them. The index is
+partial (`WHERE status = 'pending'`) because the queue is the small live tail of
+a table that only ever grows.
+
+**The scan reads the activity log rather than being pushed to.** `Change` — the
+nudge the live stream carries — is deliberately thin and says only that
+*something* happened in a container; it could not tell a rule that a status
+moved from one value to another. The log already records exactly that, in order,
+and `automation_runs.triggered_by_activity_id` has pointed at it since Phase 1.
+Enqueuing from inside `applyOperations` was the alternative and was rejected:
+it puts rule-matching on the hot path of the one function every write goes
+through.
+
+**The watermark has deliberate slack.** Activity ids come from a sequence, and
+a transaction holding a lower id can commit after one holding a higher id — so
+"last id seen" silently skips whatever was in flight at the moment of the read.
+The scan re-reads a short overlap and lets the unique index refuse the
+duplicate. One failed insert, against a snapshot-tracking scheme nobody could
+debug later.
+
+**Conditions are compiled, not evaluated** (invariant 2), by wrapping the
+compiler's own query: `SELECT 1 FROM (<compiled>) WHERE candidate.id = $n`. The
+subtlety this buys — and it is a real one — is that a view's filters carry
+*presentation* defaults: hide closed tasks, hide archived ones, nest subtasks,
+because a person is browsing. A condition is a question about one task already
+known to exist, so all three are overridden. Left in place, a rule saying "when
+the status becomes Done" could never fire, because the compiled query would have
+hidden the task at the instant it closed. That is worth paying once here rather
+than maintaining a second definition of "matches".
+
+**Every exit writes a terminal status, including the ones that did nothing.** A
+run that vanishes silently is indistinguishable from a rule that never fired,
+which is the question somebody is always trying to answer when they open this
+table. `skipped_conditions` for a condition that did not hold, `skipped_self`
+for a rule answering its own output, `refused_depth` and `refused_quota` for
+the guards — and a refusal is decided at enqueue time, so it is recorded once
+with a reason instead of being retried every tick.
+
+**Two fixture bugs, both the same bug, and both worth writing down.** The smoke
+checks failed on their *second* run while passing on the first: the triggering
+change had already been made by the previous run, so `applyOperations` filtered
+it as a no-op, nothing reached the log, and no rule fired. It reports as "the
+engine did not fire" and looks exactly like a broken engine. Both fixtures now
+set the state they intend to change away from. A check whose setup can quietly
+do nothing is worse than no check, because it is green for the wrong reason —
+the same lesson the permissions section learned in Phase 4 and wrote down then.
+
+*In one sentence:* a delay is the first thing a held-open connection cannot
+answer, and the answer was still Postgres — a table, which is why no service
+had to exist for it.
+
+---
+
+### D-126
+**An automation acts as a service account, because the index knows principals** · 2026-10-12 · active
+
+The third question STATUS posed — *what does the public API authenticate as?* —
+answered first for automations, which need the same thing and need it sooner.
+Every read in this system joins `access_index` for a person, and
+`applyOperations` refuses an empty `actorId` because a log with a null author is
+worse than no log: it still looks trustworthy.
+
+**So the robot is a real `users` row**, created once per workspace, holding an
+ordinary membership. It appears in the access index through the normal rebuild,
+it is a principal every existing query already understands, and nothing in the
+permission model changed to accommodate it. `users.kind` distinguishes it
+(`'person'` | `'service'`) so a people picker can leave it out; a column rather
+than a separate table, because everything that makes a user a user is still
+true of it.
+
+**A synthetic principal minted per request was the alternative**, and STATUS had
+already named it as how the permission model gets quietly widened. It is worse
+than it first looks: `resolveAccess` drops grants to non-members by design, so a
+synthetic id would have had to bypass the index rather than appear in it — which
+means every permission-scoped read would need a second code path that is not the
+one anybody tests.
+
+**`activity.actor_id` names the account and `activity.automation_id` names the
+rule.** The second column has been in the schema since Phase 1 and unwritten
+since Phase 1. One service account per workspace means the actor alone would
+make every rule look like the same robot; with the rule id beside it a history
+can say which automation did this. `automation_run_id` is the new column, and it
+is what lets a cascade count its own depth — the run knows its depth, so the
+activity it produced implies the next one's.
+
+**Conditions are evaluated as the automation account** — invariant 3's question,
+asked deliberately rather than defaulted. A rule therefore sees what the
+workspace's automation account can see, so two rules in the same container
+cannot disagree about what counts. The alternative, running as whoever triggered
+the rule, would make a rule's behaviour depend on who happened to touch the
+task, which is exactly the property a shared rule should not have.
+
+**The email is synthetic, and that is the grit in this.** The column is unique
+and not null, so a service account gets
+`automation+<workspace>@service.arbor.local`. The alternative is making email
+nullable for every row in the table to accommodate a handful that never sign in,
+which is a worse trade — but it is a real wart and it is the thing to revisit
+when the public API needs tokens that belong to one of these.
+
+*In one sentence:* an integration that is a user is one the permission model
+already understands, and everything else about this decision follows from
+refusing to invent a second kind of principal.

@@ -92,6 +92,20 @@
       "when": 1791758037574,
       "tag": "0012_doc_links",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1791844437574,
+      "tag": "0013_automation_runtime",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1791844537574,
+      "tag": "0014_automation_activity_kind",
+      "breakpoints": true
     }
   ]
 }

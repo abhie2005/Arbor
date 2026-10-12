@@ -116,6 +116,14 @@ import {
   searchDocs,
 } from "./documents";
 import {
+  claimDueRuns,
+  createAutomation,
+  ensureAutomationActor,
+  scanForAutomations,
+  setAutomationEnabled,
+  tickAutomations,
+} from "./automations";
+import {
   containerAccess,
   listAccess,
   reachableContainers,
@@ -3742,6 +3750,329 @@ async function main() {
   );
 
   await pool.query(`DELETE FROM docs WHERE workspace_id = $1`, [ws.id]);
+
+
+  // --- automations (D-124, D-125, D-126) -------------------------------------
+  //
+  // The first thing in this repo to read the `automations` table, and the first
+  // write that no person made. Four properties matter, and each is the half of
+  // a decision that could only be checked against a real database:
+  //
+  //   - a rule fires from the activity log and writes through `applyOperations`,
+  //     so its effect has an activity row like everything else;
+  //   - the robot is a *principal*, not a synthetic id, so the row it writes
+  //     names somebody the permission model already knows;
+  //   - a rule does not answer its own output, which is the cycle that needs no
+  //     depth counter;
+  //   - conditions are the compiler's, so "when it becomes Done" still fires on
+  //     a task the compiler would hide from a person browsing.
+  console.log("\nautomations → a rule fires, as somebody the index knows\n");
+
+  const autoList = await one("SELECT id FROM containers WHERE name='Sprint 24'");
+  const autoTask = await one(`SELECT id, status_id FROM tasks WHERE key = 'ENG-402'`);
+  const inReview = await one(
+    `SELECT s.id FROM statuses s JOIN status_sets ss ON ss.id = s.status_set_id
+     WHERE ss.name = 'Engineering' AND s.name = 'In Review'`,
+  );
+  const autoDone = await one(
+    `SELECT s.id FROM statuses s JOIN status_sets ss ON ss.id = s.status_set_id
+     WHERE ss.name = 'Engineering' AND s.name = 'Done'`,
+  );
+  const autoTodo = await one(
+    `SELECT s.id FROM statuses s JOIN status_sets ss ON ss.id = s.status_set_id
+     WHERE ss.name = 'Engineering' AND s.name = 'Todo'`,
+  );
+
+  // A clean slate, so a re-run is not reading the previous run's rows — and a
+  // known starting state, because a previous run left this task *in* the status
+  // the rule watches for, which made the triggering change a no-op that never
+  // reached the log. A fixture that quietly does nothing reports "the rule did
+  // not fire" and looks exactly like a broken engine.
+  await pool.query(`DELETE FROM automation_runs WHERE workspace_id = $1`, [ws.id]);
+  await pool.query(`DELETE FROM automations WHERE workspace_id = $1`, [ws.id]);
+  await pool.query(`DELETE FROM automation_cursors WHERE workspace_id = $1`, [ws.id]);
+  await pool.query(`UPDATE tasks SET status_id = $2 WHERE id = $1`, [autoTask.id, autoTodo.id]);
+  await pool.query(`DELETE FROM task_watchers WHERE task_id = $1 AND user_id = $2`, [
+    autoTask.id,
+    viewer.id,
+  ]);
+
+  const watcherRule = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "Watch what goes to review",
+      trigger: { kind: "fieldChanged", field: "statusId", to: inReview.id },
+      actions: [{ kind: "addRelation", relation: "watcher", targetId: viewer.id }],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  report(
+    "a rule that cannot run is refused in front of whoever wrote it",
+    await expectRejection(() =>
+      createAutomation(
+        {
+          workspaceId: ws.id!,
+          containerId: autoList.id!,
+          name: "Nonsense",
+          trigger: { kind: "fieldChanged", field: "nonsense" },
+          actions: [{ kind: "archive" }],
+        },
+        { actorId: owner.id!, connection: pool },
+      ),
+    ),
+  );
+
+  // The scan reads forward from a cursor, so it must not fire on history that
+  // predates the rule — otherwise enabling an automation would replay the log.
+  // The cursor is placed *without* scanning, because scanning is what enqueues.
+  await pool.query(
+    `INSERT INTO automation_cursors (workspace_id, last_activity_id)
+     VALUES ($1, (SELECT COALESCE(max(id), 0) FROM activity WHERE workspace_id = $1))
+     ON CONFLICT (workspace_id) DO UPDATE SET last_activity_id = EXCLUDED.last_activity_id`,
+    [ws.id],
+  );
+
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: autoTask.id!,
+        field: "statusId",
+        from: autoTodo.id!,
+        to: inReview.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const fired = await tickAutomations(ws.id!, pool);
+
+  report(
+    "a status change the rule was watching produces exactly one run",
+    fired.enqueued === 1 && fired.executed === 1 && fired.outcomes[0] === "success"
+      ? null
+      : `enqueued ${fired.enqueued}, executed ${fired.executed}, ${JSON.stringify(fired.outcomes)}`,
+  );
+
+  const nowWatched = await one(
+    `SELECT 1 AS ok FROM task_watchers WHERE task_id = $1 AND user_id = $2`,
+    [autoTask.id, viewer.id],
+  );
+  report(
+    "and the action actually happened to the task",
+    nowWatched ? null : "the rule reported success and changed nothing",
+  );
+
+  // D-126: the write has an author, and that author is a principal rather than
+  // an invented id — which is what makes it indistinguishable, to every query in
+  // the system, from any other member.
+  const robotRow = await one(
+    `SELECT u.kind, u.id FROM activity a JOIN users u ON u.id = a.actor_id
+     WHERE a.object_id = $1 AND a.automation_id = $2 ORDER BY a.id DESC LIMIT 1`,
+    [autoTask.id, watcherRule],
+  );
+  report(
+    "the activity row names the automation's service account as its actor",
+    robotRow?.kind === "service" ? null : `actor kind was ${String(robotRow?.kind)}`,
+  );
+
+  report(
+    "and that account is in the access index, like any other principal",
+    (await containerAccess(autoList.id!, robotRow!.id!, pool)) !== null
+      ? null
+      : "the robot can write but is not somebody the index knows",
+  );
+
+  report(
+    "the activity row says which rule did it, not just that a robot did",
+    robotRow ? null : "no activity row carried the automation id",
+  );
+
+  // Idempotency: the scan deliberately re-reads an overlap, because a lower
+  // activity id can commit after a higher one. Running it again must do nothing.
+  const again = await tickAutomations(ws.id!, pool);
+  report(
+    "running the engine again enqueues nothing, because the key is the dedupe",
+    again.enqueued === 0 && again.executed === 0
+      ? null
+      : `a re-scan produced ${again.enqueued} more runs`,
+  );
+
+  // The cycle that needs no counter: a rule whose own action matches its own
+  // trigger. Without the self-check this is an infinite cascade.
+  //
+  // Both watchers are cleared first, for the reason the status was reset above:
+  // a second run would otherwise be adding somebody who is already there,
+  // `applyOperations` would filter the no-op, nothing would reach the log, and
+  // the cascade this is about would never start — reported as "the guard
+  // worked" when nothing had been guarded.
+  await pool.query(`DELETE FROM task_watchers WHERE task_id = $1 AND user_id = ANY($2::uuid[])`, [
+    autoTask.id,
+    [promoted.id, outsider.id],
+  ]);
+
+  const loopRule = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "A rule that would answer itself",
+      trigger: { kind: "relationAdded", relation: "watcher" },
+      actions: [{ kind: "addRelation", relation: "watcher", targetId: outsider.id }],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await applyOperations(
+    [{ kind: "addRelation", taskId: autoTask.id!, relation: "watcher", targetId: promoted.id! }],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await tickAutomations(ws.id!, pool);
+  const settled = await tickAutomations(ws.id!, pool);
+
+  const selfSkipped = await one(
+    `SELECT count(*) AS n FROM automation_runs WHERE automation_id = $1 AND status = 'skipped_self'`,
+    [loopRule],
+  );
+  report(
+    "a rule does not answer its own output, and the refusal is a row",
+    Number(selfSkipped?.n ?? 0) > 0 && settled.executed === 0
+      ? null
+      : `skipped_self rows: ${String(selfSkipped?.n)}, still executing: ${settled.executed}`,
+  );
+
+  // Conditions are the compiler's (invariant 2), and the presentation flags are
+  // overridden on purpose: a rule about Done would never fire if the compiled
+  // query hid closed tasks the way a view does for somebody browsing.
+  await setAutomationEnabled(loopRule, false, { actorId: owner.id!, connection: pool });
+  await setAutomationEnabled(watcherRule, false, { actorId: owner.id!, connection: pool });
+
+  const closedRule = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "Comment when it closes",
+      trigger: { kind: "fieldChanged", field: "statusId", to: autoDone.id },
+      conditions: {
+        op: "AND",
+        conditions: [{ field: "status", op: "eq", value: autoDone.id }],
+      },
+      actions: [{ kind: "comment", text: "Closed automatically." }],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: autoTask.id!,
+        field: "statusId",
+        from: inReview.id!,
+        to: autoDone.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const onClose = await tickAutomations(ws.id!, pool);
+  const robotComment = await one(
+    `SELECT c.id FROM comments c WHERE c.object_id = $1 AND c.deleted_at IS NULL
+     ORDER BY c.created_at DESC LIMIT 1`,
+    [autoTask.id],
+  );
+
+  report(
+    "a condition about a closed task still matches, because a view's hiding is not a rule's",
+    onClose.outcomes[0] === "success" && robotComment
+      ? null
+      : `outcome ${JSON.stringify(onClose.outcomes)}, comment ${String(robotComment?.id)}`,
+  );
+
+  // A condition that does not hold is a recorded skip, not a silence — the
+  // question "why did my rule not fire" has to have an answer in this table.
+  await setAutomationEnabled(closedRule, false, { actorId: owner.id!, connection: pool });
+
+  const neverRule = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "Only when the points are enormous",
+      trigger: { kind: "fieldChanged", field: "statusId" },
+      conditions: { op: "AND", conditions: [{ field: "points", op: "gt", value: 9999 }] },
+      actions: [{ kind: "archive" }],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: autoTask.id!,
+        field: "statusId",
+        from: autoDone.id!,
+        to: autoTodo.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const skipped = await tickAutomations(ws.id!, pool);
+  const skipRow = await one(
+    `SELECT status FROM automation_runs WHERE automation_id = $1 ORDER BY started_at DESC LIMIT 1`,
+    [neverRule],
+  );
+  report(
+    "a condition that does not hold is recorded as a skip rather than a silence",
+    skipRow?.status === "skipped_conditions" && skipped.outcomes.every((o) => o !== "success")
+      ? null
+      : `recorded ${String(skipRow?.status)}`,
+  );
+
+  // A delayed run is the thing a held-open connection could never answer, and
+  // the reason the queue is a table at all.
+  await pool.query(
+    `UPDATE automation_runs SET status = 'pending', run_after = now() + interval '3 days',
+            finished_at = NULL WHERE automation_id = $1`,
+    [neverRule],
+  );
+  report(
+    "a run that is not due yet is not claimed",
+    (await claimDueRuns(pool)).every((run) => run.automationId !== neverRule)
+      ? null
+      : "a run due in three days was claimed now",
+  );
+
+  await pool.query(
+    `UPDATE automation_runs SET run_after = now() - interval '1 minute' WHERE automation_id = $1`,
+    [neverRule],
+  );
+  report(
+    "and is claimed once it is",
+    (await claimDueRuns(pool)).some((run) => run.automationId === neverRule)
+      ? null
+      : "a due run stayed in the queue",
+  );
+
+  // Disabled means disabled: the scan must not enqueue for a rule nobody wants.
+  await setAutomationEnabled(neverRule, false, { actorId: owner.id!, connection: pool });
+  const quiet = await tickAutomations(ws.id!, pool);
+  report(
+    "a disabled rule is not scanned for at all",
+    quiet.enqueued === 0 ? null : `a disabled rule enqueued ${quiet.enqueued}`,
+  );
+
+  report(
+    "the automation actor is made once and found thereafter",
+    (await ensureAutomationActor(ws.id!, pool)) === (await ensureAutomationActor(ws.id!, pool))
+      ? null
+      : "a second service account was created",
+  );
+
+  await pool.query(`DELETE FROM automations WHERE workspace_id = $1`, [ws.id]);
 
   console.log(failures === 0 ? "\nall checks passed\n" : `\n${failures} check(s) failed\n`);
   await pool.end();
