@@ -4683,3 +4683,65 @@ section is checked to pass on consecutive runs.
 *In one sentence:* the engine was correct and the two things wrong with it —
 replaying history and ignoring its own container — were both invisible until
 something other than a test called it.
+
+---
+
+### D-128
+**"In 3 days, if still open" — the delay is the rule's, and the condition is asked late** · 2026-10-13 · active
+
+The phrase `docs/STATUS.md` used to describe what a held-open connection could
+never answer, built. It is the smallest remaining piece of the automation half
+and it needed one column, because D-125 had already made the expensive decision:
+the queue is a table, so a delayed run is a row with `run_after` in the future
+and nothing about the drain had to change.
+
+**The delay belongs to the rule, not to the trigger.** What fires a rule and
+how long it then waits are different questions, and the trigger is a jsonb
+object matched against an activity row — a duration inside it would be a field
+that `matches` must know to ignore. A column also means "show me every rule
+that waits" is a query rather than a scan through json.
+
+**Conditions are evaluated when the run executes, not when it was queued**, and
+that is the entire point rather than an implementation detail. A delayed rule
+that remembered its verdict would be promising "this was still open three days
+ago", which is not what anyone means by the words. `executeRun` already asked
+at execution time, so this cost nothing to build — but it is the property the
+checks are about, because it is the one that would be silently wrong if anybody
+later "optimised" the condition into the enqueue.
+
+**Both halves are checked, because the first alone proves nothing.** A rule
+whose task left review before the delay elapsed must skip; a rule whose task is
+still in review must act. Testing only the skip would pass just as well against
+a delayed rule that never does anything at all.
+
+**A refusal is settled immediately whatever the delay says.** Scheduling a
+`refused_quota` three days out would leave a row that reads as pending and never
+runs, which is the shape of thing somebody eventually finds while debugging
+something else.
+
+**Thirty days is the limit**, because a delay is a promise the system has to
+keep: a run queued for next year has to survive every migration and every change
+to what an action means between now and then. A month covers "chase this if it
+is still open" and keeps a pending row from becoming archaeology.
+
+**A bad delay is refused rather than clamped.** `-1` meant something to whoever
+typed it, and quietly storing `0` turns a rule that cannot be expressed into one
+that fires immediately — a *different rule* running in production from the one
+somebody wrote. Same reasoning as refusing an invalid filter rather than
+dropping it (D-042).
+
+**Seconds rather than a Postgres interval**, because every caller — a form, the
+API, a test — has a number, and `make_interval(secs => $n)` puts the one place
+that has to know the difference in the one query that does.
+
+**A type lie the runtime was happy with, caught by `typecheck`.** The smoke
+helper types every column as a string, Postgres hands back a real boolean for a
+comparison, and `far_out === true` passed at runtime while being a comparison
+TypeScript could see had no overlap. Casting the column to text in SQL makes the
+query match what the helper promises, instead of making the helper lie more
+convincingly. Worth noting as the one failure this session that no amount of
+running the thing would have found.
+
+*In one sentence:* the delay was cheap because the queue was already a table,
+and the only thing that needed care was asking the condition late rather than
+early.

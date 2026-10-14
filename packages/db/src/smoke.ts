@@ -4178,6 +4178,156 @@ async function main() {
   ]);
   await setAutomationEnabled(scopedRule, false, { actorId: owner.id!, connection: pool });
 
+  // --- "in 3 days, if still open" (D-128) ------------------------------------
+  //
+  // The delay is the reason the queue is a table at all, and the property worth
+  // checking is not that the row waits — it is *when the conditions are asked*.
+  // A delayed rule that evaluated its conditions at enqueue time would be
+  // promising "it was open three days ago", which is not what anybody means.
+  await pool.query(`UPDATE tasks SET status_id = $2 WHERE id = $1`, [autoTask.id, autoTodo.id]);
+
+  const chaseRule = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "Chase it if it is still in review",
+      trigger: { kind: "fieldChanged", field: "statusId", to: inReview.id },
+      conditions: { op: "AND", conditions: [{ field: "status", op: "eq", value: inReview.id }] },
+      actions: [{ kind: "comment", text: "Still in review after three days." }],
+      delaySeconds: 3 * 24 * 60 * 60,
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  report(
+    "a delay longer than a pending row should outlive is refused",
+    await expectRejection(() =>
+      createAutomation(
+        {
+          workspaceId: ws.id!,
+          containerId: autoList.id!,
+          name: "Next year",
+          trigger: { kind: "taskCreated" },
+          actions: [{ kind: "archive" }],
+          delaySeconds: 400 * 24 * 60 * 60,
+        },
+        { actorId: owner.id!, connection: pool },
+      ),
+    ),
+  );
+
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: autoTask.id!,
+        field: "statusId",
+        from: autoTodo.id!,
+        to: inReview.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const queued = await tickAutomations(ws.id!, pool);
+  const pendingRun = await one(
+    `SELECT status, (run_after > now() + interval '2 days')::text AS far_out
+     FROM automation_runs WHERE automation_id = $1 ORDER BY started_at DESC LIMIT 1`,
+    [chaseRule],
+  );
+
+  report(
+    "a delayed rule queues a run for later rather than running it now",
+    queued.enqueued === 1 && queued.executed === 0 && pendingRun?.status === "pending"
+      ? null
+      : `enqueued ${queued.enqueued}, executed ${queued.executed}, status ${String(pendingRun?.status)}`,
+  );
+
+  report(
+    "and the wait is the length the rule asked for",
+    pendingRun?.far_out === "true" ? null : "the run was not scheduled three days out",
+  );
+
+  // The task stops being in review before the delay elapses. The trigger does
+  // not match this change, so nothing new is queued — what is being tested is
+  // the run that is already waiting.
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: autoTask.id!,
+        field: "statusId",
+        from: inReview.id!,
+        to: autoTodo.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const commentsBefore = await one(
+    `SELECT count(*) AS n FROM comments WHERE object_id = $1 AND deleted_at IS NULL`,
+    [autoTask.id],
+  );
+
+  // Time travel, which is the only way to test a three-day wait in a smoke run.
+  await pool.query(
+    `UPDATE automation_runs SET run_after = now() - interval '1 minute'
+     WHERE automation_id = $1 AND status = 'pending'`,
+    [chaseRule],
+  );
+
+  const elapsed = await tickAutomations(ws.id!, pool);
+  const commentsAfter = await one(
+    `SELECT count(*) AS n FROM comments WHERE object_id = $1 AND deleted_at IS NULL`,
+    [autoTask.id],
+  );
+
+  report(
+    "when the delay elapses the conditions are asked again, not remembered",
+    elapsed.outcomes[0] === "skipped_conditions" &&
+      Number(commentsAfter?.n) === Number(commentsBefore?.n)
+      ? null
+      : `outcome ${JSON.stringify(elapsed.outcomes)}, comments ${String(commentsBefore?.n)} → ${String(commentsAfter?.n)}`,
+  );
+
+  // And the other half, or the check above would pass against a rule that never
+  // does anything: still in review when the delay elapses, so it comments.
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: autoTask.id!,
+        field: "statusId",
+        from: autoTodo.id!,
+        to: inReview.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await tickAutomations(ws.id!, pool);
+  await pool.query(
+    `UPDATE automation_runs SET run_after = now() - interval '1 minute'
+     WHERE automation_id = $1 AND status = 'pending'`,
+    [chaseRule],
+  );
+
+  const stillOpen = await tickAutomations(ws.id!, pool);
+  const chased = await one(
+    `SELECT count(*) AS n FROM comments WHERE object_id = $1 AND deleted_at IS NULL`,
+    [autoTask.id],
+  );
+
+  report(
+    "and it does act when the task is still as the rule asked",
+    stillOpen.outcomes[0] === "success" && Number(chased?.n) > Number(commentsAfter?.n)
+      ? null
+      : `outcome ${JSON.stringify(stillOpen.outcomes)}, comments ${String(commentsAfter?.n)} → ${String(chased?.n)}`,
+  );
+
+  await setAutomationEnabled(chaseRule, false, { actorId: owner.id!, connection: pool });
+  await pool.query(`UPDATE tasks SET status_id = $2 WHERE id = $1`, [autoTask.id, autoTodo.id]);
+
   report(
     "the automation actor is made once and found thereafter",
     (await ensureAutomationActor(ws.id!, pool)) === (await ensureAutomationActor(ws.id!, pool))

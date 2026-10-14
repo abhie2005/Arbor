@@ -81,6 +81,14 @@ export interface AutomationRule {
   actions: AutomationAction[];
   /** "tasks" | "subtasks" | "both", matching the column of the same name. */
   appliesTo: AppliesTo;
+  /**
+   * How long to wait before acting, in seconds. Zero is immediately (D-128).
+   *
+   * **The delay is the rule's, not the trigger's.** What fires a rule and how
+   * long it then waits are different questions, and conflating them would put a
+   * duration inside the object that gets matched against an activity row.
+   */
+  delaySeconds: number;
 }
 
 export type AppliesTo = "tasks" | "subtasks" | "both";
@@ -359,6 +367,17 @@ function currentRelation(task: TaskSnapshot, relation: RelationKind): readonly s
 }
 
 /**
+ * The longest a rule may wait.
+ *
+ * Thirty days, because a delay is a promise the system has to keep: a run
+ * queued for next year is a row that has to survive every migration and every
+ * change to what an action means between now and then. A month is long enough
+ * for "chase this if it is still open" and short enough that a pending row is
+ * never archaeology.
+ */
+export const MAX_DELAY_SECONDS = 30 * 24 * 60 * 60;
+
+/**
  * How far a cascade may go before it is refused.
  *
  * Three, because the loops worth allowing are short — a rule that moves a task
@@ -437,7 +456,7 @@ export function parseAutomationRule(raw: unknown): AutomationRule {
     throw new AutomationError("Conditions must be a filter group");
   }
 
-  return { trigger, conditions, actions, appliesTo };
+  return { trigger, conditions, actions, appliesTo, delaySeconds: parseDelay(value.delaySeconds) };
 }
 
 const TRIGGER_KINDS = [
@@ -536,6 +555,26 @@ function parseActions(raw: unknown): AutomationAction[] {
         throw new AutomationError(`Not an action: ${String(value.kind)}`);
     }
   });
+}
+
+/**
+ * A delay, in whole seconds.
+ *
+ * Rejecting a fractional or negative delay rather than clamping it: a rule
+ * saved with `-1` meant something, and quietly storing `0` turns "act an hour
+ * before" — which this cannot express — into "act immediately", which is a
+ * different rule running in production than the one somebody wrote.
+ */
+function parseDelay(raw: unknown): number {
+  if (raw === undefined || raw === null) return 0;
+  if (typeof raw !== "number" || !Number.isInteger(raw)) {
+    throw new AutomationError("A delay is a whole number of seconds");
+  }
+  if (raw < 0) throw new AutomationError("A delay cannot be negative");
+  if (raw > MAX_DELAY_SECONDS) {
+    throw new AutomationError(`A delay may be at most ${MAX_DELAY_SECONDS} seconds`);
+  }
+  return raw;
 }
 
 function parseAppliesTo(raw: unknown): AppliesTo {

@@ -131,9 +131,10 @@ export async function loadAutomations(
     applies_to: string;
     is_enabled: boolean;
     created_at: Date;
+    delay_seconds: number;
   }>(
     `SELECT id, workspace_id, container_id, name, trigger, conditions, actions, applies_to,
-            is_enabled, created_at
+            is_enabled, created_at, delay_seconds
      FROM automations WHERE workspace_id = $1 AND is_enabled = true`,
     [workspaceId],
   );
@@ -153,6 +154,7 @@ export async function loadAutomations(
           conditions: row.conditions,
           actions: row.actions,
           appliesTo: row.applies_to,
+          delaySeconds: row.delay_seconds,
         }),
       });
     } catch {
@@ -290,11 +292,13 @@ async function enqueue(
   const depth = (event.causedBy?.depth ?? -1) + 1;
   const settled = verdict !== "run";
 
+  // A refusal is settled now whatever the delay says: scheduling a refusal for
+  // three days' time would leave a row that looks pending and never runs.
   const result = await connection.query(
     `INSERT INTO automation_runs
        (workspace_id, automation_id, triggered_by_activity_id, idempotency_key, depth, status,
         run_after, finished_at)
-     VALUES ($1, $2, $3, $4, $5, $6, now(), $7)
+     VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(secs => $8), $7)
      ON CONFLICT (idempotency_key) DO NOTHING`,
     [
       rule.workspaceId,
@@ -304,6 +308,7 @@ async function enqueue(
       depth,
       settled ? verdict : "pending",
       settled ? new Date().toISOString() : null,
+      settled ? 0 : rule.rule.delaySeconds,
     ],
   );
 
@@ -623,6 +628,7 @@ export async function createAutomation(
     conditions?: unknown;
     actions: unknown;
     appliesTo?: string;
+    delaySeconds?: number;
   },
   context: ConfigContext,
 ): Promise<string> {
@@ -635,6 +641,7 @@ export async function createAutomation(
       conditions: input.conditions,
       actions: input.actions,
       appliesTo: input.appliesTo,
+      delaySeconds: input.delaySeconds,
     });
   } catch (error) {
     throw new ConfigError(error instanceof AutomationError ? error.message : String(error));
@@ -646,8 +653,9 @@ export async function createAutomation(
   return inTransaction(context, async (client) => {
     const created = await client.query<{ id: string }>(
       `INSERT INTO automations
-         (workspace_id, container_id, name, trigger, conditions, actions, applies_to, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         (workspace_id, container_id, name, trigger, conditions, actions, applies_to, created_by,
+          delay_seconds)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id`,
       [
         input.workspaceId,
@@ -658,6 +666,7 @@ export async function createAutomation(
         JSON.stringify(rule.actions),
         rule.appliesTo,
         context.actorId,
+        rule.delaySeconds,
       ],
     );
 

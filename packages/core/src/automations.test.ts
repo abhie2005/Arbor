@@ -5,6 +5,7 @@ import {
   type AutomationRule,
   type TaskSnapshot,
   AutomationError,
+  MAX_DELAY_SECONDS,
   MAX_DEPTH,
   compileActions,
   depthOf,
@@ -25,6 +26,7 @@ const rule = (over: Partial<AutomationRule> = {}): AutomationRule => ({
   conditions: { op: "AND", conditions: [] },
   actions: [{ kind: "archive" }],
   appliesTo: "tasks",
+  delaySeconds: 0,
   ...over,
 });
 
@@ -334,6 +336,46 @@ describe("validating a rule before it is stored", () => {
 
   it("refuses a scope that is not one", () => {
     expect(() => parseAutomationRule({ ...valid, appliesTo: "everything" })).toThrow(
+      AutomationError,
+    );
+  });
+});
+
+describe("a delay is the rule's, and it is validated before it is stored", () => {
+  const valid = {
+    trigger: { kind: "fieldChanged", field: "statusId" },
+    actions: [{ kind: "archive" }],
+  };
+
+  it("defaults to acting immediately, which is what every rule did before", () => {
+    expect(parseAutomationRule(valid).delaySeconds).toBe(0);
+  });
+
+  it("keeps a delay somebody asked for", () => {
+    expect(parseAutomationRule({ ...valid, delaySeconds: 3 * 24 * 3600 }).delaySeconds).toBe(259200);
+  });
+
+  // Clamping a negative delay to zero would turn a rule somebody wrote badly
+  // into a *different* rule running in production, which is worse than refusing.
+  it("refuses a negative delay rather than quietly making it immediate", () => {
+    expect(() => parseAutomationRule({ ...valid, delaySeconds: -1 })).toThrow(AutomationError);
+  });
+
+  it("refuses a fractional one, because the column is whole seconds", () => {
+    expect(() => parseAutomationRule({ ...valid, delaySeconds: 1.5 })).toThrow(AutomationError);
+  });
+
+  it("refuses one longer than a pending row should outlive", () => {
+    expect(() =>
+      parseAutomationRule({ ...valid, delaySeconds: MAX_DELAY_SECONDS + 1 }),
+    ).toThrow(AutomationError);
+    expect(parseAutomationRule({ ...valid, delaySeconds: MAX_DELAY_SECONDS }).delaySeconds).toBe(
+      MAX_DELAY_SECONDS,
+    );
+  });
+
+  it("refuses something that is not a number at all", () => {
+    expect(() => parseAutomationRule({ ...valid, delaySeconds: "3 days" })).toThrow(
       AutomationError,
     );
   });

@@ -230,8 +230,13 @@ Each is a decision entry, and the reasoning is there rather than here:
 matching, action compilation, the guards — 37 unit tests),
 `packages/db/src/automations.ts` (the scan, the claim, execution, rule CRUD),
 and `apps/web/src/server/automation-loop.ts` — **the drain runs in the server
-process**, started from `/api/health` and the root layout. Migrations 0013 and
-0014. Eighteen `db:smoke` checks, verified across consecutive runs.
+process**, started from `/api/health` and the root layout. Migrations 0013, 0014
+and 0015. Twenty-three `db:smoke` checks, verified across consecutive runs.
+
+**Delays work** (D-128): `delaySeconds` on a rule becomes `run_after`, and the
+conditions are asked when the run *executes* rather than when it was queued —
+which is what "in 3 days, if still open" actually means. Both halves are
+checked: still open and it acts, no longer open and it skips.
 
 **It is verified running, not only tested**: arm a rule, make one change, call
 nothing, and the run appears — right task, written as the service account,
@@ -250,11 +255,6 @@ the loop there.
   The screen wants the filter bar's own menus for conditions, since conditions
   *are* a `FilterGroup` and `filterable.ts` already publishes what may be
   offered.
-- **Only immediate triggers.** `run_after` is honoured by the claim and proven
-  by a check, but nothing *sets* it to the future — "in 3 days, if still open"
-  needs a delay on the rule, and a re-check of conditions at execution time,
-  which the executor already does. This is the smallest remaining piece of the
-  automation half and the one the schema was most obviously drawn for.
 - **A run that fails is not retried.** `attempts` is incremented by the claim
   and nothing reads it: a `failed` run stays failed. Deliberate for now —
   retrying a half-applied batch needs a rule about which actions already

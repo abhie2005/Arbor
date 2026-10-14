@@ -39,6 +39,16 @@ export const automations = pgTable(
     actions: jsonb("actions").$type<unknown[]>().notNull().default([]),
     /** "tasks" | "subtasks" | "both" */
     appliesTo: text("applies_to").notNull().default("tasks"),
+    /**
+     * How long to wait before acting, in seconds (D-128).
+     *
+     * Zero means immediately, which is what every rule did before this column
+     * existed. A delayed run is a row with `run_after` in the future, and its
+     * conditions are evaluated when it *runs* rather than when it was queued —
+     * which is the whole point: "in 3 days, if still open" is a question about
+     * the task in three days' time.
+     */
+    delaySeconds: integer("delay_seconds").notNull().default(0),
     isEnabled: boolean("is_enabled").notNull().default(true),
     createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
