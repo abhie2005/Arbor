@@ -98,7 +98,7 @@ find more than the two above.
 
 | Area | State |
 |---|---|
-| **Schema** | 43 tables, 9 enums, 119 indexes. Migrated (0000–0011) and seeded. `pg_trgm` is required from 0011 (D-113). |
+| **Schema** | 45 tables, 10 enums, 126 indexes. Migrated (0000–0015) and seeded. `pg_trgm` is required from 0011 (D-113); 0013–0015 are the automation runtime, its activity kind, and a rule's delay. |
 | **View compiler** | Definition → one parameterized SQL query. Filters, grouping, sorting, group counts, permission scoping. Custom fields resolve through a required field catalog. |
 | **Hierarchy** | Config inheritance, effective privacy, denormalized ancestors, move-legality. |
 | **Ordering** | Fractional indices — one row written per drag. |
@@ -152,18 +152,21 @@ all 7 of its checks pass.
 
 ## What is deliberately not built
 
-- `apps/realtime` and `apps/worker` — **not even directories any more.** The
-  README names them; that is the shape being decided, not code that exists.
-  The transport question is now settled and settled against `apps/realtime`:
-  Postgres carries changes (D-090), presence within a process (D-092), presence
-  between them (D-100) and now **document updates** (D-112), all on one
-  connection per process. A collaborative editor was the last thing that might
-  have required a gateway and it did not. `apps/worker` still has nothing to
-  run.
-- `packages/sdk` — empty. Needed once there's an API worth a typed client.
-- Chat and AI. **Automations are next** (Phase 10) and their tables already
-  exist unread; **docs are built** — see the table above and the gaps below for
-  what that does and does not mean.
+- `apps/realtime` and `apps/worker` — **not directories, and the README no
+  longer says they are.** The transport question is settled against
+  `apps/realtime`: Postgres carries changes (D-090), presence within a process
+  (D-092), presence between them (D-100) and document updates (D-112), all on
+  one connection per process. A collaborative editor was the last thing that
+  might have required a gateway and it did not.
+- **`apps/worker` is now a deployment decision rather than a missing piece.**
+  The automations it was meant to run do run — the queue is a table and the
+  drain is a loop in the web process (D-125). Nothing in the engine knows which
+  process drains it, so lifting that loop out later is configuration, not a
+  rewrite, and the app still reads three environment variables rather than four.
+- `packages/sdk` — also not a directory. Needed once there is an API worth a
+  typed client, which is the half of Phase 10 that has nothing built against it.
+- Chat and AI. **Automations are built** (D-124 → D-129): the engine, the
+  delay, and the screen. Forms and the public API are what is left of Phase 10.
 - Derived field types (`formula`, `rollup`, `automatic_progress`) are declared
   and filterable, but nothing computes them yet. Time tracking did **not**
   change this: a tracked total is summed at read time, so the question of
@@ -188,10 +191,10 @@ sentence, what its last run did, and how much of the month's quota is gone.
 **Forms and the public API still have nothing built against them** — see "Where
 Phase 10 actually is" below.
 
-Correcting this file: it used to say `packages/sdk` was empty and `apps/worker`
-had had nothing to run since Phase 1. **Neither directory exists.** The
-workspaces are `apps/web` and `packages/{core,db,ui}`, and that is all there has
-ever been.
+The workspaces are `apps/web` and `packages/{core,db,ui}`, and that is all there
+has ever been — this file used to claim `packages/sdk` was an empty directory
+and `apps/worker` had had nothing to run since Phase 1, and the README repeated
+it. Both say the truth now.
 
 Two things that were owed before Phase 9 are done and are why the docs screen
 was short rather than long:
@@ -776,9 +779,10 @@ the ones it does not cover, because they are reading rather than reference:
 - ~~**Sharing is a workspace role, and should be a container permission.**~~
   Done (D-108, D-109). `resolveAccess` emits a row per container, the sharing
   actions take `manage` on the one they name, and making a container private
-  leaves the actor a grant so closing the door does not lock them out. What is
-  still open is the *screen*: `/settings/sharing` shows every container in the
-  workspace to anybody who opens it.
+  leaves the actor a grant so closing the door does not lock them out. The
+  *screen* was the half left open and is closed too (D-123): `/settings/sharing`
+  lists what the viewer may share rather than what exists, and
+  `/settings/automations` was built the same way from the start.
 - ~~**Notifications inside the transaction, or outside it?**~~ Inside, decided
   before the fan-out was written: only directly named people get a row, so the
   cost is proportional to who was named rather than to who is watching. What is

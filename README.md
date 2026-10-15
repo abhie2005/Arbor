@@ -17,9 +17,13 @@ and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 > Documents are built and editable — a page's body is a CRDT holding the same
 > block tree comments use, and ⌘Z inside one takes back your own typing without
 > ever reaching a colleague's. Search reads across tasks and pages, scoped by
-> the same permission join everything else uses. Chat, automations and AI are
-> not. There is now an AWS deployment (Terraform and a container image) that has
-> been validated but never applied.
+> the same permission join everything else uses. Automations run and have a
+> screen: a rule is a trigger, the filter bar's own conditions and actions that
+> compile to the same operations a person's click does, it acts as a service
+> account the permission model already knows, and a delayed rule asks its
+> conditions when it acts rather than when it was queued. Forms, a public API,
+> chat and AI are not built. The AWS deployment (Terraform and a container
+> image) has been applied to a real account once and destroyed again.
 > **[docs/STATUS.md](docs/STATUS.md) is the current state and where to pick up.**
 
 ---
@@ -45,10 +49,11 @@ demo password.
 Verify the stack end to end:
 
 ```bash
-npm test               # 522 unit tests, no database needed
-npm run db:smoke       # 230 checks against real Postgres: compiled queries,
-                       # permission scoping, mutations, and the activity log
-npm run check:actions  # 152 checks that POST what a button click posts, then
+npm test               # 582 unit tests, no database needed
+npm run db:smoke       # 278 checks against real Postgres: compiled queries,
+                       # permission scoping, mutations, the activity log, and
+                       # the automation engine end to end
+npm run check:actions  # 162 checks that POST what a button click posts, then
                        # assert against Postgres — needs a dev server running
 npm run check:search   # 11 GETs against /search, asserting what the screen
                        # renders — runs against a dev server, the container
@@ -87,14 +92,12 @@ The [architecture teardown](docs/) covers the reasoning in full.
 
 ```
 apps/
-  web/          Next.js — UI and server actions
-  realtime/     ·  WebSocket gateway, presence, Yjs sync
-  worker/       ·  automations, digests, access-index rebuilds
+  web/          Next.js — UI, server actions, and the automation drain
 packages/
-  core/         view compiler, field types, status rules, ordering — no I/O
+  core/         view compiler, field types, status rules, ordering,
+                the document format, the rule engine — no I/O
   db/           Drizzle schema, migrations, seed, configuration services
   ui/           design tokens
-  sdk/          ·  typed API client
 infra/
   docker/       compose.yml — the self-host path
   terraform/    VPC, RDS, ECS Fargate, ALB, ECR — 45 resources
@@ -102,17 +105,25 @@ Dockerfile      two targets: the app, and a one-off migration task
 docs/decisions/ ADRs
 ```
 
-**`·` marks a directory that is empty**, and one of them is now empty on
-purpose rather than pending. `realtime` was going to be a WebSocket gateway;
-Postgres turned out to carry it — changes ride `LISTEN`/`NOTIFY` announced
-inside the transaction that made them, presence *is* the open connection, and
-both cross process boundaries on the same channel. There is nothing left for a
-second deployable to do. `worker` still earns its keep once there are
-automations to run, and `sdk` once there is an API worth a typed client.
-`infra/terraform` is no longer one of them: it provisions the containers,
-database, load balancer and registries of the topology below, though the rows
-marked *(designed for)* there — object storage, queue, mail, cache — are still
-design rather than code (D-114).
+**That is the whole of it — one app and three packages.** Earlier versions of
+this file listed `apps/realtime`, `apps/worker` and `packages/sdk` as empty
+directories waiting to be filled. They are not empty; they were never created,
+and two of the three are no longer wanted:
+
+- **`realtime` was going to be a WebSocket gateway.** Postgres carried it
+  instead — changes ride `LISTEN`/`NOTIFY` announced inside the transaction
+  that made them, presence *is* the open connection, and both cross process
+  boundaries on the same channel. There is nothing left for a second deployable
+  to do.
+- **`worker` was going to run the automations.** They run, and the queue is a
+  table: a rule due in three days is a row with `run_after` three days out, and
+  the drain is a loop in the web process that claims work with
+  `FOR UPDATE SKIP LOCKED`. Nothing in the engine knows which process drains
+  it, so moving that loop into a worker service is a deployment decision later
+  rather than a rewrite — and the app still reads three environment variables
+  instead of growing a fourth (D-125).
+- **`sdk` waits on the public API**, which is the half of phase 10 that has
+  nothing built against it yet.
 
 `packages/core` holds the things hardest to get right — the view compiler, the
 field type system, status resolution, ordering, and the document format
@@ -225,7 +236,25 @@ back would be worse than no nudge.
       links a page or a task: one more embed kind in the same format, which
       the editor's offset arithmetic absorbed without a change, plus an edge
       table so the reverse question has an index to answer it.
-- [ ] **10 — Automations, forms, public API.**
+- [ ] **10 — Automations, forms, public API.** Automations are built and have a
+      screen; forms and the API do not exist yet. The engine reuses three
+      vocabularies rather than inventing any: a trigger names its verb by
+      calling the same function that *writes* the activity log, so a rename
+      drags every rule along with it instead of quietly unhooking them;
+      conditions are a `FilterGroup` evaluated by the view compiler, so custom
+      fields and nested AND/OR arrive for free and a rule cannot disagree with
+      a saved view about what "overdue and unassigned" means; and an action
+      compiles to an `Operation`, so the activity row comes free and the answer
+      to "whose undo stack does a robot's write land in" is nobody's, by
+      construction. The queue is a table and a delay is a column on the rule —
+      "in 3 days, if still open" works because the conditions are asked when
+      the run executes rather than when it was queued. A rule acts as a
+      per-workspace service account: a real member the access index knows, not
+      a synthetic id, which is what lets history name it and permission checks
+      treat it like anybody else. `/settings/automations` writes one out of
+      parts that already existed — the sharing screen's container tree, the
+      filter bar's condition menus — and takes `manage` on the container a rule
+      is scoped to rather than a workspace role.
 
 Access control moved ahead of collaboration deliberately: every collaborative
 feature fans out to *whoever can see a thing*, and building that fan-out on a
@@ -258,5 +287,6 @@ density on import. Record every import in
 
 ## License
 
-[AGPL-3.0-only](LICENSE). The client SDK in `packages/sdk` is Apache-2.0 so it
-can be embedded freely.
+[AGPL-3.0-only](LICENSE). The client SDK will be Apache-2.0 when there is one,
+so it can be embedded freely — `packages/sdk` does not exist yet and waits on
+the public API.
