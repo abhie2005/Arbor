@@ -35,6 +35,7 @@
 
 import { type Operation, type TaskField, activityVerb } from "./mutations";
 import { type RichDoc, parseRichText } from "./richtext";
+import type { ValueInput } from "./views/filterable";
 import type { FilterGroup } from "./views/types";
 
 export class AutomationError extends Error {}
@@ -581,4 +582,263 @@ function parseAppliesTo(raw: unknown): AppliesTo {
   if (raw === undefined || raw === null) return "tasks";
   if (raw === "tasks" || raw === "subtasks" || raw === "both") return raw;
   throw new AutomationError(`Not a scope: ${String(raw)}`);
+}
+
+/**
+ * What an automation form may offer.
+ *
+ * **The same bet `filterable.ts` makes, for the other half of a rule.**
+ * `parseAutomationRule` already refuses a trigger on a field no operation can
+ * set, and `verbFor` already refuses a trigger nothing emits — but refusing is
+ * the last line, not the interface. A menu offering an option the server will
+ * reject has already failed whoever used it.
+ *
+ * So the knowledge that powers those refusals is published here, and the
+ * control each value needs is named with `ValueInput` — the filter bar's own
+ * vocabulary — so a status is a status menu in a condition and in an action,
+ * from one declaration rather than two that drift.
+ */
+
+/** A field a rule may watch or write, and the control its value needs. */
+export interface AutomatableField {
+  /** The operation's name (`statusId`), which is what a rule stores. */
+  field: TaskField;
+  label: string;
+  input: ValueInput;
+}
+
+/**
+ * The fields a form offers, which is deliberately narrower than what a rule
+ * may contain.
+ *
+ * `parentTaskId` is absent, and `position` with it. Both are settable by an
+ * operation and both parse, so a rule written against the API keeps working —
+ * the omission is this menu's, not the rule language's, exactly as `position`
+ * is absent from `BUILTIN_FILTERABLE`. The reason is that neither has a control
+ * to offer: "parent task" needs a task picker nobody has built, and a uuid in a
+ * text box is not an interface, it is a way to store a typo.
+ *
+ * `timeEstimateMs` says its unit out loud because the column is milliseconds
+ * and a box labelled "Estimate" invites hours. A duration control belongs in
+ * `ValueInput` beside `date`, which means teaching the filter bar about it in
+ * the same change — a separate job, not a side effect of this one.
+ */
+export const AUTOMATABLE_FIELDS: readonly AutomatableField[] = [
+  { field: "name", label: "Name", input: "text" },
+  { field: "statusId", label: "Status", input: "status" },
+  { field: "priority", label: "Priority", input: "priority" },
+  { field: "dueAt", label: "Due date", input: "date" },
+  { field: "startAt", label: "Start date", input: "date" },
+  { field: "points", label: "Points", input: "number" },
+  { field: "timeEstimateMs", label: "Estimate (ms)", input: "number" },
+  { field: "taskTypeId", label: "Task type", input: "taskType" },
+  { field: "homeListId", label: "List", input: "container" },
+];
+
+/** The control a relation's target needs: a person for two of them, a tag for one. */
+export function relationInput(relation: RelationKind): ValueInput {
+  return relation === "tag" ? "tag" : "user";
+}
+
+export const RELATION_LABELS: Record<RelationKind, string> = {
+  assignee: "Assignee",
+  watcher: "Watcher",
+  tag: "Tag",
+};
+
+/**
+ * What else a form must ask for once a kind is chosen.
+ *
+ * Three answers rather than a boolean, because the follow-up question differs:
+ * a field trigger needs a field *and then* the control that field implies,
+ * while a relation trigger needs a relation and then a person or a tag.
+ */
+export type AutomationNeeds = "none" | "field" | "relation" | "text";
+
+export interface AutomationTriggerOption {
+  kind: AutomationTrigger["kind"];
+  label: string;
+  needs: AutomationNeeds;
+}
+
+export const AUTOMATION_TRIGGERS: readonly AutomationTriggerOption[] = [
+  { kind: "fieldChanged", label: "A field changes", needs: "field" },
+  { kind: "taskCreated", label: "A task is created", needs: "none" },
+  { kind: "taskArchived", label: "A task is archived", needs: "none" },
+  { kind: "commentAdded", label: "A comment is added", needs: "none" },
+  { kind: "relationAdded", label: "Somebody or something is added", needs: "relation" },
+  { kind: "relationRemoved", label: "Somebody or something is removed", needs: "relation" },
+];
+
+export interface AutomationActionOption {
+  kind: AutomationAction["kind"];
+  label: string;
+  needs: AutomationNeeds;
+}
+
+export const AUTOMATION_ACTIONS: readonly AutomationActionOption[] = [
+  { kind: "setField", label: "Set a field", needs: "field" },
+  { kind: "addRelation", label: "Add", needs: "relation" },
+  { kind: "removeRelation", label: "Remove", needs: "relation" },
+  { kind: "comment", label: "Comment", needs: "text" },
+  { kind: "archive", label: "Archive the task", needs: "none" },
+];
+
+export const APPLIES_TO_LABELS: Record<AppliesTo, string> = {
+  tasks: "Tasks only",
+  subtasks: "Subtasks only",
+  both: "Tasks and subtasks",
+};
+
+/**
+ * The delays a form offers, in seconds.
+ *
+ * A menu rather than a number and a unit, because a delay is one of a handful
+ * of real answers — now, later today, in a few days — and the arithmetic of
+ * "90 minutes" is a worse version of "in 2 hours". Every entry is a whole
+ * number of seconds inside `MAX_DELAY_SECONDS`, so nothing here can be refused
+ * by `parseDelay`. A rule needing some other delay can still carry one: the
+ * column is seconds and the parser takes any of them.
+ */
+export const DELAY_CHOICES: readonly { seconds: number; label: string }[] = [
+  { seconds: 0, label: "Immediately" },
+  { seconds: 60 * 15, label: "After 15 minutes" },
+  { seconds: 60 * 60, label: "After 1 hour" },
+  { seconds: 60 * 60 * 24, label: "After 1 day" },
+  { seconds: 60 * 60 * 24 * 3, label: "After 3 days" },
+  { seconds: 60 * 60 * 24 * 7, label: "After 7 days" },
+  { seconds: MAX_DELAY_SECONDS, label: "After 30 days" },
+];
+
+/**
+ * A delay in words, for a rule whose delay is not one of the choices.
+ *
+ * Falls through to seconds rather than rounding: a rule saved with 90 seconds
+ * through the API should read as 90 seconds, not as "after 1 minute".
+ */
+export function describeDelay(seconds: number): string {
+  const choice = DELAY_CHOICES.find((option) => option.seconds === seconds);
+  if (choice) return choice.label;
+  if (seconds % (60 * 60 * 24) === 0) return `After ${seconds / (60 * 60 * 24)} days`;
+  if (seconds % (60 * 60) === 0) return `After ${seconds / (60 * 60)} hours`;
+  if (seconds % 60 === 0) return `After ${seconds / 60} minutes`;
+  return `After ${seconds} seconds`;
+}
+
+/**
+ * A rule in one sentence.
+ *
+ * **Here rather than in the component** so the list and the form's preview
+ * cannot describe the same rule differently, and so the phrasing is unit
+ * tested — it is the only part of this screen that says what a rule *does*,
+ * and a sentence that reads wrongly is indistinguishable from a rule that is
+ * wrong.
+ *
+ * `names` resolves an id to something a person recognises. It takes the
+ * `ValueInput` as well as the value because an id alone does not say which
+ * table it came from — the same uuid shape is a status, a person or a list.
+ */
+export function describeRule(
+  rule: AutomationRule,
+  names: (input: ValueInput, value: unknown) => string,
+): string {
+  const parts = [describeTrigger(rule.trigger, names)];
+
+  // One condition makes AND and OR the same rule, so they say the same thing;
+  // with more than one the combinator is the difference between two rules and
+  // the sentence has to carry it.
+  const conditions = rule.conditions.conditions?.length ?? 0;
+  if (conditions === 1) {
+    parts.push("if 1 condition matches");
+  } else if (conditions > 1) {
+    parts.push(
+      rule.conditions.op === "OR"
+        ? `if any of ${conditions} conditions match`
+        : `if ${conditions} conditions match`,
+    );
+  }
+
+  if (rule.delaySeconds > 0) parts.push(describeDelay(rule.delaySeconds).toLowerCase());
+
+  parts.push(rule.actions.map((action) => describeAction(action, names)).join(", then "));
+
+  return parts.join(", ");
+}
+
+function describeTrigger(
+  trigger: AutomationTrigger,
+  names: (input: ValueInput, value: unknown) => string,
+): string {
+  switch (trigger.kind) {
+    case "taskCreated":
+      return "When a task is created";
+
+    case "taskArchived":
+      return "When a task is archived";
+
+    case "commentAdded":
+      return "When a comment is added";
+
+    case "fieldChanged": {
+      const field = AUTOMATABLE_FIELDS.find((candidate) => candidate.field === trigger.field);
+      const label = field?.label ?? trigger.field;
+      const input = field?.input ?? "text";
+      // The narrowings read as the sentence they are: no `to` means any change,
+      // which is a different rule and has to look like one.
+      if ("to" in trigger && "from" in trigger) {
+        return `When ${label} changes from ${names(input, trigger.from)} to ${names(input, trigger.to)}`;
+      }
+      if ("to" in trigger) return `When ${label} becomes ${names(input, trigger.to)}`;
+      if ("from" in trigger) return `When ${label} stops being ${names(input, trigger.from)}`;
+      return `When ${label} changes`;
+    }
+
+    case "relationAdded":
+    case "relationRemoved": {
+      const verb = trigger.kind === "relationAdded" ? "is added" : "is removed";
+      const noun = RELATION_LABELS[trigger.relation].toLowerCase();
+      if (trigger.targetId) {
+        return `When ${names(relationInput(trigger.relation), trigger.targetId)} ${verb} as ${noun}`;
+      }
+      return `When any ${noun} ${verb}`;
+    }
+
+    default: {
+      const exhaustive: never = trigger;
+      throw new AutomationError(`No description for trigger: ${JSON.stringify(exhaustive)}`);
+    }
+  }
+}
+
+function describeAction(
+  action: AutomationAction,
+  names: (input: ValueInput, value: unknown) => string,
+): string {
+  switch (action.kind) {
+    case "setField": {
+      const field = AUTOMATABLE_FIELDS.find((candidate) => candidate.field === action.field);
+      return `set ${field?.label ?? action.field} to ${names(field?.input ?? "text", action.to)}`;
+    }
+
+    case "addRelation":
+      return `add ${names(relationInput(action.relation), action.targetId)} as ${RELATION_LABELS[
+        action.relation
+      ].toLowerCase()}`;
+
+    case "removeRelation":
+      return `remove ${names(relationInput(action.relation), action.targetId)} as ${RELATION_LABELS[
+        action.relation
+      ].toLowerCase()}`;
+
+    case "comment":
+      return `comment “${action.text}”`;
+
+    case "archive":
+      return "archive the task";
+
+    default: {
+      const exhaustive: never = action;
+      throw new AutomationError(`No description for action: ${JSON.stringify(exhaustive)}`);
+    }
+  }
 }

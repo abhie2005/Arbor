@@ -116,10 +116,16 @@ import {
   searchDocs,
 } from "./documents";
 import {
+  MONTHLY_RUN_QUOTA,
+  automationQuota,
   claimDueRuns,
   createAutomation,
   drainAutomations,
   ensureAutomationActor,
+  loadAutomation,
+  loadAutomations,
+  loadAutomationsForContainers,
+  recentAutomationRuns,
   scanForAutomations,
   setAutomationEnabled,
   tickAutomations,
@@ -3792,6 +3798,14 @@ async function main() {
   await pool.query(`DELETE FROM automation_runs WHERE workspace_id = $1`, [ws.id]);
   await pool.query(`DELETE FROM automations WHERE workspace_id = $1`, [ws.id]);
   await pool.query(`DELETE FROM automation_cursors WHERE workspace_id = $1`, [ws.id]);
+  // **And the service account**, so every run exercises the path that creates
+  // one. Letting it survive between runs is what hid a missing index rebuild
+  // (D-129): the actor stayed, a rebuild earlier in this file had already
+  // indexed it, and the check below passed while a fresh workspace's robot
+  // reached nothing and skipped every conditional rule.
+  await pool.query(`DELETE FROM users WHERE kind = 'service' AND email = $1`, [
+    `automation+${ws.id}@service.arbor.local`,
+  ]);
   await pool.query(`UPDATE tasks SET status_id = $2 WHERE id = $1`, [autoTask.id, autoTodo.id]);
   await pool.query(`DELETE FROM task_watchers WHERE task_id = $1 AND user_id = $2`, [
     autoTask.id,
@@ -4333,6 +4347,84 @@ async function main() {
     (await ensureAutomationActor(ws.id!, pool)) === (await ensureAutomationActor(ws.id!, pool))
       ? null
       : "a second service account was created",
+  );
+
+  // --- what the screen reads, which is not what the engine reads -------------
+  //
+  // The engine's loader answers "every rule that could fire now", and it is
+  // right to skip a disabled rule and to drop one that no longer parses. A
+  // screen doing either would be unusable in exactly the moments it matters: a
+  // disabled rule is the first thing somebody looks for when a rule is not
+  // firing, and an unparseable one cannot be read, re-enabled or deleted if it
+  // is not on the page. `chaseRule` is disabled by the line above, which makes
+  // it the fixture.
+  const forScreen = await loadAutomationsForContainers([autoList.id!], pool);
+  const forEngine = await loadAutomations(ws.id!, pool);
+
+  report(
+    "the screen's loader shows a disabled rule the engine's loader hides",
+    forScreen.some((row) => row.id === chaseRule) &&
+      !forEngine.some((row) => row.id === chaseRule)
+      ? null
+      : `screen ${forScreen.length} rules, engine ${forEngine.length}`,
+  );
+
+  const chaseRow = forScreen.find((row) => row.id === chaseRule);
+
+  report(
+    "and it carries the run counts, so a rule that never fired says so",
+    chaseRow && chaseRow.runs.total > 0 && chaseRow.lastRun !== null
+      ? null
+      : `counts ${JSON.stringify(chaseRow?.runs)}, last run ${String(chaseRow?.lastRun?.status)}`,
+  );
+
+  report(
+    "the last run it reports is the newest one",
+    chaseRow?.lastRun?.id === (await recentAutomationRuns(chaseRule, 1, pool))[0]?.id
+      ? null
+      : "the summary and the run list disagree about which run is last",
+  );
+
+  // Written past the service on purpose: this is the row nothing in this repo
+  // can create, and the point is what the screen does when it finds one.
+  await pool.query(`UPDATE automations SET trigger = '{"kind":"nonsense"}'::jsonb WHERE id = $1`, [
+    chaseRule,
+  ]);
+  const withBroken = await loadAutomationsForContainers([autoList.id!], pool);
+  const brokenRow = withBroken.find((row) => row.id === chaseRule);
+
+  report(
+    "a rule that no longer parses is shown with its problem, not dropped",
+    brokenRow && brokenRow.rule === null && (brokenRow.problem ?? "") !== ""
+      ? null
+      : `row ${brokenRow ? "present" : "missing"}, problem ${String(brokenRow?.problem)}`,
+  );
+
+  report(
+    "the engine still skips it, so one bad rule stops nothing",
+    (await loadAutomations(ws.id!, pool)).every((row) => row.id !== chaseRule)
+      ? null
+      : "an unparseable rule reached the engine",
+  );
+
+  // An action takes an automation id and the permission question is about the
+  // container. Reading it through the engine's loader would make disabling a
+  // rule a one-way door: nothing could authorize re-enabling it.
+  report(
+    "one rule can be found whatever its state, which is how an action authorizes",
+    (await loadAutomation(chaseRule, pool))?.containerId === autoList.id &&
+      (await loadAutomation(randomUUID(), pool)) === null
+      ? null
+      : "a disabled rule could not be looked up by id",
+  );
+
+  const quota = await automationQuota(ws.id!, pool);
+
+  report(
+    "the quota the screen shows is the count the refusal uses",
+    quota.quota === MONTHLY_RUN_QUOTA && quota.used > 0
+      ? null
+      : `used ${quota.used} of ${quota.quota}`,
   );
 
   await pool.query(`DELETE FROM automations WHERE workspace_id = $1`, [ws.id]);

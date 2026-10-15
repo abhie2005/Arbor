@@ -4,9 +4,16 @@ import {
   type AutomationEvent,
   type AutomationRule,
   type TaskSnapshot,
+  AUTOMATABLE_FIELDS,
+  AUTOMATION_ACTIONS,
+  AUTOMATION_TRIGGERS,
   AutomationError,
+  DELAY_CHOICES,
   MAX_DELAY_SECONDS,
   MAX_DEPTH,
+  describeDelay,
+  describeRule,
+  relationInput,
   compileActions,
   depthOf,
   idempotencyKeyFor,
@@ -377,6 +384,163 @@ describe("a delay is the rule's, and it is validated before it is stored", () =>
   it("refuses something that is not a number at all", () => {
     expect(() => parseAutomationRule({ ...valid, delaySeconds: "3 days" })).toThrow(
       AutomationError,
+    );
+  });
+});
+
+/**
+ * The catalog a form builds its menus from.
+ *
+ * The property worth testing is not the labels — it is that **everything
+ * offered is something the parser accepts**. A menu and a validator that
+ * disagree is the failure this catalog exists to prevent, and it is the one a
+ * reader of either file alone cannot see.
+ */
+describe("every option a form may offer is one the parser takes", () => {
+  it("offers only fields a rule may actually watch and write", () => {
+    for (const option of AUTOMATABLE_FIELDS) {
+      expect(() =>
+        parseAutomationRule({
+          trigger: { kind: "fieldChanged", field: option.field },
+          actions: [{ kind: "setField", field: option.field, to: null }],
+        }),
+      ).not.toThrow();
+    }
+  });
+
+  it("offers only triggers something emits", () => {
+    for (const option of AUTOMATION_TRIGGERS) {
+      const trigger =
+        option.needs === "field"
+          ? { kind: option.kind, field: "statusId" }
+          : option.needs === "relation"
+            ? { kind: option.kind, relation: "assignee" }
+            : { kind: option.kind };
+
+      const parsed = parseAutomationRule({ trigger, actions: [{ kind: "archive" }] });
+      expect(verbFor(parsed.trigger)).toBeTruthy();
+    }
+  });
+
+  it("offers only actions that compile to an operation", () => {
+    for (const option of AUTOMATION_ACTIONS) {
+      const action =
+        option.needs === "field"
+          ? { kind: option.kind, field: "statusId", to: DONE }
+          : option.needs === "relation"
+            ? { kind: option.kind, relation: "assignee", targetId: RILEY }
+            : option.needs === "text"
+              ? { kind: option.kind, text: "said something" }
+              : { kind: option.kind };
+
+      const parsed = parseAutomationRule({
+        trigger: { kind: "taskCreated" },
+        actions: [action],
+      });
+      expect(parsed.actions).toHaveLength(1);
+    }
+  });
+
+  it("offers only delays inside what the parser allows", () => {
+    for (const choice of DELAY_CHOICES) {
+      expect(
+        parseAutomationRule({
+          trigger: { kind: "taskCreated" },
+          actions: [{ kind: "archive" }],
+          delaySeconds: choice.seconds,
+        }).delaySeconds,
+      ).toBe(choice.seconds);
+    }
+  });
+
+  // A relation's target is a person for two of them and a tag for the third, and
+  // the control differs — offering a people picker for a tag is how a rule ends
+  // up storing a user id in a tag field.
+  it("names the control a relation's target needs", () => {
+    expect(relationInput("assignee")).toBe("user");
+    expect(relationInput("watcher")).toBe("user");
+    expect(relationInput("tag")).toBe("tag");
+  });
+});
+
+describe("a rule in one sentence", () => {
+  const names = (_input: string, value: unknown) =>
+    value === DONE ? "Done" : value === RILEY ? "Riley" : String(value);
+
+  it("reads as what it does", () => {
+    expect(
+      describeRule(
+        rule({
+          trigger: { kind: "fieldChanged", field: "statusId", to: DONE },
+          actions: [{ kind: "addRelation", relation: "watcher", targetId: RILEY }],
+        }),
+        names,
+      ),
+    ).toBe("When Status becomes Done, add Riley as watcher");
+  });
+
+  // The distinction the sentence has to carry: a trigger with no `to` fires on
+  // any change, and reading it as "becomes Done" would describe a rule nobody
+  // wrote.
+  it("says any change when the trigger is not narrowed", () => {
+    expect(describeRule(rule({ trigger: { kind: "fieldChanged", field: "statusId" } }), names)).toBe(
+      "When Status changes, archive the task",
+    );
+  });
+
+  it("counts conditions rather than restating them, and says which way they combine", () => {
+    const two: AutomationRule["conditions"]["conditions"] = [
+      { field: "priority", op: "eq", value: 1 },
+      { field: "name", op: "contains", value: "ship" },
+    ];
+
+    expect(describeRule(rule({ conditions: { op: "OR", conditions: two } }), names)).toBe(
+      "When Status becomes Done, if any of 2 conditions match, archive the task",
+    );
+    expect(describeRule(rule({ conditions: { op: "AND", conditions: two } }), names)).toBe(
+      "When Status becomes Done, if 2 conditions match, archive the task",
+    );
+  });
+
+  // One condition is the same rule either way, so saying "any of 1" would be a
+  // distinction the rule does not have.
+  it("says one condition without a combinator, and in the singular", () => {
+    for (const op of ["AND", "OR"] as const) {
+      expect(
+        describeRule(
+          rule({ conditions: { op, conditions: [{ field: "priority", op: "eq", value: 1 }] } }),
+          names,
+        ),
+      ).toBe("When Status becomes Done, if 1 condition matches, archive the task");
+    }
+  });
+
+  it("carries the delay, so a rule that waits does not read as one that does not", () => {
+    expect(describeRule(rule({ delaySeconds: 3 * 24 * 3600 }), names)).toBe(
+      "When Status becomes Done, after 3 days, archive the task",
+    );
+  });
+
+  it("describes a delay the menu does not offer rather than rounding it", () => {
+    expect(describeDelay(90)).toBe("After 90 seconds");
+    expect(describeDelay(2 * 60 * 60)).toBe("After 2 hours");
+    expect(describeDelay(60 * 60 * 24 * 10)).toBe("After 10 days");
+  });
+
+  it("joins several actions in the order they run", () => {
+    expect(
+      describeRule(
+        rule({
+          trigger: { kind: "taskCreated" },
+          actions: [
+            { kind: "addRelation", relation: "assignee", targetId: RILEY },
+            { kind: "comment", text: "picked this up" },
+          ],
+        }),
+        names,
+      ),
+    ).toBe(
+      "When a task is created, add Riley as assignee, then comment “picked this up”",
     );
   });
 });

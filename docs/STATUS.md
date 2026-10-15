@@ -1,8 +1,22 @@
 # Status — resume here
 
-Last updated 2026-10-11. Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-14. Repo: https://github.com/abhie2005/Arbor (`main`).
 
-**Phases 1–9 are done. Phase 10 is under way: automations run.**
+**Phases 1–9 are done. Phase 10 is under way: automations run, and now they
+have a screen.** A rule can be written, armed, disabled and deleted by a person
+rather than by a smoke test — the conditions are the filter bar's own menus,
+because a rule's conditions *are* a `FilterGroup` (D-129). Building it found the
+bug below, which is the kind only running the thing finds.
+
+**The automation service account was in no access index, so every rule with a
+condition skipped forever in a fresh workspace** (D-129). `ensureAutomationActor`
+created the account and its membership and never rebuilt the index; conditions
+are evaluated *as the robot* through the compiler, which joins `access_index`,
+so they matched nothing and recorded `skipped_conditions` — which reads as the
+condition being wrong. Fixed in the transaction that creates the account. Every
+check passed while this was broken because the actor survived between smoke
+runs and an earlier rebuild had already indexed it; the fixture now deletes it
+each run, so the path that creates one is exercised every time.
 Phase 9's roadmap line read "CRDT editor, nested pages, backlinks" and all
 three now exist: documents are editable *including the paragraphs that name
 somebody*, ⌘Z in one is the CRDT's and puts the caret back where the edit was,
@@ -60,6 +74,16 @@ these, which only display: an assignee picker offering somebody from another
 workspace is a real bug and a smaller one. They want `mentionableIn`, or its
 read-only equivalent.
 
+**And they now offer robots.** A workspace's automation account is a real
+`users` row (D-126), so it appears in the user switcher, in the assignee and
+watcher pickers on a task, and in the automations screen's own target menu —
+twice, if the database has been re-seeded, because the account's synthetic
+email carries the workspace id. Assigning a task to a service account is not
+harmful, it is just not a thing anybody means. Whatever fixes the five lists
+should take `kind = 'service'` with it; the decision to make is whether an
+automation may ever *name* one deliberately, which is why this is not simply a
+`WHERE kind <> 'service'` on every picker.
+
 **3. There is no second workspace anywhere, and that is why both of the above
 hide.** All four seeded users are members of the one workspace, so every
 cross-workspace question answers correctly by accident. `check:actions` now
@@ -86,14 +110,14 @@ find more than the two above.
 | **Timeline (Gantt)** | Bars from start to due across a month of day columns. The renderer that made the compiler learn nested filter clauses, because "overlaps this window" is irreducibly mixed AND and OR. Read-only so far — no dragging, no dependencies. |
 | **Filters** | Conditions may nest, so a clause can say `(a OR b) AND (c OR d)`. The filter bar and the URL stay flat; nesting exists for renderer scope. |
 | **Dates** | A due date flagged as a calendar day is stored at midnight UTC and read in UTC, everywhere. Overdue means the day is over, not that the clock has passed midnight. |
-| **Automations** | A rule is a trigger, a `FilterGroup` of conditions and actions that compile to operations. Fires from the activity log, runs as a per-workspace service account, claimed with `SKIP LOCKED`. No UI, and nothing starts the loop in production yet (D-124, D-125, D-126). |
+| **Automations** | A rule is a trigger, a `FilterGroup` of conditions and actions that compile to operations. Fires from the activity log, runs as a per-workspace service account, claimed with `SKIP LOCKED` (D-124, D-125, D-126). A delay is the rule's and its conditions are asked when it acts (D-128). `/settings/automations` writes one: the container tree scoped to what the viewer may `manage`, the filter bar's own menus for conditions, a one-sentence summary of what each rule does, its last run, and the month's quota. A rule can be disabled or deleted, not yet edited. The drain runs in the server process, started from `/api/health` and the root layout. |
 | **Saved views** | The tab strip is the list of saved views. Create, rename, duplicate, set default, delete — validated by compiling the definition before it is written. Personal views are invisible to others. |
 | **Filter bar** | On all three renderers. Menus are built from the same declaration the compiler validates against, so an invalid filter cannot be expressed. Filter state lives in the URL and is shareable; a malformed link errors instead of showing everything. |
 | **Field types** | All 20 declared in one place: storage column, legal operators, config parser, value parser. |
 | **Status sets** | CRUD, inheritance resolution, four templates, reordering, and task migration on delete. |
 | **Custom fields** | CRUD, per-type config, placement down the tree, task-type scoping, archive, and type change with a real value migration. |
 | **Task types** | CRUD, one default per workspace, deletion with reassignment. |
-| **Settings UI** | `/settings` — statuses, custom fields, task types. |
+| **Settings UI** | `/settings` — statuses, custom fields, task types, sharing, automations. |
 | **Permissions** | Grants are the source of truth; a pure rule in `@arbor/core` flattens them plus inheritance into the access index every query joins against. Private containers, inherited grants, group grants, role baselines. Rebuilt inside the transaction that changed the grant, so a revocation has no stale window. The index holds a row per **container**, not only per list (D-108), so "may this person manage this space" is the same join as "may they see this task". |
 | **Sharing UI** | `/settings/sharing` — the container tree with how many people each one reaches, a private toggle, and share/unshare. Inherited grants are shown with their source and are not removable there. **Sharing is a permission on the container now, not a workspace role** (D-109): a lead holding `manage` on their space can share it while staying a plain member, and an admin can no longer share a private space nobody granted them. Making a container private leaves the actor a `manage` grant, so closing the door does not lock you out. |
 | **Identity** | Real sessions: scrypt password hashes, a `sessions` row per sign-in with the token stored only as a hash, an httpOnly cookie, and a login screen. Every screen redirects to `/login` without one. The dev user switcher survives *underneath* sessions and applies only when explicitly set. |
@@ -157,12 +181,12 @@ page tree is a tree that can be rearranged, and `[[` links a page or a task
 with the reverse lookup shown on both ends. Search reads them. What remains is
 not a numbered item but the gaps below.
 
-**Phase 10 — automations, forms, public API — is started.** The engine is
-built and proven against Postgres: a rule fires from the activity log, runs as a
-service account, and writes through `applyOperations` like anything else.
-**Forms and the public API have nothing built against them**, and automations
-have no UI and nothing starting the loop in production — see "Where Phase 10
-actually is" below.
+**Phase 10 — automations, forms, public API — is part built.** The engine is
+proven against Postgres and **now has a screen**: `/settings/automations` writes
+a rule, arms it, disables it and deletes it, shows what each one does in a
+sentence, what its last run did, and how much of the month's quota is gone.
+**Forms and the public API still have nothing built against them** — see "Where
+Phase 10 actually is" below.
 
 Correcting this file: it used to say `packages/sdk` was empty and `apps/worker`
 had had nothing to run since Phase 1. **Neither directory exists.** The
@@ -249,12 +273,35 @@ Short version: it is compiled for the edge runtime too, that compilation follows
 "Can't resolve 'path'" — which reads like the database being down. Do not move
 the loop there.
 
+**The screen exists** (D-129). `/settings/automations`, built out of what was
+already there: the sharing screen's container tree scoped by
+`reachableContainers(… "manage")`, the filter bar's condition menus extracted
+into `filter-conditions.tsx` so a view's filter and a rule's conditions cannot
+drift, and `describeRule` in core so the list and the form's preview print the
+same sentence. Writing a rule takes `manage` on its container rather than a
+workspace role, and the container is read off the rule rather than taken from
+the request. Nine `check:actions` checks cover the boundary; it was driven in
+Chrome end to end — a rule armed through the form fired and the service account
+wrote the comment that was typed into it.
+
 **What does not exist yet, in the order it probably wants doing:**
 
-- **No UI at all.** A rule can only be created by calling `createAutomation`.
-  The screen wants the filter bar's own menus for conditions, since conditions
-  *are* a `FilterGroup` and `filterable.ts` already publishes what may be
-  offered.
+- **A rule cannot be edited, only deleted and written again.** `createAutomation`,
+  `setAutomationEnabled` and `deleteAutomation` are the whole service; there is
+  no `updateAutomation`. Renaming is the common case and does not need the rule
+  re-validated, which is probably two entry points rather than one.
+- **The form offers `to` and not `from`.** `parseAutomationRule` takes both, so
+  "when the status stops being Blocked" is expressible and nothing offers it.
+  `describeRule` already says it when it is there.
+- **`parentTaskId` and a duration control are the two menu gaps.** Both are
+  deliberate (D-129): a task picker does not exist, and a milliseconds box is
+  labelled as one rather than pretending to be hours. A `duration` `ValueInput`
+  means teaching the filter bar about it in the same change.
+- **The filter bar still shows a text box for a List, Space or Folder filter.**
+  `optionsFor` understands `container` now, but only a screen that has filtered
+  containers by permission may supply them — the automations screen does, the
+  view pages do not. Fixing it properly means `loadFilterOptions` taking a
+  viewer, which is five callers.
 - **A run that fails is not retried.** `attempts` is incremented by the claim
   and nothing reads it: a `failed` run stays failed. Deliberate for now —
   retrying a half-applied batch needs a rule about which actions already

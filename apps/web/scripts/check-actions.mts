@@ -2436,6 +2436,172 @@ await db.query(`DELETE FROM comments WHERE object_id = ANY($1::uuid[])`, [
 await db.query(`UPDATE tasks SET description = NULL WHERE id = $1`, [commentedTask.id]);
 await revokeHiring(samUserId);
 
+// --- automations ------------------------------------------------------------
+//
+// The seam this file exists for, on the newest action boundary: a form posts a
+// trigger, some conditions and some actions as plain objects, and what has to
+// survive is the *shape* — nested JSON through a server action, into jsonb, and
+// back out parsing as the same rule. `db:smoke` calls `createAutomation`
+// directly with the object already built, so it cannot see this trip at all.
+//
+// The authorization is the other half, and it is a different answer from the
+// rest of this file: a rule takes `manage` on its container (D-129), not a
+// workspace role, so Sam is refused here while an admin with no grant on a
+// private space would be too.
+console.log("\nautomations \u2192 a rule posted by a form is the rule that runs\n");
+
+await db.query(`DELETE FROM automations WHERE workspace_id = $1`, [workspaceId]);
+await warm("/settings/automations");
+const AUTO_URL = `http://localhost:${PORT}/settings/automations`;
+const AUTO_ACTIONS = actionIds("app/settings/automations/page");
+
+const doneStatus = await one(
+  `SELECT s.id FROM statuses s JOIN status_sets ss ON ss.id = s.status_set_id
+   WHERE ss.name = 'Engineering' AND s.name = 'Done'`,
+);
+
+const madeRule = await callOn(AUTO_URL, AUTO_ACTIONS.createAutomationAction!, [
+  {
+    containerId: sprintListId,
+    name: "Archive what is finished",
+    trigger: { kind: "fieldChanged", field: "statusId", to: doneStatus.id },
+    conditions: { op: "AND", conditions: [{ field: "priority", op: "eq", value: 1 }] },
+    actions: [
+      { kind: "addRelation", relation: "watcher", targetId: averyUserId },
+      { kind: "comment", text: "Closing this out." },
+    ],
+    appliesTo: "both",
+    delaySeconds: 3 * 24 * 60 * 60,
+  },
+]);
+
+const ruleRow = await one(
+  `SELECT id, container_id, applies_to, delay_seconds, is_enabled,
+          trigger::text AS trigger, conditions::text AS conditions, actions::text AS actions
+   FROM automations WHERE workspace_id = $1`,
+  [workspaceId],
+);
+
+report(
+  "a rule the form built is stored where it was scoped, with the delay it asked for",
+  ruleRow?.container_id === sprintListId &&
+    ruleRow.applies_to === "both" &&
+    Number(ruleRow.delay_seconds) === 259200
+    ? null
+    : `stored ${JSON.stringify(ruleRow)} — response was ${madeRule.text.slice(-300)}`,
+);
+if (!ruleRow) throw new Error("no automation to carry on with");
+
+// The part a type cannot check: nested objects posted as action arguments, and
+// a number that must still be a number on the other side (invariant 10).
+report(
+  "the trigger, the conditions and the actions survive the trip as themselves",
+  JSON.parse(ruleRow.trigger).to === doneStatus.id &&
+    JSON.parse(ruleRow.conditions).conditions[0].value === 1 &&
+    JSON.parse(ruleRow.actions).length === 2 &&
+    JSON.parse(ruleRow.actions)[1].text === "Closing this out."
+    ? null
+    : `trigger ${ruleRow.trigger}, conditions ${ruleRow.conditions}, actions ${ruleRow.actions}`,
+);
+
+const refusedRule = await callOn(AUTO_URL, AUTO_ACTIONS.createAutomationAction!, [
+  {
+    containerId: sprintListId,
+    name: "Watch something that cannot be watched",
+    trigger: { kind: "fieldChanged", field: "nonsense" },
+    actions: [{ kind: "archive" }],
+  },
+]);
+const stillOne = await one(`SELECT count(*) AS n FROM automations WHERE workspace_id = $1`, [
+  workspaceId,
+]);
+report(
+  "a rule the parser refuses comes back as a message, not a 500 and not a row",
+  /cannot watch/i.test(refusedRule.text) && Number(stillOne.n) === 1
+    ? null
+    : `response ${refusedRule.text.slice(-200)}, ${stillOne.n} rules stored`,
+);
+
+const samsRule = await callOn(
+  AUTO_URL,
+  AUTO_ACTIONS.createAutomationAction!,
+  [
+    {
+      containerId: sprintListId,
+      name: "Sam arms a robot",
+      trigger: { kind: "taskCreated" },
+      actions: [{ kind: "archive" }],
+    },
+  ],
+  SAM,
+);
+report(
+  "a member who may edit a list may not arm a rule on it",
+  /permission/i.test(samsRule.text) &&
+    Number((await one(`SELECT count(*) AS n FROM automations WHERE workspace_id = $1`, [workspaceId])).n) ===
+      1
+    ? null
+    : `response ${samsRule.text.slice(-200)}`,
+);
+
+// The container is read off the rule, not taken from the request — so an id
+// alone is not permission here either.
+const samsToggle = await callOn(
+  AUTO_URL,
+  AUTO_ACTIONS.setAutomationEnabledAction!,
+  [ruleRow.id, false],
+  SAM,
+);
+report(
+  "nor disable somebody else's",
+  /permission|no longer exists/i.test(samsToggle.text) &&
+    (await one(`SELECT is_enabled FROM automations WHERE id = $1`, [ruleRow.id])).is_enabled ===
+      true
+    ? null
+    : `response ${samsToggle.text.slice(-200)}`,
+);
+
+await callOn(AUTO_URL, AUTO_ACTIONS.setAutomationEnabledAction!, [ruleRow.id, false]);
+report(
+  "whoever manages the container can, and the rule stops being scanned for",
+  (await one(`SELECT is_enabled FROM automations WHERE id = $1`, [ruleRow.id])).is_enabled === false
+    ? null
+    : "the toggle did not land",
+);
+
+// The screen reads a disabled rule — the engine's loader does not (D-129) — and
+// the sentence it prints is `describeRule`, the same one the form previews with.
+const autoPage = await (
+  await fetch(`${AUTO_URL}?container=${sprintListId}`, { headers: { Cookie: COOKIE } })
+).text();
+report(
+  "the screen shows the disabled rule, and says what it does in words",
+  autoPage.includes("Archive what is finished") &&
+    /When Status becomes Done/.test(autoPage) &&
+    /after 3 days/.test(autoPage)
+    ? null
+    : "the rule was missing from the page, or its sentence was",
+);
+
+const samsDelete = await callOn(AUTO_URL, AUTO_ACTIONS.deleteAutomationAction!, [ruleRow.id], SAM);
+report(
+  "and deleting one takes the same permission as writing it",
+  /permission|no longer exists/i.test(samsDelete.text) &&
+    Number((await one(`SELECT count(*) AS n FROM automations WHERE id = $1`, [ruleRow.id])).n) === 1
+    ? null
+    : `response ${samsDelete.text.slice(-200)}`,
+);
+
+await callOn(AUTO_URL, AUTO_ACTIONS.deleteAutomationAction!, [ruleRow.id]);
+report(
+  "the manager's delete does land, and takes the rule with it",
+  Number((await one(`SELECT count(*) AS n FROM automations WHERE id = $1`, [ruleRow.id])).n) === 0
+    ? null
+    : "the rule outlived its delete",
+);
+
+await db.query(`DELETE FROM automations WHERE workspace_id = $1`, [workspaceId]);
+
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);
 await db.end();

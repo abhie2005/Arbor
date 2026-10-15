@@ -15,6 +15,7 @@ import {
 } from "@arbor/core";
 import type { Pool, PoolClient } from "pg";
 
+import { rebuildAccessIndex } from "./access";
 import { pool } from "./client";
 import { type ConfigContext, ConfigError, inTransaction, logConfigChange, requireName } from "./config";
 import { applyOperations } from "./mutations";
@@ -111,6 +112,34 @@ export async function ensureAutomationActor(
      ON CONFLICT DO NOTHING`,
     [workspaceId, actorId],
   );
+
+  /**
+   * **And the index, in the same breath as the membership.**
+   *
+   * Grants are truth and the index is what queries join (ADR 3), so a
+   * membership nothing has indexed yet is a principal that exists and reaches
+   * nothing. That is not a cosmetic gap for this actor: a rule's conditions are
+   * the compiler's (D-124) and the compiler runs them *as the robot*, joining
+   * `access_index` like every other read. With no rows, every condition matches
+   * no task — so a rule with any condition at all records
+   * `skipped_conditions` forever, which reads as the condition being wrong
+   * rather than as the actor being unknown.
+   *
+   * The rebuild is here rather than left to the next caller for the reason
+   * D-071 gives for doing it inside the writing transaction: an index that is
+   * correct only after somebody else happens to rebuild is an index that is
+   * wrong for as long as nobody does. It costs one whole-workspace recompute,
+   * once, on the one call that creates the account.
+   *
+   * **Why no test saw it**: the actor is created on first execution, and
+   * `db:smoke` rebuilds the index long before the automations section. A second
+   * run against the same workspace therefore finds an actor the earlier rebuild
+   * had already picked up, and passes. Re-seeding is what exposes it — a new
+   * workspace id means a new account, created after the last rebuild — so the
+   * bug was invisible to exactly the "verified across consecutive runs" that
+   * was supposed to confirm it.
+   */
+  await rebuildAccessIndex(workspaceId, connection);
 
   return actorId;
 }
@@ -733,4 +762,231 @@ export async function deleteAutomation(
       oldValue: { name: row.name },
     });
   });
+}
+
+/**
+ * What the automations screen reads.
+ *
+ * **Deliberately not `loadAutomations`.** That one answers the engine's
+ * question — every *enabled* rule, parsed and ready to match — and it skips a
+ * row that no longer parses so one bad rule cannot stop a workspace. Both
+ * behaviours are wrong for a screen: a disabled rule is the first thing
+ * somebody looks for when a rule is not firing, and a rule that has become
+ * unparseable is the one they most need to see. Invisible is unfixable: it
+ * cannot be read, re-enabled or deleted.
+ *
+ * So this returns every rule in the container whatever its state, and hands
+ * back the parse failure as text instead of dropping the row.
+ */
+export interface AutomationSummary {
+  id: string;
+  workspaceId: string;
+  containerId: string;
+  name: string;
+  /** Null when the stored rule no longer parses; `problem` then says why. */
+  rule: AutomationRule | null;
+  problem: string | null;
+  isEnabled: boolean;
+  createdAt: Date;
+  createdByName: string | null;
+  runs: { total: number; failed: number; pending: number };
+  lastRun: AutomationRunRow | null;
+}
+
+export interface AutomationRunRow {
+  id: string;
+  status: string;
+  error: string | null;
+  depth: number;
+  attempts: number;
+  startedAt: Date;
+  finishedAt: Date | null;
+  /** When a pending run becomes due, which is the whole point of a delay. */
+  runAfter: Date;
+}
+
+export async function loadAutomationsForContainers(
+  containerIds: readonly string[],
+  connection: Connection = pool(),
+): Promise<AutomationSummary[]> {
+  if (containerIds.length === 0) return [];
+
+  const result = await connection.query<{
+    id: string;
+    workspace_id: string;
+    container_id: string;
+    name: string;
+    trigger: unknown;
+    conditions: unknown;
+    actions: unknown;
+    applies_to: string;
+    delay_seconds: number;
+    is_enabled: boolean;
+    created_at: Date;
+    created_by_name: string | null;
+    total: string;
+    failed: string;
+    pending: string;
+  }>(
+    // The counts are a lateral rather than a join, because a rule with no runs
+    // still has to appear — and a GROUP BY over the outer join is a second way
+    // to spell the same thing that gets the zero case wrong when somebody adds
+    // a column to it later.
+    `SELECT a.id, a.workspace_id, a.container_id, a.name, a.trigger, a.conditions, a.actions,
+            a.applies_to, a.delay_seconds, a.is_enabled, a.created_at, u.name AS created_by_name,
+            counts.total, counts.failed, counts.pending
+     FROM automations a
+     LEFT JOIN users u ON u.id = a.created_by
+     LEFT JOIN LATERAL (
+       SELECT count(*) AS total,
+              count(*) FILTER (WHERE r.status = 'failed') AS failed,
+              count(*) FILTER (WHERE r.status = 'pending') AS pending
+       FROM automation_runs r WHERE r.automation_id = a.id
+     ) counts ON true
+     WHERE a.container_id = ANY($1::uuid[])
+     ORDER BY a.created_at`,
+    [[...containerIds]],
+  );
+
+  const summaries: AutomationSummary[] = [];
+  for (const row of result.rows) {
+    let rule: AutomationRule | null = null;
+    let problem: string | null = null;
+    try {
+      rule = parseAutomationRule({
+        trigger: row.trigger,
+        conditions: row.conditions,
+        actions: row.actions,
+        appliesTo: row.applies_to,
+        delaySeconds: row.delay_seconds,
+      });
+    } catch (error) {
+      problem = error instanceof Error ? error.message : String(error);
+    }
+
+    summaries.push({
+      id: row.id,
+      workspaceId: row.workspace_id,
+      containerId: row.container_id,
+      name: row.name,
+      rule,
+      problem,
+      isEnabled: row.is_enabled,
+      createdAt: row.created_at,
+      createdByName: row.created_by_name,
+      runs: {
+        total: Number(row.total),
+        failed: Number(row.failed),
+        pending: Number(row.pending),
+      },
+      lastRun: await lastRunOf(row.id, connection),
+    });
+  }
+
+  return summaries;
+}
+
+async function lastRunOf(
+  automationId: string,
+  connection: Connection,
+): Promise<AutomationRunRow | null> {
+  const runs = await recentAutomationRuns(automationId, 1, connection);
+  return runs[0] ?? null;
+}
+
+/**
+ * A rule's executions, newest first — pending ones included.
+ *
+ * **Pending is not noise here**, it is the answer to the only question a
+ * delayed rule raises: has it fired, and when will it act? `run_after` is
+ * carried for that reason (D-128).
+ */
+export async function recentAutomationRuns(
+  automationId: string,
+  limit = 10,
+  connection: Connection = pool(),
+): Promise<AutomationRunRow[]> {
+  const result = await connection.query<{
+    id: string;
+    status: string;
+    error: string | null;
+    depth: number;
+    attempts: number;
+    started_at: Date;
+    finished_at: Date | null;
+    run_after: Date;
+  }>(
+    `SELECT id, status, error, depth, attempts, started_at, finished_at, run_after
+     FROM automation_runs WHERE automation_id = $1
+     ORDER BY started_at DESC LIMIT $2`,
+    [automationId, limit],
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    status: row.status,
+    error: row.error,
+    depth: row.depth,
+    attempts: row.attempts,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    runAfter: row.run_after,
+  }));
+}
+
+/**
+ * One rule, whatever its state — which is what an action needs to authorize.
+ *
+ * Every write in this file takes an automation id, and the permission question
+ * is about the *container* the rule is scoped to. So the container has to be
+ * read before the check can be made, and reading it through `loadAutomations`
+ * would silently skip a disabled rule — making "disable" a one-way door.
+ */
+export async function loadAutomation(
+  automationId: string,
+  connection: Connection = pool(),
+): Promise<{ id: string; workspaceId: string; containerId: string; name: string } | null> {
+  const result = await connection.query<{
+    id: string;
+    workspace_id: string;
+    container_id: string;
+    name: string;
+  }>(`SELECT id, workspace_id, container_id, name FROM automations WHERE id = $1`, [automationId]);
+
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    containerId: row.container_id,
+    name: row.name,
+  };
+}
+
+/**
+ * How much of the month's quota is gone, for a screen to say so.
+ *
+ * The quota has been counted since the engine was built and surfaced nowhere:
+ * a workspace that reached it got `refused_quota` rows and no warning. The
+ * count is the same expression `enqueue` decides with — `runsThisMonth` — so
+ * the number on screen is the number the refusal uses, not a second query that
+ * can round differently.
+ */
+export async function automationQuota(
+  workspaceId: string,
+  connection: Connection = pool(),
+): Promise<{ used: number; quota: number; refused: number }> {
+  const used = await runsThisMonth(workspaceId, connection);
+  const refused = await connection.query<{ count: string }>(
+    `SELECT count(*) AS count FROM automation_runs
+     WHERE workspace_id = $1 AND started_at >= date_trunc('month', now())
+       AND status = 'refused_quota'`,
+    [workspaceId],
+  );
+
+  return {
+    used,
+    quota: MONTHLY_RUN_QUOTA,
+    refused: Number(refused.rows[0]?.count ?? 0),
+  };
 }

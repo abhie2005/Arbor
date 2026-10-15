@@ -128,17 +128,23 @@ export {
 } from "./documents";
 export {
   MONTHLY_RUN_QUOTA,
+  automationQuota,
   claimDueRuns,
   createAutomation,
   deleteAutomation,
   drainAutomations,
   ensureAutomationActor,
   executeRun,
+  loadAutomation,
   loadAutomations,
+  loadAutomationsForContainers,
+  recentAutomationRuns,
   scanForAutomations,
   setAutomationEnabled,
   tickAutomations,
   type AutomationRecord,
+  type AutomationRunRow,
+  type AutomationSummary,
   type ClaimedRun,
   type RunOutcome,
 } from "./automations";

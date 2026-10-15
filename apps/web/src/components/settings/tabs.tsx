@@ -8,6 +8,7 @@ const SECTIONS = [
   { href: "/settings/fields", label: "Custom fields", icon: "⌗" },
   { href: "/settings/types", label: "Task types", icon: "◈" },
   { href: "/settings/sharing", label: "Sharing", icon: "◌" },
+  { href: "/settings/automations", label: "Automations", icon: "⟳" },
 ];
 
 export function SettingsTabs() {

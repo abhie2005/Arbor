@@ -4745,3 +4745,98 @@ running the thing would have found.
 *In one sentence:* the delay was cheap because the queue was already a table,
 and the only thing that needed care was asking the condition late rather than
 early.
+
+### D-129
+**A screen for the robots — the filter bar's own menus, `manage` on the container, and the index row the service account never had** · 2026-10-14 · active
+
+The engine had been running since D-125 and a rule could only be created by
+calling `createAutomation`, which made every automation in existence one
+somebody had written in a smoke test. This is the screen that was owed, and
+three decisions in it are worth keeping.
+
+**The condition editor is the filter bar's, extracted rather than rebuilt.**
+Conditions *are* a `FilterGroup` (D-124) and the compiler is what evaluates them
+at run time, so a condition editor of this screen's own would be a second
+opinion about what "status is Done" looks like — and the two would drift the
+first time an operator was added to one of them. What actually differs between
+the two screens is not the menus, it is **where the value lives**: a view's
+filter lives in the URL because a filtered view is the thing people share
+(D-054), and a rule's conditions live in form state until it is saved. So
+`filter-conditions.tsx` takes a group and a callback and owns neither, and
+`filter-bar.tsx` is now the URL half plus `showClosed` — which is a property of
+the query a view runs and has no meaning when a rule is asked about one task.
+
+The rejected alternative was lifting the filter bar whole and giving it a
+"controlled" mode. That is the same component with two state owners and a flag
+deciding which, which is how a control ends up writing to the URL from a form.
+
+**A rule takes `manage` on its container, not a workspace role.** D-126
+answered what an automation *authenticates* as and left the question of who may
+write one. Statuses, custom fields and task types are workspace-wide
+configuration, so administering them is a workspace role (D-081) — but an
+automation is scoped to one container, acts only on tasks in its subtree, and
+is therefore the shape of **sharing** (D-109) rather than the shape of a status
+set. It is not the looser choice: `manage` comes from a grant or from owning an
+open container and a member holds `edit` at most, so a member cannot arm a
+robot. It is narrower in the other direction too — an admin has no `manage` on a
+private space they were never granted, and so cannot write a rule that acts on
+tasks they cannot see.
+
+**The container is read off the rule, never taken from the request.** An id
+arriving from a form says which rule, not which container; checking the
+container the request *claims* would let somebody name a container they manage
+and a rule they do not.
+
+**The screen's loader is deliberately not the engine's.** `loadAutomations`
+answers "every rule that could fire now", and it is right to skip a disabled
+rule and to drop one whose stored json no longer parses — one bad row must not
+stop a workspace. Both behaviours are wrong for a page: a disabled rule is the
+first thing somebody looks for when a rule is not firing, and an unparseable
+rule is the one they most need to see, because **invisible is unfixable** — it
+cannot be read, re-enabled or deleted. So `loadAutomationsForContainers` returns
+every rule whatever its state and hands back the parse failure as text.
+
+**The sentence under each rule is `describeRule`, in core.** The list and the
+form's preview print the same string from the same function, because two
+accounts of what a rule does is one too many and the one on the form is what
+somebody reads before saving. It is pure, so the phrasing is unit tested — the
+distinction that matters is "becomes Done" versus "changes at all", which is a
+different rule and has to read like one.
+
+**What the menu offers is narrower than what the rule language accepts, on
+purpose.** `AUTOMATABLE_FIELDS` leaves out `parentTaskId` and `position`: both
+are settable by an operation and both parse, so a rule written against the API
+keeps working, but neither has a control to offer and a uuid in a text box is
+not an interface, it is a way to store a typo. Same reasoning as `position`
+being absent from `BUILTIN_FILTERABLE`. The form offers `to` narrowing and not
+`from` for the same reason — `from` parses, nothing offers it yet.
+
+**And the bug this uncovered, which was the real find.**
+`ensureAutomationActor` created the service account, gave it a membership, and
+never rebuilt `access_index`. Grants are truth and the index is what queries
+join (ADR 3), so the robot existed and reached **nothing** — and a rule's
+conditions are run *as the robot* through the compiler, which joins the index
+like every other read. The consequence is as bad as it gets for a feature whose
+whole job is to act without being watched: in a fresh workspace, **every rule
+with any condition at all skipped forever**, recorded as `skipped_conditions` —
+which reads as the condition being wrong rather than as the actor being unknown.
+The fix is one line in the transaction that creates the account, for the reason
+D-071 gives: an index that is correct only after somebody else happens to
+rebuild is wrong for as long as nobody does.
+
+**Why every check passed while this was broken, which is the part worth
+remembering.** The actor is created on first execution, and `db:smoke` rebuilds
+the index long before the automations section — so a second run against the same
+workspace finds an account the earlier rebuild already indexed, and passes.
+D-125's note that the engine was "verified across consecutive runs" is exactly
+the thing that could not see it: re-running is what hid it, and re-seeding is
+what exposed it, because a new workspace id means a new account created after
+the last rebuild. The fixture now deletes the service account along with the
+runs and the cursor, so every run exercises the path that creates one — and the
+three checks that were already there fail if the line is reverted, which was
+verified by reverting it.
+
+*In one sentence:* the screen was mostly reuse — the filter bar's menus, the
+sharing screen's shape, `manage` on the container — and building it is what
+finally made a fresh workspace run the engine's own code path and find the
+index row nobody had written.
