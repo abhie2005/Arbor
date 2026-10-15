@@ -280,6 +280,34 @@ two applies, because the registry must exist before an image can be pushed.
   Use the Postgres container's own IP, **not `host.docker.internal`** — that
   crosses to the other daemon.
 
+  **Or run the dev container on Docker Desktop and reach Postgres through the
+  host**, which is what D-129 used and is the better trade on a loaded machine:
+  Colima has 2GiB and Desktop has 8, and Colima's port forward means the host's
+  5432 *is* `arbor-pg`. Then `host.docker.internal` is right rather than wrong —
+  it crosses to the host, which is where the forward is, and the memory note
+  below stops applying because the VM is no longer the small one:
+
+  ```bash
+  DOCKER_HOST="" docker build --target builder -t arbor-dev:local .
+  DOCKER_HOST="" docker run -d --name arbor-devsrv -p 3300:3000 \
+    -e NODE_ENV=development -e HOSTNAME=0.0.0.0 \
+    -e DATABASE_URL="postgres://arbor:arbor@host.docker.internal:5432/arbor" \
+    -w /repo/apps/web arbor-dev:local \
+    node /repo/node_modules/.bin/next dev -p 3000 -H 0.0.0.0
+  # ready in ~2.6s; both gates run inside it
+  DOCKER_HOST="" docker exec arbor-devsrv sh -c \
+    'cd /repo/apps/web && node /repo/node_modules/.bin/tsx scripts/check-actions.mts 3000'
+  ```
+
+  The image holds a *copy* of the source, so a host edit is invisible until it
+  is rebuilt — rebuild and recreate the container before the browser pass that
+  is meant to verify the final code. The rebuild is ~6s with warm layers.
+
+  **The host failure mode has a second shape**: `next dev` printing *nothing at
+  all* — no banner, no "Ready", 0% CPU, an empty log — rather than compiling
+  slowly. Starting it unsandboxed does not help when it looks like this, and
+  neither does waiting; it is the container or nothing.
+
   **Do not raise `--max-old-space-size` to get further.** The Colima VM has
   2GiB, where node's default heap cap is ~1004MB. At the default, Next dev
   notices the ceiling itself, prints "Server is approaching the used memory
