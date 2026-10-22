@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-10-14. Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-21. Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **Phases 1–9 are done. Phase 10 is under way: automations run, and now they
 have a screen.** A rule can be written, armed, disabled and deleted by a person
@@ -35,11 +35,15 @@ that listed every container in the workspace (D-123), and mentions that
 resolved against every user in the database (D-122). Each one turned out to be
 wider than it was written up as, and the extra doors are in the entries.
 
-**Three things were found while fixing them and are deliberately not fixed.**
-They are the next small jobs, under "Open bugs" below: a latent copy of the
-hydration bug in the four view renderers that **no check in this repo can
-reach**, five people-lists that are still workspace-wide, and no fixture
-anywhere for a second workspace.
+**Of the three things found while fixing them, the third is done and it was the
+one the other two were waiting on** (D-130). The seed has a second workspace
+with a member of its own, and two due dates that are a *moment* rather than a
+day — so both remaining bugs are now provable, which neither was before. The
+first thing the fixture showed: the same stored instant renders as `Thu 22` from
+a server in UTC and `Wed 21` in a browser in America/Los_Angeles, which is D-121
+exactly, in the four view renderers. **Nothing about either bug is fixed.** They
+are the next two jobs, under "Open bugs" below, now in the order the fixture
+makes sensible: the five workspace-wide people-lists, then the four renderers.
 
 The archaeology of the bugs that are fixed, and what browser verification found
 in each phase, is in `docs/HISTORY.md`.
@@ -48,23 +52,29 @@ in each phase, is in `docs/HISTORY.md`.
 
 ## Open bugs
 
-**1. The four view renderers format an instant with no zone — latent, and
-unreachable by every check here.** `task-row.tsx`, `task-table.tsx`,
-`board.tsx` and `task-detail.tsx` all format due dates through
-`dateFrame(hasTime)`, which correctly returns `{}` for an instant — and `{}`
-means the ambient zone, which is the server's on the server and the viewer's in
-the browser. That is D-121 exactly, in four more places.
+**1. The four view renderers format an instant with no zone — latent, and now
+reachable.** `task-row.tsx`, `task-table.tsx`, `board.tsx` and
+`task-detail.tsx` all format due dates through `dateFrame(hasTime)`, which
+correctly returns `{}` for an instant — and `{}` means the ambient zone, which
+is the server's on the server and the viewer's in the browser. That is D-121
+exactly, in four more places. `isOverdue` on the same path compares against
+`Date.now()` and has the same shape of problem.
 
-It has never shown because **the seed has no task with `dueHasTime: true`**.
-Every seeded due date is a calendar day, so only the UTC branch is ever taken,
-and the instant branch cannot be exercised by `npm test`, `db:smoke`,
-`check:actions` or a browser pass over seeded data. `isOverdue` on the same
-path compares against `Date.now()` and has the same shape of problem.
+~~**The seed has no task with `dueHasTime: true`**~~ — it has two now (D-130),
+ENG-421 three days ahead of the seed and ENG-419 four hours behind it, which is
+what puts a row on each side of `isOverdue`'s instant branch. **The divergence
+is demonstrated rather than deduced**: ENG-421's stored instant renders as
+`Thu 22` through `formatDue` in a process running in UTC and `Wed 21` in one
+running in America/Los_Angeles, so a server render and its hydration disagree
+by a day whenever the two zones straddle midnight.
 
 The fix is `Timestamp`'s two renders pushed into those four, which is more
 invasive than it sounds — the label comes out of a `formatDue` helper that
-returns `{ label, overdue }` and is read inside drag-heavy markup. **Seed one
-task with `dueHasTime: true` first**, or the fix cannot be verified either.
+returns `{ label, overdue }`, is **duplicated** in `task-row.tsx` and
+`board.tsx` rather than shared, and is read inside drag-heavy markup. The
+prerequisite is done, so this is now a fix with a way to check it: the gate it
+needs is a browser pass, because a hydration mismatch is a console warning and
+nothing else.
 
 **2. Five people-lists are still every user in the database.** `views.ts:420`,
 `task.ts:279`, `goals.ts:33`, `dashboards.ts:54` and `column-values.ts:160`
@@ -73,6 +83,12 @@ D-122 fixed the two that turn typed text into a *stored* mention and left
 these, which only display: an assignee picker offering somebody from another
 workspace is a real bug and a smaller one. They want `mentionableIn`, or its
 read-only equivalent.
+
+**The fixture that makes this provable exists now** (D-130). Quinn Alvarez is a
+member of Meridian and of nothing else, so a list that still reads `FROM users`
+offers Quinn inside Northwind; Sam Petrov is a member of **both**, which is the
+half that keeps the fix honest, because a read scoped properly and a read
+scoped by accident both stop offering Quinn and only Sam tells them apart.
 
 **And they now offer robots.** A workspace's automation account is a real
 `users` row (D-126), so it appears in the user switcher, in the assignee and
@@ -84,13 +100,28 @@ should take `kind = 'service'` with it; the decision to make is whether an
 automation may ever *name* one deliberately, which is why this is not simply a
 `WHERE kind <> 'service'` on every picker.
 
-**3. There is no second workspace anywhere, and that is why both of the above
-hide.** All four seeded users are members of the one workspace, so every
-cross-workspace question answers correctly by accident. `check:actions` now
-makes a non-member user inline for one assertion (D-122) and deletes it again,
-which is the narrowest possible version of the fixture. A second seeded
-workspace would make a whole class of check expressible, and would probably
-find more than the two above.
+~~**3. There is no second workspace anywhere, and that is why both of the above
+hide.**~~ **Done** (2026-10-21, D-130). The seed writes Meridian beside
+Northwind: Quinn owns it and is in nothing else, Sam is in both, it has its own
+status set because `resolveStatusSet` throws rather than inventing one, and
+OPS-1 is the row a missing workspace join would hand to Northwind. Nothing in
+it shares a name with anything in Northwind, deliberately — the checks look
+containers and statuses up by name with **no** workspace join, so a second
+"Backlog" would not have failed a check, it would have answered a different
+workspace's question.
+
+The class of check it predicted is written: eleven more in `db:smoke` (289 now),
+eight of them across the boundary — a Northwind viewer's everything view holding
+no Meridian task and the reverse, a Northwind view *scoped* to a Meridian list
+returning nothing, `taskAccess` refusing a non-member by id, and the access
+index holding no rows for the non-member while holding rows in both workspaces
+for the member of both. They were verified to fail when the fixture is absent by
+running the section against `arbor_check`, which still held the pre-fixture seed.
+
+It did find something, though not in the app: a fixture whose meaning expires.
+The future instant was first seeded six hours out, and six hours later the gate
+failed with a message about the fixture rather than about any code. Three days
+out now, which is the staleness the calendar dates already had.
 
 ---
 
@@ -137,16 +168,19 @@ find more than the two above.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 522 unit tests, 245 live-Postgres checks, 11 search checks, 7
-document-action checks, four packages typechecking clean, and the interactions
-above driven in Chrome — most recently `[[` resolving to a page and then to a task inside one sentence, the
-two edges landing in `doc_links`, and the reverse showing as "Linked from" on
-the page and "Referenced by" on the task.
+**Verified:** 582 unit tests, 289 live-Postgres checks, 162 action checks, 11
+search checks, four packages typechecking clean, and the interactions above
+driven in Chrome — most recently `[[` resolving to a page and then to a task
+inside one sentence, the two edges landing in `doc_links`, and the reverse
+showing as "Linked from" on the page and "Referenced by" on the task.
 
-`check:actions` is the gate that does not finish on this machine — the VM's
-memory ceiling drops a request around a third of the way through (see the gaps
-below). Its **documents** section was run on its own, in its own process, and
-all 7 of its checks pass.
+**`check:actions` finished on this machine for the first time** (2026-10-21):
+all 162 checks, in the dev container on Docker Desktop rather than on the host
+or on Colima. The host failure is unchanged and now has both its shapes
+recorded in `CLAUDE.md` — a `next dev` that compiles forever, and a `next dev`
+that prints nothing at all and sits at 0% CPU, which is what it did this time.
+The container was ready in 2.5s on the same machine, and `turbo run typecheck`
+takes 6.6s in it against roughly six minutes for one package on the host.
 
 ---
 
@@ -176,6 +210,22 @@ all 7 of its checks pass.
 ---
 
 ## Where to pick up
+
+**The next job is the two remaining open bugs, in this order** (2026-10-21).
+Both were unprovable until the seed grew its fixture (D-130) and both are now
+provable, which is the only thing that changed — neither is fixed.
+
+1. **The five workspace-wide people-lists** (`views.ts:420`, `task.ts:279`,
+   `goals.ts:33`, `dashboards.ts:54`, `column-values.ts:160`). Mechanical now
+   that Quinn exists, but it carries a real decision rather than a `WHERE`: a
+   workspace's automation account is a `users` row (D-126), so whatever scopes
+   these has to say whether an automation may ever be *named* deliberately.
+   Decide that before writing `kind <> 'service'` five times.
+2. **The four view renderers' instant** (bug 1 above). The data exists and the
+   divergence is demonstrated; what it needs that the other does not is a
+   browser pass, because a hydration mismatch is a console warning and nothing
+   else. `check:actions` cannot see one, which is how four copies survived the
+   commit that fixed the fifth.
 
 **Phase 9 is complete.** Its roadmap line was "CRDT editor, nested pages,
 backlinks" and all three exist: documents are permission-scoped and editable by

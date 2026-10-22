@@ -4429,6 +4429,175 @@ async function main() {
 
   await pool.query(`DELETE FROM automations WHERE workspace_id = $1`, [ws.id]);
 
+  // --- across a workspace boundary ------------------------------------------
+  // The class of check that could not be written while there was one workspace.
+  // Every question below answered correctly by accident until the seed grew a
+  // second one: with all four people in Northwind, a read that forgot to join
+  // on the workspace returned exactly the rows a read that remembered would.
+  //
+  // Quinn is a member of Meridian and of nothing else. Sam is in both, which is
+  // what separates a scoped read from an over-scoped one — a people-list that
+  // drops Quinn *and* Sam is as broken as one that offers Quinn, and only Sam
+  // can tell the two apart.
+  console.log("\nacross a workspace boundary\n");
+
+  const outsideWs = (
+    await pool.query("SELECT id FROM workspaces WHERE slug = 'meridian'")
+  ).rows[0] as { id: string } | undefined;
+  const quinn = (
+    await pool.query("SELECT id FROM users WHERE email = 'quinn@example.com'")
+  ).rows[0] as { id: string } | undefined;
+  const bothWorkspaces = await one("SELECT id FROM users WHERE email='sam@example.com'");
+  const outsideList = (
+    await pool.query("SELECT id FROM containers WHERE name = 'Dispatch board'")
+  ).rows[0] as { id: string } | undefined;
+
+  report(
+    "the second workspace fixture is seeded",
+    outsideWs?.id && quinn?.id && outsideList?.id
+      ? null
+      : "no Meridian workspace, Quinn or Dispatch board — run `npm run db:seed`",
+  );
+
+  if (outsideWs?.id && quinn?.id && outsideList?.id) {
+    const seesEverything = async (viewerId: string, workspaceId: string) => {
+      const query = compileViewQuery({
+        workspaceId,
+        viewerId,
+        fields: await loadFieldCatalog(workspaceId, pool),
+        scope: { kind: "everything" },
+        definition: DEFAULT_VIEW_DEFINITION,
+      });
+      const rows = await pool.query(query.text, query.params);
+      return rows.rows.map((r) => String((r as { key?: string }).key ?? ""));
+    };
+
+    const northwindSees = await seesEverything(viewer.id!, ws.id!);
+    const meridianSees = await seesEverything(quinn.id, outsideWs.id);
+
+    report(
+      "a Northwind viewer's everything view holds no Meridian task",
+      northwindSees.includes("OPS-1")
+        ? "permission leak: OPS-1 came back from the other workspace"
+        : null,
+    );
+
+    report(
+      "and Meridian's own member sees OPS-1 rather than nothing",
+      meridianSees.includes("OPS-1")
+        ? null
+        : `the fixture's member sees ${meridianSees.length} rows in their own workspace`,
+    );
+
+    report(
+      "a Meridian member's everything view holds no Northwind task",
+      meridianSees.some((key) => key.startsWith("ENG-"))
+        ? `permission leak: ${meridianSees.filter((k) => k.startsWith("ENG-")).join(" ")}`
+        : null,
+    );
+
+    // A scope is a container id, and a container belongs to a workspace. Asking
+    // for somebody else's list by id is the shape a shared link takes once the
+    // workspace has been switched — the compiler's answer has to be nothing
+    // rather than the list.
+    const acrossQuery = compileViewQuery({
+      ...base,
+      scope: { kind: "list", id: outsideList.id },
+      definition: DEFAULT_VIEW_DEFINITION,
+    });
+    const scopedAcross = await pool.query(acrossQuery.text, acrossQuery.params);
+
+    report(
+      "scoping a Northwind view to a Meridian list returns nothing",
+      scopedAcross.rows.length === 0
+        ? null
+        : `permission leak: ${scopedAcross.rows.length} rows from another workspace's list`,
+    );
+
+    const northwindTask = await one(`SELECT id FROM tasks WHERE key = 'ENG-402'`);
+
+    report(
+      "a task in another workspace is not reachable by id either",
+      (await taskAccess(northwindTask.id!, quinn.id, pool)) === null
+        ? null
+        : "permission leak: a non-member resolved access to a Northwind task",
+    );
+
+    // `principal_id`, not `user_id` — the index is keyed by principal because a
+    // grant may name a group, and a service account is a principal like any
+    // other (D-126).
+    const rowsFor = (workspaceId: string, principalId: string) =>
+      pool
+        .query(
+          `SELECT count(*)::int AS rows FROM access_index
+            WHERE principal_id = $1 AND workspace_id = $2`,
+          [principalId, workspaceId],
+        )
+        .then((r) => Number((r.rows[0] as { rows: number }).rows));
+
+    report(
+      "the non-member has no access index rows in the workspace they are not in",
+      (await rowsFor(ws.id!, quinn.id)) === 0
+        ? null
+        : "a non-member holds access rows in Northwind",
+    );
+
+    const inNorthwind = await rowsFor(ws.id!, bothWorkspaces.id!);
+    const inMeridian = await rowsFor(outsideWs.id, bothWorkspaces.id!);
+
+    report(
+      "the member of both holds rows in both",
+      inNorthwind > 0 && inMeridian > 0
+        ? null
+        : `one side is empty: ${inNorthwind} rows in Northwind, ${inMeridian} in Meridian`,
+    );
+  }
+
+  // --- a due date that is a moment ------------------------------------------
+  // Until the seed grew these two, every seeded due date was a calendar day, so
+  // the instant branch of `dateFrame` was unreachable by every check here and
+  // by a browser pass alike. These assert the *fixture*, not the renderers:
+  // what they protect is the ability of a later check to be about an instant at
+  // all.
+  const instants = await pool.query(
+    `SELECT key, due_at, due_has_time, due_at < now() AS past
+       FROM tasks
+      WHERE workspace_id = $1 AND due_has_time
+      ORDER BY due_at`,
+    [ws.id],
+  );
+
+  report(
+    "the seed has a task due at a time, not on a day",
+    instants.rows.length >= 2
+      ? null
+      : `${instants.rows.length} timed task(s): the instant branch is unreachable again`,
+  );
+
+  report(
+    "one of them is behind the clock and one ahead of it",
+    instants.rows.some((r) => (r as { past: boolean }).past) &&
+      instants.rows.some((r) => !(r as { past: boolean }).past)
+      ? null
+      : // The future one is seeded three days out, so this is a stale database
+        // rather than a broken renderer. `db:seed && db:smoke` is the pair for
+        // a reason (CLAUDE.md).
+        `both on one side of now — re-seed: ${JSON.stringify(instants.rows)}`,
+  );
+
+  report(
+    "a timed due date is not midnight UTC, which is what makes it a moment",
+    // `every` over no rows is true, so the length is part of the assertion: a
+    // check that passes when the thing it describes is absent is the shape of
+    // the hole this whole section exists to fill.
+    instants.rows.length >= 2 &&
+      instants.rows.every(
+        (r) => new Date((r as { due_at: string }).due_at).getUTCHours() !== 0,
+      )
+      ? null
+      : "a timed due date landed on midnight UTC and reads as a calendar day",
+  );
+
   console.log(failures === 0 ? "\nall checks passed\n" : `\n${failures} check(s) failed\n`);
   await pool.end();
   process.exit(failures === 0 ? 0 : 1);

@@ -4840,3 +4840,77 @@ verified by reverting it.
 sharing screen's shape, `manage` on the container — and building it is what
 finally made a fresh workspace run the engine's own code path and find the
 index row nobody had written.
+
+---
+
+### D-130
+**A second workspace in the seed, and the first due date that is a moment** · 2026-10-21 · active
+
+Three bugs were left open on 2026-10-11 and the third was the diagnosis of the
+other two: there was no second workspace anywhere, so every cross-workspace
+question answered correctly *by accident*. All four demo people were members of
+Northwind, which means a read that forgot to join on the workspace returned
+exactly the rows a read that remembered would. The five people-lists that select
+`FROM users` with no workspace join (`views.ts`, `task.ts`, `goals.ts`,
+`dashboards.ts`, `column-values.ts`) could not be shown to be wrong, and
+neither could a fix be shown to be right.
+
+The same sentence is true of dates for a different reason: **every seeded due
+date was a calendar day**, so `dateFrame`'s instant branch was unreachable by
+`npm test`, `db:smoke`, `check:actions` and a browser pass alike. That is how
+four more copies of D-121 survived the commit that fixed it — code that formats
+an instant with no zone cannot be wrong on data that contains no instant.
+
+So the fixture is in the **seed**, not in the checks.
+
+**Rejected: creating the outsider inline and deleting it again.** That is what
+`check:actions` does today for D-122, and it is the narrowest possible version —
+it makes the boundary expressible in one assertion and nowhere else. A fixture
+in the seed is available to every check, to a browser pass, and to a person
+clicking around the demo, which is where the next one of these will be found.
+
+**Rejected: a user with no membership, rather than a workspace.** A person who
+belongs to nothing tests only the half that is easy. Quinn is in Meridian and
+nowhere else, and **Sam is in both** — because a people-list scoped properly
+and one scoped by accident *both* stop offering Quinn in Northwind. Only
+somebody who has to go on appearing in both can tell a fix from a coincidence.
+
+**Rejected: reusing Northwind's names.** The checks look containers, statuses,
+fields and task types up by name with no workspace join — `SELECT id FROM
+containers WHERE name='Backlog'`, `SELECT id FROM statuses WHERE name='Done'
+LIMIT 1`. A second "Backlog" would not have failed a check; it would have
+quietly answered a different workspace's question, which is a worse failure than
+the one the fixture is here to catch. Nothing in Meridian shares a name with
+anything in Northwind, and that is a constraint on whoever edits it next.
+
+**Two instants rather than one**, because an instant is the only due date
+`isOverdue` compares against the clock rather than against the day (D-067). One
+row can only be on one side of that branch, so ENG-421 is six hours ahead of the
+seed and ENG-419 four hours behind it.
+
+**What it immediately showed.** The same stored instant, formatted the way
+`task-row.tsx` formats it: `Thu 22` from a server running in UTC, `Wed 21` in a
+browser in America/Los_Angeles. The fourfold latent copy of D-121 in the four
+view renderers is now demonstrable from seeded data rather than only arguable
+from reading the code — which is the whole point of the fixture and the reason
+the renderers are the next job rather than this one.
+
+**A check that passes when its subject is absent is the same hole again.**
+"A timed due date is not midnight UTC" was written as `rows.every(…)`, and
+`every` over no rows is true — so it passed in exactly the state it exists to
+rule out. The row count is part of the assertion now.
+
+**The eight cross-workspace checks sit behind one "the fixture is seeded"
+check** rather than failing individually. A missing fixture then fails once,
+with `run npm run db:seed` in the message, instead of eight times with
+symptoms that each read like a permission bug.
+
+**Verified by reverting, which needed no revert.** `arbor_check` still held the
+pre-fixture seed, so the new section was lifted into a standalone probe and run
+against it: three failures, naming the missing fixture and the missing instants.
+The probe was deleted afterwards — it is a way of reading the gate, not a second
+gate to maintain (the pattern CLAUDE.md records for `check:actions`).
+
+*In one sentence:* the two bugs that were "latent and unprovable" are now
+provable, and nothing about them was fixed — the fixture was the prerequisite
+both of them were waiting on.

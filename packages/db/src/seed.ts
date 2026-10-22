@@ -27,15 +27,35 @@ import * as s from "./schema";
 const DEMO_SLUG = "northwind";
 const DEMO_PASSWORD = "arbor-demo-2026";
 
+/**
+ * A second workspace, with a member of its own.
+ *
+ * Every cross-workspace question answered correctly by accident while there was
+ * only one: all four demo people were members of Northwind, so a read that
+ * forgot to join on the workspace returned the right rows anyway. The
+ * people-lists that select `FROM users` with no workspace join are the bug this
+ * exists to make expressible, and the only thing that can express it is a person
+ * who is in the database and not in the workspace being asked about.
+ *
+ * **Nothing in it is named what anything in Northwind is named.** The checks
+ * look containers, statuses, fields and task types up by name with no workspace
+ * join, so a second "Backlog" or a second "Done" would not fail a check — it
+ * would quietly answer a different workspace's question, which is a worse
+ * failure than the one this fixture is here to catch.
+ */
+const OUTSIDE_SLUG = "meridian";
+
 async function main() {
   const db = createDatabase();
 
-  const existing = await db.query.workspaces.findFirst({
-    where: eq(s.workspaces.slug, DEMO_SLUG),
-  });
-  if (existing) {
-    console.log(`Removing previous demo workspace ${existing.id}`);
-    await db.delete(s.workspaces).where(eq(s.workspaces.id, existing.id));
+  for (const slug of [DEMO_SLUG, OUTSIDE_SLUG]) {
+    const existing = await db.query.workspaces.findFirst({
+      where: eq(s.workspaces.slug, slug),
+    });
+    if (existing) {
+      console.log(`Removing previous workspace ${existing.id} (/${slug})`);
+      await db.delete(s.workspaces).where(eq(s.workspaces.id, existing.id));
+    }
   }
 
   // --- people ---------------------------------------------------------------
@@ -44,6 +64,10 @@ async function main() {
     { name: "Riley Kaur", email: "riley@example.com", initials: "RK" },
     { name: "Sam Petrov", email: "sam@example.com", initials: "SP" },
     { name: "Jordan Diaz", email: "jordan@example.com", initials: "JD" },
+    // Quinn is a member of Meridian and of nothing else. Four people who were
+    // all members of the one workspace is what made every missing workspace
+    // join invisible.
+    { name: "Quinn Alvarez", email: "quinn@example.com", initials: "QA" },
   ];
 
   const insertedUsers = await db
@@ -89,6 +113,7 @@ async function main() {
   const riley = person("riley@example.com");
   const sam = person("sam@example.com");
   const jordan = person("jordan@example.com");
+  const quinn = person("quinn@example.com");
 
   // Every demo user gets the same password, printed below. A seeded account
   // with no password cannot sign in, and "log in as anyone" is the whole point
@@ -370,6 +395,36 @@ async function main() {
       points: "1",
       dueInDays: -2,
     },
+    // The two instants. See `dueHasTime` below for why there are two and why
+    // there were none.
+    {
+      key: "ENG-421",
+      name: "Rotate the staging database credentials",
+      status: "Todo",
+      priority: 2,
+      assignees: [sam.id],
+      tags: ["infra"],
+      points: "2",
+      dueInDays: null,
+      // Three days out, not six hours. A seed is read for as long as somebody
+      // is working against it, and the one assertion these two rows exist to
+      // support is that one is ahead of the clock and one behind it — six hours
+      // made that true for an afternoon and then failed the gate with a message
+      // about the fixture rather than about any code. Three days is the same
+      // staleness the calendar dates above already have.
+      dueInHours: 72,
+    },
+    {
+      key: "ENG-419",
+      name: "Expire the old deploy keys",
+      status: "In Progress",
+      priority: 2,
+      assignees: [jordan.id],
+      tags: ["infra"],
+      points: "1",
+      dueInDays: null,
+      dueInHours: -4,
+    },
   ];
 
   const positions = initialPositions(seedTasks.length);
@@ -398,11 +453,27 @@ async function main() {
         // midnight UTC. Seeding "now + n days" instead put every due date at
         // whatever time the seed ran, which reads as the previous day to any
         // viewer west of UTC — the exact shift the flag exists to prevent.
+        //
+        // `dueInHours` is the other kind, and until it existed **every seeded
+        // due date was a calendar day**. So the instant branch of `dateFrame`
+        // was unreachable by `npm test`, `db:smoke`, `check:actions` and a
+        // browser pass over seeded data alike — which is how four more copies
+        // of D-121 survived the commit that fixed it: the code that formats an
+        // instant with no zone cannot be wrong on data that has no instant in
+        // it.
+        //
+        // Two of them, because an instant is the only value `isOverdue`
+        // compares against the clock rather than against the day (D-067). One
+        // ahead of now and one behind it puts a row on each side of that
+        // branch; a single timed task would leave half of it as unreachable as
+        // the whole of it was before.
         dueAt:
-          t.dueInDays === null
-            ? null
-            : startOfUtcDay(new Date(now + t.dueInDays * 86_400_000)),
-        dueHasTime: false,
+          t.dueInHours !== undefined
+            ? new Date(now + t.dueInHours * 3_600_000)
+            : t.dueInDays === null
+              ? null
+              : startOfUtcDay(new Date(now + t.dueInDays * 86_400_000)),
+        dueHasTime: t.dueInHours !== undefined,
         // A start date on some of them, so the timeline has bars rather than a
         // column of single days. Two-thirds of a task's lead time, rounded to
         // a day like the due date it pairs with (D-067).
@@ -773,25 +844,129 @@ async function main() {
     position: firstPosition(),
   });
 
+  // --- a second workspace ---------------------------------------------------
+  // Why it exists and why none of its names collide: `OUTSIDE_SLUG` above.
+  const [outside] = await db
+    .insert(s.workspaces)
+    .values({ name: "Meridian", slug: OUTSIDE_SLUG, plan: "free" })
+    .returning();
+  if (!outside) throw new Error("seed: second workspace insert failed");
+
+  // Quinn is in this one and in nothing else. Sam is in both, and that is the
+  // half that keeps a fix honest: a people-list scoped properly and one scoped
+  // by accident *both* stop offering Quinn in Northwind, so Quinn alone cannot
+  // tell a fix from a coincidence. Only somebody who has to go on appearing in
+  // both can.
+  await db.insert(s.memberships).values([
+    { workspaceId: outside.id, userId: quinn.id, role: "owner" },
+    { workspaceId: outside.id, userId: sam.id, role: "member" },
+  ]);
+
+  // A workspace with no status set is not a fixture, it is a 500 waiting for
+  // the first screen that asks: `resolveStatusSet` throws rather than inventing
+  // one. The note on Northwind's workspace-level "Default" set above is this
+  // same lesson, learned the first time a second space existed.
+  const [outsideSet] = await db
+    .insert(s.statusSets)
+    .values({ workspaceId: outside.id, name: "Dispatch", isTemplate: false })
+    .returning();
+  if (!outsideSet) throw new Error("seed: second status set insert failed");
+
+  const outsideStatuses = await db
+    .insert(s.statuses)
+    .values([
+      { statusSetId: outsideSet.id, name: "Queued", group: "not_started", color: "#6B7686", position: 0 },
+      { statusSetId: outsideSet.id, name: "Dispatched", group: "active", color: "#5B8DEF", position: 1 },
+      { statusSetId: outsideSet.id, name: "Closed out", group: "done", color: "#43B581", position: 2 },
+    ])
+    .returning();
+
+  const [outsideSpace] = await db
+    .insert(s.containers)
+    .values({
+      workspaceId: outside.id,
+      parentId: null,
+      kind: "space",
+      name: "Field Ops",
+      position: firstPosition(),
+      settings: { keyPrefix: "OPS" },
+      createdBy: quinn.id,
+    })
+    .returning();
+  if (!outsideSpace) throw new Error("seed: second workspace space insert failed");
+
+  const [outsideList] = await db
+    .insert(s.containers)
+    .values({
+      workspaceId: outside.id,
+      parentId: outsideSpace.id,
+      kind: "list",
+      name: "Dispatch board",
+      position: firstPosition(),
+      createdBy: quinn.id,
+    })
+    .returning();
+  if (!outsideList) throw new Error("seed: second workspace list insert failed");
+
+  // One task in it, for the reason the private list has one: an empty workspace
+  // leaks nothing, so a check that reads across the boundary cannot fail.
+  // This is the row a missing workspace join would hand to Northwind.
+  const [outsideTask] = await db
+    .insert(s.tasks)
+    .values({
+      workspaceId: outside.id,
+      homeListId: outsideList.id,
+      spaceId: outsideSpace.id,
+      folderId: null,
+      key: "OPS-1",
+      name: "Swap the depot router",
+      statusId: outsideStatuses[0]?.id ?? null,
+      priority: 3,
+      position: firstPosition(),
+      createdBy: quinn.id,
+    })
+    .returning();
+  if (!outsideTask) throw new Error("seed: second workspace task insert failed");
+
+  await db.insert(s.taskLists).values({
+    taskId: outsideTask.id,
+    listId: outsideList.id,
+    isHome: true,
+    position: firstPosition(),
+  });
+
   // --- access index ---------------------------------------------------------
   // Computed by the real job rather than written by hand. The seed used to
   // insert "everyone can manage everything", which meant the demo could not
   // have shown a permission bug even in principle.
+  //
+  // Per workspace, because the job is: a rebuild recomputes the workspace it is
+  // given and nothing else (D-071). Running it for Northwind alone would leave
+  // Meridian with no index rows, and a fixture whose members can see nothing is
+  // indistinguishable from the leak it is meant to catch being absent.
   const access = await rebuildAccessIndex(workspace.id, pool());
+  const outsideAccess = await rebuildAccessIndex(outside.id, pool());
 
-  const taskCount = await db.$count(s.tasks);
+  const taskCount = await db.$count(s.tasks, eq(s.tasks.workspaceId, workspace.id));
+  const outsideTaskCount = await db.$count(s.tasks, eq(s.tasks.workspaceId, outside.id));
   console.log(
     [
       "",
       `  Workspace   ${workspace.name} (/${workspace.slug})`,
-      `  Members     ${users.length}  (sign in as any of them)`,
-      `  Password    ${DEMO_PASSWORD}`,
+      `  Members     4  (sign in as any of them)`,
+      `  Password    ${DEMO_PASSWORD}  (every account, both workspaces)`,
       `  Hierarchy   ${space.name} › ${folder.name} › ${sprint.name}  (+ folderless "${backlog.name}")`,
       `  Private     ${privateSpace.name} › ${privateList.name}  (granted to ${riley.name} only)`,
       `  Access      ${access.length} rows, computed by rebuildAccessIndex`,
       `  Statuses    ${statusRows.map((r) => r.name).join(", ")}`,
       `  Fields      Severity (Bug only), Story Points, Components`,
-      `  Tasks       ${taskCount}`,
+      `  Tasks       ${taskCount}  (ENG-421 and ENG-419 are due at a time, not on a day)`,
+      "",
+      `  Workspace   ${outside.name} (/${outside.slug})  — the cross-workspace fixture`,
+      `  Members     ${quinn.name} (owner, this workspace only), ${sam.name} (member of both)`,
+      `  Hierarchy   ${outsideSpace.name} › ${outsideList.name}`,
+      `  Access      ${outsideAccess.length} rows`,
+      `  Tasks       ${outsideTaskCount}  (OPS-1 — the row a missing workspace join leaks)`,
       "",
       "  Seed complete.",
       "",
