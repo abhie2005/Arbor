@@ -2,14 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   addMonths,
-  instantDay,
-  instantStamp,
-  daysOfMonth,
-  monthBounds,
   addUtcDays,
   dayKeyFor,
+  daysOfMonth,
+  dueLabel,
+  instantDay,
+  instantStamp,
   isMonth,
   isOverdue,
+  monthBounds,
   monthGrid,
   monthOf,
   monthRange,
@@ -206,5 +207,61 @@ describe("an instant has no implied zone", () => {
   it("throws on a value that is not a date rather than printing one", () => {
     expect(() => instantStamp("not a date")).toThrow(RangeError);
     expect(() => instantDay("not a date")).toThrow(RangeError);
+  });
+});
+
+describe("a due date in the four view renderers", () => {
+  // The same bug as above, found four more times (D-132). These are the
+  // regression tests for it: `dueLabel` is the only thing those renderers call
+  // now, and the zone is an argument rather than an ambient fact.
+  const inZone = <T,>(timeZone: string, read: () => T): T => {
+    const before = process.env.TZ;
+    process.env.TZ = timeZone;
+    try {
+      return read();
+    } finally {
+      process.env.TZ = before;
+    }
+  };
+
+  /** 03:34 UTC is the previous evening in Los Angeles and the same day in Tokyo. */
+  const instant = "2026-10-22T03:34:30.206Z";
+  /** Midnight UTC: the calendar day the seed stores (D-067). */
+  const day = "2026-10-22T00:00:00.000Z";
+
+  it("reads a calendar day in UTC whatever zone is asked for, because it has one answer", () => {
+    for (const timeZone of ["UTC", "America/Los_Angeles", "Asia/Tokyo", undefined]) {
+      expect(dueLabel(day, false, "weekday", timeZone)).toBe("Thu 22");
+      expect(dueLabel(day, false, "month", timeZone)).toBe("22 Oct");
+    }
+  });
+
+  it("reads a calendar day the same way wherever it is running", () => {
+    expect(inZone("America/Los_Angeles", () => dueLabel(day, false, "weekday"))).toBe("Thu 22");
+    expect(inZone("Asia/Tokyo", () => dueLabel(day, false, "weekday"))).toBe("Thu 22");
+  });
+
+  it("pins an instant when a zone is named, which is what hydration compares", () => {
+    expect(inZone("America/Los_Angeles", () => dueLabel(instant, true, "weekday", "UTC"))).toBe(
+      "Thu 22",
+    );
+    expect(inZone("Asia/Tokyo", () => dueLabel(instant, true, "weekday", "UTC"))).toBe("Thu 22");
+  });
+
+  it("and reads the zone it is running in when none is named — the bug, kept as a test", () => {
+    // This is the divergence itself: one stored instant, two days. It is only
+    // correct in a browser, which is why `DueDate` names UTC until it has
+    // hydrated.
+    expect(inZone("UTC", () => dueLabel(instant, true, "weekday"))).toBe("Thu 22");
+    expect(inZone("America/Los_Angeles", () => dueLabel(instant, true, "weekday"))).toBe("Wed 21");
+  });
+
+  it("formats both shapes the four renderers use", () => {
+    expect(dueLabel(instant, true, "weekday", "UTC")).toBe("Thu 22");
+    expect(dueLabel(instant, true, "month", "UTC")).toBe("22 Oct");
+  });
+
+  it("throws on a value that is not a date, like its siblings", () => {
+    expect(() => dueLabel("not a date", true, "weekday", "UTC")).toThrow(RangeError);
   });
 });

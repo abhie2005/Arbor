@@ -344,6 +344,29 @@ two applies, because the registry must exist before an image can be pushed.
   rather than as a compile error — so typecheck passes and only
   `check:actions` catches it. Types are fine (they are erased); shared runtime
   values go in a plain module, e.g. `components/card-options.ts`.
+- **`TZ` does nothing in the container, and the failure looks like a pass.** The
+  image is alpine, alpine ships no `tzdata`, and node falls back to **UTC**
+  without a word when `TZ` names a zone it cannot load. So a two-zone render
+  comparison "agrees" because both sides were UTC (D-132). Add it to the
+  container's own command, not the image:
+
+  ```bash
+  DOCKER_HOST="" docker run -d --name arbor-devsrv -p 3300:3000 \
+    -e NODE_ENV=development -e HOSTNAME=0.0.0.0 -e TZ=America/Los_Angeles \
+    -e DATABASE_URL="postgres://arbor:arbor@host.docker.internal:5432/arbor" \
+    -w /repo/apps/web arbor-dev:local \
+    sh -c 'apk add --no-cache tzdata >/dev/null 2>&1; exec node /repo/node_modules/.bin/next dev -p 3000 -H 0.0.0.0'
+  ```
+
+  Check it took before trusting the result: `docker exec arbor-devsrv date`
+  prints `PDT`, and `node -e 'console.log(Intl.DateTimeFormat().resolvedOptions().timeZone)'`
+  prints the zone rather than `UTC`.
+- **The dev container dies of its own heap if it is left running.** `next dev`
+  reached `FATAL ERROR: Reached heap limit` after a few idle hours, and the
+  container exits 0 — so it reads as something having stopped it cleanly.
+  `-e NODE_OPTIONS=--max-old-space-size=3072` on **Docker Desktop** is the fix
+  and is safe there; the note above about *not* raising it applies to Colima,
+  whose VM cannot back a bigger heap.
 - **Postgres's clock is not this machine's.** It runs in the Colima VM and
   drifts tens of milliseconds either way. A check that fences on `activity.at`
   with `new Date()` lets the previous section's writes through at random — take

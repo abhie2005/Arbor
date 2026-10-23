@@ -2656,6 +2656,75 @@ report(
 // than the picker. `peopleIn(…, "offerable")` is checked in `db:smoke`, and
 // what is checked *here* is a call site that renders server-side.
 
+// --- a due date that is a moment, rendered on a server (D-132) --------------
+// The four view renderers formatted an instant with no zone, so the server's
+// zone decided the day and the browser's decided it again — a day apart, and a
+// hydration mismatch on every timed row. The fix pins the pre-hydration render
+// to UTC and *says* UTC.
+//
+// **The marker is what this asserts, not the day.** A check that compared the
+// label against a UTC rendering would pass on reverted code whenever the server
+// happens to run in UTC, which is exactly where these checks run. The marker is
+// only emitted by the pinned path, so it is present if and only if the fix is.
+const dateSpanAfter = (body: string, key: string) => {
+  const at = body.indexOf(`>${key}<`);
+  if (at === -1) return null;
+  const span = body.indexOf('class="date"', at);
+  if (span === -1) return null;
+  const end = body.indexOf("</span>", span);
+  return body.slice(span, end === -1 ? undefined : end);
+};
+
+const timed = await one(
+  `SELECT key FROM tasks WHERE workspace_id = $1 AND due_has_time ORDER BY due_at DESC LIMIT 1`,
+  [workspaceId],
+);
+// The *earliest* timed one, which is the one already behind the clock. The
+// overdue check below has to read a row where the answer differs: on the latest
+// timed task nobody claims overdue either way, so that check passed on reverted
+// code until it was pointed here.
+const timedPast = await one(
+  `SELECT key FROM tasks WHERE workspace_id = $1 AND due_has_time ORDER BY due_at ASC LIMIT 1`,
+  [workspaceId],
+);
+const dated = await one(
+  `SELECT key FROM tasks WHERE workspace_id = $1 AND due_at IS NOT NULL AND NOT due_has_time
+     AND key IS NOT NULL ORDER BY due_at DESC LIMIT 1`,
+  [workspaceId],
+);
+
+const listPage = await getAuthedPage("/");
+const timedSpan = timed?.key ? dateSpanAfter(listPage.body, timed.key) : null;
+const datedSpan = dated?.key ? dateSpanAfter(listPage.body, dated.key) : null;
+const pastSpan = timedPast?.key ? dateSpanAfter(listPage.body, timedPast.key) : null;
+
+report(
+  "a due date with a time is rendered in a named zone, not an implied one",
+  timedSpan === null
+    ? `no date cell for ${timed?.key ?? "any timed task"} — is one seeded?`
+    : timedSpan.includes("UTC")
+      ? null
+      : `the server rendered an instant with no zone named: ${timedSpan.slice(0, 120)}`,
+);
+
+report(
+  "and a calendar day is not pinned, because it never needed to be",
+  datedSpan === null
+    ? `no date cell for ${dated?.key ?? "any dated task"}`
+    : datedSpan.includes("UTC")
+      ? `a calendar day claims a zone it does not have: ${datedSpan.slice(0, 120)}`
+      : null,
+);
+
+report(
+  "nothing claims an instant is overdue before a browser has a clock",
+  pastSpan === null
+    ? `no date cell for ${timedPast?.key ?? "any timed task"}`
+    : /data-overdue="false"/.test(pastSpan)
+      ? null
+      : `the server decided overdue for an instant: ${pastSpan.slice(0, 120)}`,
+);
+
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);
 await db.end();

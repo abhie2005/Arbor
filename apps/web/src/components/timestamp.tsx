@@ -1,9 +1,9 @@
 "use client";
 
 import { instantDay, instantStamp } from "@arbor/core";
-import { useEffect, useState } from "react";
 
 import { relative } from "./relative-time";
+import { useHydrated } from "./use-hydrated";
 
 /**
  * When something happened.
@@ -54,20 +54,4 @@ export function Timestamp({
       {local ? relative(at) : instantDay(at, "UTC")}
     </time>
   );
-}
-
-/**
- * False while the server's markup is what is on screen, true once this is the
- * browser's own render.
- *
- * The state update in an effect with no dependencies is the point rather than
- * an oversight: it cannot run on the server, and it runs exactly once per mount
- * in the browser. `useServerValue`'s during-render adjustment is the opposite
- * case — there the stale value must never be painted, here it must be, because
- * hydration has to see the markup it was given.
- */
-function useHydrated(): boolean {
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => setHydrated(true), []);
-  return hydrated;
 }

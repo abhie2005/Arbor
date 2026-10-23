@@ -4991,3 +4991,86 @@ both workspaces, which is the half that separates a fix from a coincidence.
 *In one sentence:* the bug was five reads with no workspace join, and the fix
 worth keeping is that "who may be chosen" and "who needs a name" became two
 different questions with one implementation.
+
+---
+
+### D-132
+**The four renderers' instant, and a verification with two servers instead of a browser** · 2026-10-23 · active
+
+D-121 fixed the hydration mismatch on every *timestamp*. The same bug was in
+four more places on a different value — `task-row.tsx`, `board.tsx`,
+`task-table.tsx` and `task-detail.tsx` each formatted a **due date** by
+spreading `dateFrame(hasTime)` into `toLocaleDateString`. For a calendar day
+that spreads `timeZone: "UTC"` and is right. For an instant it spreads `{}`,
+which means the ambient zone: the server's during SSR, the viewer's in the
+browser.
+
+**It survived the commit that fixed the fifth copy because no seeded due date
+was an instant.** D-130 seeded two, and the divergence was then one `npm test`
+away.
+
+**`dueLabel(value, hasTime, format, timeZone?)` in core, `DueDate` in web.** The
+zone is a parameter with no default hidden in it, which is the rule
+`packages/core/src/dates.ts` already stated and that these four did not follow:
+a calendar day ignores the argument and answers in UTC, an instant uses it, and
+`undefined` means "wherever this is running" — legal only once the browser is
+the only thing running it. The pre-hydration render is pinned to UTC and *says*
+UTC, exactly as `Timestamp` does, because a day with no zone beside it reads as
+the viewer's own.
+
+**A component, not a hook.** The table's call sits inside a `switch` branch, so
+a `useDueLabel` would have been a conditional hook. `useHydrated` moved out of
+`timestamp.tsx` into its own module, since two components need it now.
+
+**Three helpers became one, and two of them were character-for-character
+identical.** The duplication is why this was four bugs rather than one: a fix to
+`task-row.tsx` would have left the board wrong, and nothing in the repo would
+have said so.
+
+**`overdue` splits for a different reason than the label does.** For a calendar
+day it is a UTC-day comparison, so the server and the browser agree and both
+render it. For an instant it is a comparison against *the clock*, and the
+server's clock is not the viewer's — so **nothing claims it before hydration**
+and the browser adds it on the render it is true for. One frame without the red,
+against a wrong claim on every timed row. The rejected alternative was passing
+`overdue` from the server as a prop: it closes the frame, and it teaches four
+loaders a presentational fact to do it.
+
+**Verified with two servers, because there was no browser.** The Chrome
+extension was not connected, and a hydration mismatch is a console warning and
+nothing else — so the property was tested where it actually lives: the same page
+rendered by the same code on two differently-zoned servers.
+
+| | UTC server | Pacific server |
+|---|---|---|
+| before, ENG-421 | `Mon 26` | **`Sun 25`** |
+| before, ENG-419 | `Fri 23` | **`Thu 22`** (and `data-overdue="true"`) |
+| after, both | `Mon 26 UTC` / `Fri 23 UTC` | identical |
+
+A calendar-day row (`Fri 30`) was identical in every run, which is the control.
+This is stronger evidence than the console warning would have been: it shows the
+server's output is zone-*independent* now, rather than merely that one browser
+stopped complaining.
+
+**The first run of that experiment proved nothing and looked like it passed.**
+The image is alpine, alpine has no `tzdata`, and node silently falls back to UTC
+when `TZ` names a zone it cannot load — so both "zones" were UTC and the output
+matched for the wrong reason. `apk add tzdata` in the container's command is
+what made the test real. It is in `CLAUDE.md` now.
+
+**The gate asserts the marker, not the day.** A check comparing the rendered
+label against a UTC rendering passes on reverted code whenever the server
+happens to run in UTC — which is exactly where these checks run. The ` UTC`
+marker is emitted only by the pinned path, so it is present if and only if the
+fix is. Verified by reverting `task-row.tsx` in the dev container: the check
+fails and prints `Sun 25`.
+
+**And the third check had to be pointed at the right row.** "Nothing claims an
+instant is overdue before a browser has a clock" first read the *latest* timed
+task, where nobody claims overdue either way, so it passed on reverted code. It
+reads the earliest one now — the one already behind the clock — and fails with
+`data-overdue="true"`. Third time in three commits that a check had to be shown
+failing before it was worth keeping.
+
+*In one sentence:* the fix is ten lines of zone argument, and everything worth
+keeping is about how it was proved without the thing the bug reports itself to.

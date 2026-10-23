@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-10-21. Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-23. Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **Phases 1–9 are done. Phase 10 is under way: automations run, and now they
 have a screen.** A rule can be written, armed, disabled and deleted by a person
@@ -48,8 +48,15 @@ five go through one helper whose *audience* is an argument — `offerable` for a
 control that writes a person onto something, `everyone` for anything that turns
 a stored id into a name. A rule may still name the workspace's automation
 account, because that menu and a view's assignee filter are the same read; no
-human picker offers one. **One bug is left**, the four renderers, and it is the
-one that needs a browser rather than a gate.
+human picker offers one.
+
+**And the four renderers are fixed** (2026-10-23, D-132), which closes the last
+of the three. They call one `DueDate` now, pinned to UTC before hydration and
+the viewer's own day after it — proved by rendering the same page from two
+differently-zoned servers rather than by a browser, since the extension was not
+connected and the symptom is a console warning. **All three open bugs are
+closed.** What is left is Phase 10's own list: forms, the public API, and a rule
+that can be edited rather than deleted and rewritten.
 
 The archaeology of the bugs that are fixed, and what browser verification found
 in each phase, is in `docs/HISTORY.md`.
@@ -58,29 +65,38 @@ in each phase, is in `docs/HISTORY.md`.
 
 ## Open bugs
 
-**1. The four view renderers format an instant with no zone — latent, and now
-reachable.** `task-row.tsx`, `task-table.tsx`, `board.tsx` and
-`task-detail.tsx` all format due dates through `dateFrame(hasTime)`, which
-correctly returns `{}` for an instant — and `{}` means the ambient zone, which
-is the server's on the server and the viewer's in the browser. That is D-121
-exactly, in four more places. `isOverdue` on the same path compares against
-`Date.now()` and has the same shape of problem.
+~~**1. The four view renderers format an instant with no zone.**~~ **Done**
+(2026-10-23, D-132). `task-row.tsx`, `board.tsx`, `task-table.tsx` and
+`task-detail.tsx` each spread `dateFrame(hasTime)` into `toLocaleDateString`,
+which for an instant spreads `{}` — the ambient zone, the server's on the server
+and the viewer's in the browser. It survived the commit that fixed the fifth copy
+(D-121) because no seeded due date was an instant until D-130 made two.
 
-~~**The seed has no task with `dueHasTime: true`**~~ — it has two now (D-130),
-ENG-421 three days ahead of the seed and ENG-419 four hours behind it, which is
-what puts a row on each side of `isOverdue`'s instant branch. **The divergence
-is demonstrated rather than deduced**: ENG-421's stored instant renders as
-`Thu 22` through `formatDue` in a process running in UTC and `Wed 21` in one
-running in America/Los_Angeles, so a server render and its hydration disagree
-by a day whenever the two zones straddle midnight.
+All four call `DueDate` now, which does what `Timestamp` does: an instant is
+pinned to UTC and *says* UTC before hydration, and becomes the viewer's own day
+after it. `dueLabel` in core takes the zone as an argument with no default
+hidden in it; a calendar day ignores it and answers in UTC, unchanged since
+D-067. Three helpers became one, two of which were character-for-character
+identical — which is why this was four bugs rather than one.
 
-The fix is `Timestamp`'s two renders pushed into those four, which is more
-invasive than it sounds — the label comes out of a `formatDue` helper that
-returns `{ label, overdue }`, is **duplicated** in `task-row.tsx` and
-`board.tsx` rather than shared, and is read inside drag-heavy markup. The
-prerequisite is done, so this is now a fix with a way to check it: the gate it
-needs is a browser pass, because a hydration mismatch is a console warning and
-nothing else.
+`overdue` splits for a different reason: a calendar day is a UTC-day comparison
+the server can answer, an instant is a comparison against *the clock*, so
+nothing claims it until the browser has one. One frame without the red against a
+wrong claim on every timed row.
+
+**Verified with two servers rather than a browser**, since a hydration mismatch
+is a console warning and nothing else and the Chrome extension was not
+connected. The same page, the same code, two differently-zoned servers: before,
+ENG-421 rendered `Mon 26` in UTC and `Sun 25` in Pacific; after, both render
+`Mon 26 UTC`. A calendar-day row was identical in every run, as the control.
+That is stronger than the warning would have been — it shows the output is
+zone-*independent* rather than that one browser stopped complaining.
+
+**Still no browser pass on this**, which is the one gate `docs/HISTORY.md` would
+normally record for a UI change. Three checks in `check:actions` cover it from
+the server side, asserting the *marker* rather than the day — a day comparison
+passes on reverted code whenever the server runs in UTC, which is where the
+checks run — and all three were shown failing against the reverted renderer.
 
 ~~**2. Five people-lists are still every user in the database.**~~ **Done**
 (2026-10-22, D-131). `views.ts:420`, `task.ts:279`, `goals.ts:33`,
@@ -198,7 +214,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 582 unit tests, 295 live-Postgres checks, 163 action checks, 11
+**Verified:** 588 unit tests, 295 live-Postgres checks, 166 action checks, 11
 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse
@@ -241,21 +257,30 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 ## Where to pick up
 
-**The next job is the one remaining open bug: the four view renderers' instant**
-(bug 1 above). The people-lists are done (D-131) and the fixture both were
-waiting on is done (D-130).
+**The three open bugs are closed** (D-130, D-131, D-132), so the next job is
+Phase 10's own unfinished list rather than a bug. In the order "Where Phase 10
+actually is" argues for:
 
-What this one needs that the other did not is **a browser pass**, because a
-hydration mismatch is a console warning and nothing else — `check:actions`
-cannot see one, which is how four copies survived the commit that fixed the
-fifth. The data to provoke it is seeded now, and the divergence is already
-demonstrated outside a browser: `Thu 22` in UTC against `Wed 21` in
-America/Los_Angeles, from one stored instant. The fix is `instantStamp`'s two
-renders pushed into the four, and `formatDue` is duplicated in `task-row.tsx`
-and `board.tsx`, so it wants sharing before it wants fixing twice.
+1. **A rule cannot be edited, only deleted and written again.** Renaming is the
+   common case and does not need the rule re-validated, so it is probably two
+   entry points rather than one.
+2. **The form offers `to` and not `from`**, though `parseAutomationRule` takes
+   both and `describeRule` already prints it — "when the status stops being
+   Blocked" is expressible and nothing offers it.
+3. **Forms and the public API**, which are the half of Phase 10 with nothing
+   built against them. The API needs tokens belonging to a service account,
+   which is where D-126's synthetic-email wart gets revisited — and D-131 now
+   has an opinion about where a service account may legitimately appear.
 
-(The Chrome extension was not connected on 2026-10-21, which is why the fixture
-landed without one.)
+**Two things owed on what just landed**, neither blocking:
+
+- **No browser pass on the renderers.** Three server-side checks cover them and
+  were shown failing when reverted, but nobody has watched a timed due date
+  hydrate in Chrome. The extension was not connected on 2026-10-21 through
+  2026-10-23.
+- **A second-workspace browser pass of any kind.** Meridian exists and no
+  screen has been opened as Quinn. The dev user switcher lists them (it is
+  unscoped on purpose, D-131), so it is one click away.
 
 **Phase 9 is complete.** Its roadmap line was "CRDT editor, nested pages,
 backlinks" and all three exist: documents are permission-scoped and editable by

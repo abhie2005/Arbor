@@ -137,6 +137,51 @@ export function dayKeyFor(
 }
 
 /**
+ * A due date as the four view renderers print it.
+ *
+ * **`dateFrame` was right and using it was not enough** (D-132). It returns
+ * `{}` for an instant, which is correct — an instant is read where the reader
+ * is — and four renderers spread that `{}` into `toLocaleDateString`, where it
+ * means *the ambient zone*: the server's on the server, the viewer's in the
+ * browser. That is D-121 again, in `task-row.tsx`, `board.tsx`,
+ * `task-table.tsx` and `task-detail.tsx`, and it could not be caught because
+ * no seeded due date was an instant until D-130 made one.
+ *
+ * So the zone is a parameter here and nothing hides a default in it:
+ *
+ * - **a calendar day ignores it** and answers in UTC, because it has one right
+ *   answer everywhere and the flag on the column is what says so (D-067);
+ * - **an instant uses it.** A name pins the result, which is the only answer a
+ *   server render and the hydrating client can agree on; `undefined` means
+ *   wherever this is running, which is legal once the browser is the only
+ *   thing running it.
+ *
+ * The caller that knows which of those it is, is the one that knows whether it
+ * has hydrated — so that decision lives in `DueDate`, not here.
+ */
+export type DueFormat = "weekday" | "month";
+
+export function dueLabel(
+  value: string | Date,
+  hasTime: boolean,
+  format: DueFormat,
+  timeZone?: string,
+): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new RangeError(`Not a date: ${String(value)}`);
+
+  const shape =
+    format === "weekday"
+      ? { weekday: "short" as const, day: "numeric" as const }
+      : { day: "numeric" as const, month: "short" as const };
+
+  return new Intl.DateTimeFormat("en-GB", {
+    ...shape,
+    timeZone: hasTime ? timeZone : "UTC",
+  }).format(date);
+}
+
+/**
  * Whether a due date has passed.
  *
  * A calendar day is not overdue until the day is over — comparing a date-only

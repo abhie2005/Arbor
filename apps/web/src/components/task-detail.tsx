@@ -1,6 +1,6 @@
 "use client";
 
-import { type Operation, dateFrame, isOverdue } from "@arbor/core";
+import { type Operation } from "@arbor/core";
 import { useState } from "react";
 
 import {
@@ -15,6 +15,7 @@ import {
   setTaskType,
 } from "@/server/actions";
 
+import { DueDate } from "./due-date";
 import { Comments } from "./comments";
 import { Presence } from "./presence";
 import { TaskTime } from "./task-time";
@@ -429,15 +430,7 @@ function DateRow({
           }}
         />
       ) : (
-        <span data-overdue={value ? isOverdue(value, hasTime) : undefined}>
-          {value
-            ? new Date(value).toLocaleDateString("en-GB", {
-                weekday: "short",
-                day: "numeric",
-                ...dateFrame(hasTime),
-              })
-            : "—"}
-        </span>
+        <DueDate at={value} hasTime={hasTime} />
       )}
     </Row>
   );

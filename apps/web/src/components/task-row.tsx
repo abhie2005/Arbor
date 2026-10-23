@@ -1,10 +1,11 @@
 "use client";
 
-import { type Operation, dateFrame, isOverdue } from "@arbor/core";
+import { type Operation } from "@arbor/core";
 import { useState } from "react";
 
 import { archiveTask, cycleStatus, renameTask, setPriority } from "@/server/actions";
 
+import { DueDate } from "./due-date";
 import { useServerValue } from "./use-server-value";
 import { Avatar } from "./avatar";
 import { useTaskAction } from "./use-task-action";
@@ -34,8 +35,6 @@ export function TaskRow({ task }: { task: TaskRowData }) {
   const [name, setName] = useServerValue(task.name, editing);
   const { run, pending, failure } = useTaskAction();
   const act = (action: () => Promise<Operation[]>) => run(action, () => setName(task.name));
-
-  const due = formatDue(task.dueAt, task.dueHasTime);
 
   return (
     <div className="row" data-pending={pending || undefined} data-failed={failure ? true : undefined}>
@@ -96,9 +95,7 @@ export function TaskRow({ task }: { task: TaskRowData }) {
         {task.priority ? "▲" : "△"}
       </button>
 
-      <span className="date" data-overdue={due.overdue} data-empty={due.empty}>
-        {due.label}
-      </span>
+      <DueDate at={task.dueAt} hasTime={task.dueHasTime} className="date" flagEmpty />
 
       <span className="avatars">
         {task.assignees.map((person) => (
@@ -125,18 +122,5 @@ export function TaskRow({ task }: { task: TaskRowData }) {
   );
 }
 
-function formatDue(value: string | null, hasTime: boolean) {
-  if (!value) return { label: "—", overdue: false, empty: true };
-  const date = new Date(value);
-  return {
-    label: date.toLocaleDateString("en-GB", {
-      weekday: "short",
-      day: "numeric",
-      ...dateFrame(hasTime),
-    }),
-    overdue: isOverdue(value, hasTime),
-    empty: false,
-  };
-}
 
 

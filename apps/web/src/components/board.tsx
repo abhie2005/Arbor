@@ -1,11 +1,11 @@
 "use client";
 
-import { dateFrame, isOverdue } from "@arbor/core";
 import { useOptimistic, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { moveTask } from "@/server/actions";
 
+import { DueDate } from "./due-date";
 import { Avatar } from "./avatar";
 import { useUndo } from "./undo";
 
@@ -240,8 +240,6 @@ function Card({
     return event.clientY < box.top + box.height / 2 ? "top" : "bottom";
   }
 
-  const due = formatDue(card.dueAt, card.dueHasTime);
-
   return (
     <article
       className="card"
@@ -281,9 +279,7 @@ function Card({
       <p className="card-name">{card.name}</p>
 
       <div className="card-foot">
-        <span className="date" data-overdue={due.overdue} data-empty={due.empty}>
-          {due.label}
-        </span>
+        <DueDate at={card.dueAt} hasTime={card.dueHasTime} className="date" flagEmpty />
         {card.subtaskCount > 0 ? (
           <span className="card-subs">{card.subtaskCount} subtasks</span>
         ) : null}
@@ -302,18 +298,5 @@ function draggedId(event: React.DragEvent<HTMLElement>): string | null {
   return event.dataTransfer.getData("text/plain") || null;
 }
 
-function formatDue(value: string | null, hasTime: boolean) {
-  if (!value) return { label: "—", overdue: false, empty: true };
-  const date = new Date(value);
-  return {
-    label: date.toLocaleDateString("en-GB", {
-      weekday: "short",
-      day: "numeric",
-      ...dateFrame(hasTime),
-    }),
-    overdue: isOverdue(value, hasTime),
-    empty: false,
-  };
-}
 
 
