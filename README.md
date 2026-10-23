@@ -42,7 +42,7 @@ npm run db:seed        # a populated demo workspace, not an empty shell
 npm run dev
 ```
 
-Requires Node 22+ and Docker. Nothing else, and no cloud account — sign-in is
+Requires Node 22+ and Docker. Nothing else, and no cloud account sign-in is
 part of the app rather than a service you register for. The seed prints the
 demo password.
 
