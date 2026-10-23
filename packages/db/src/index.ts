@@ -126,6 +126,7 @@ export {
   type DocRecord,
   type DocWithState,
 } from "./documents";
+export { namesFor, peopleIn, type Audience, type WorkspacePerson } from "./people";
 export {
   MONTHLY_RUN_QUOTA,
   automationQuota,

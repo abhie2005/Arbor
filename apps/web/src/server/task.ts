@@ -17,6 +17,8 @@ import {
   listTaskTypes,
   loadComments,
   loadTaskTime,
+  namesFor,
+  peopleIn,
   pool,
   resolveStatusSetFor,
   taskAccess,
@@ -275,9 +277,11 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
       resolveStatusSetFor(row.workspace_id, row.home_list_id, connection),
       fieldsAvailableOn(row.workspace_id, row.home_list_id, row.task_type_id, connection),
       listTaskTypes(row.workspace_id, connection),
-      connection.query<Person>(
-        `SELECT id, name FROM users WHERE deactivated_at IS NULL ORDER BY name`,
-      ),
+      // Who may be *offered* as an assignee or a watcher: the people of this
+      // workspace, no robots (D-131). Who has to be *labelled* is the wider
+      // question, and it is answered below — the ids that need a name come
+      // back in this same round of queries.
+      peopleIn(row.workspace_id, "offerable", connection),
       connection.query<{ user_id: string; kind: string }>(
         `SELECT user_id, 'assignee' AS kind FROM task_assignees WHERE task_id = $1
          UNION ALL
@@ -331,6 +335,26 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
   // Stored JSON is untrusted input even from our own table (D-018): it was
   // written by a client, and possibly by an older version of this code.
   const description = parseStoredDoc(row.description);
+
+  /**
+   * Somebody already on the task who may not be offered.
+   *
+   * The control renders a checkbox per person *and* labels the read-only view
+   * by filtering the same list, so a name missing from it is an assignee who
+   * is silently not shown — which was already true of a deactivated one before
+   * a rule could ever assign a robot. They are appended rather than excluded:
+   * what a rule did stays removable by hand, and what is not offered cannot be
+   * newly added, which is the line the menus are drawing (D-131).
+   */
+  const onTheTask = [...new Set(relations.rows.map((relation) => relation.user_id))];
+  const offerable = new Set(people.map((person) => person.id));
+  const shown: Person[] = [
+    ...people,
+    ...(await namesFor(
+      onTheTask.filter((id) => !offerable.has(id)),
+      connection,
+    )),
+  ];
 
   const byField = new Map(values.rows.map((v) => [v.field_id, v]));
 
@@ -394,7 +418,7 @@ export async function loadTask(segment: string, viewerId: string): Promise<TaskD
       color: status.color,
     })),
     taskTypes: taskTypes.map((type) => ({ id: type.id, name: type.name })),
-    people: people.rows,
+    people: shown,
     assigneeIds: relations.rows.filter((r) => r.kind === "assignee").map((r) => r.user_id),
     watcherIds: relations.rows.filter((r) => r.kind === "watcher").map((r) => r.user_id),
     fields,

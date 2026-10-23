@@ -140,6 +140,7 @@ import {
   requireTasksAccess,
   taskAccess,
 } from "./task-access";
+import { namesFor, peopleIn } from "./people";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL ?? "postgres://arbor:arbor@localhost:5432/arbor",
@@ -4550,6 +4551,71 @@ async function main() {
       inNorthwind > 0 && inMeridian > 0
         ? null
         : `one side is empty: ${inNorthwind} rows in Northwind, ${inMeridian} in Meridian`,
+    );
+
+    // --- who may be offered, and who merely has to be labelled (D-131) -----
+    // The five reads that filled a picker or labelled an id used to be
+    // `SELECT id, name FROM users`. Both halves are the same join now and the
+    // difference is the audience.
+    const robot = (
+      await pool.query(
+        `SELECT u.id, u.name FROM users u
+           JOIN memberships m ON m.user_id = u.id AND m.workspace_id = $1
+          WHERE u.kind = 'service'`,
+        [ws.id],
+      )
+    ).rows[0] as { id: string; name: string } | undefined;
+
+    const offerable = await peopleIn(ws.id!, "offerable", pool);
+    const everyone = await peopleIn(ws.id!, "everyone", pool);
+    const theirs = await peopleIn(outsideWs.id, "offerable", pool);
+
+    report(
+      "a picker offers nobody from another workspace",
+      offerable.some((person) => person.id === quinn.id)
+        ? "the non-member is offered in Northwind"
+        : null,
+    );
+
+    report(
+      "and still offers the member of both, which is what makes that a fix",
+      offerable.some((person) => person.id === bothWorkspaces.id)
+        ? null
+        : "scoping dropped a member as well as a non-member",
+    );
+
+    report(
+      "the other workspace's own picker offers its own people",
+      theirs.some((person) => person.id === quinn.id) &&
+        theirs.some((person) => person.id === bothWorkspaces.id)
+        ? null
+        : `Meridian's picker holds ${theirs.length} people`,
+    );
+
+    report(
+      "a service account is not offered as an assignee",
+      robot
+        ? offerable.some((person) => person.id === robot.id)
+          ? "the robot is in a picker"
+          : null
+        : "no service account in this workspace — the automations section should have made one",
+    );
+
+    report(
+      "but it is labelled, because a rule's work has to read as somebody's",
+      robot
+        ? everyone.some((person) => person.id === robot.id) &&
+          (await namesFor([robot.id], pool))[0]?.name === robot.name
+          ? null
+          : "the robot has no name to print"
+        : "no service account to label",
+    );
+
+    report(
+      "labels are workspace-scoped too — a stale robot from a previous seed is gone",
+      everyone.some((person) => person.id === quinn.id)
+        ? "a non-member is in the label map"
+        : null,
     );
   }
 

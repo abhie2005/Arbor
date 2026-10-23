@@ -41,9 +41,15 @@ with a member of its own, and two due dates that are a *moment* rather than a
 day — so both remaining bugs are now provable, which neither was before. The
 first thing the fixture showed: the same stored instant renders as `Thu 22` from
 a server in UTC and `Wed 21` in a browser in America/Los_Angeles, which is D-121
-exactly, in the four view renderers. **Nothing about either bug is fixed.** They
-are the next two jobs, under "Open bugs" below, now in the order the fixture
-makes sensible: the five workspace-wide people-lists, then the four renderers.
+exactly, in the four view renderers.
+
+**The five workspace-wide people-lists are fixed too** (2026-10-22, D-131): all
+five go through one helper whose *audience* is an argument — `offerable` for a
+control that writes a person onto something, `everyone` for anything that turns
+a stored id into a name. A rule may still name the workspace's automation
+account, because that menu and a view's assignee filter are the same read; no
+human picker offers one. **One bug is left**, the four renderers, and it is the
+one that needs a browser rather than a gate.
 
 The archaeology of the bugs that are fixed, and what browser verification found
 in each phase, is in `docs/HISTORY.md`.
@@ -76,19 +82,43 @@ prerequisite is done, so this is now a fix with a way to check it: the gate it
 needs is a browser pass, because a hydration mismatch is a console warning and
 nothing else.
 
-**2. Five people-lists are still every user in the database.** `views.ts:420`,
-`task.ts:279`, `goals.ts:33`, `dashboards.ts:54` and `column-values.ts:160`
-each read `FROM users` with no workspace join, to label an id or fill a picker.
+~~**2. Five people-lists are still every user in the database.**~~ **Done**
+(2026-10-22, D-131). `views.ts:420`, `task.ts:279`, `goals.ts:33`,
+`dashboards.ts:54` and `column-values.ts:160` each read `FROM users` with no
+workspace join, to label an id or fill a picker.
 D-122 fixed the two that turn typed text into a *stored* mention and left
 these, which only display: an assignee picker offering somebody from another
 workspace is a real bug and a smaller one. They want `mentionableIn`, or its
 read-only equivalent.
 
-**The fixture that makes this provable exists now** (D-130). Quinn Alvarez is a
-member of Meridian and of nothing else, so a list that still reads `FROM users`
-offers Quinn inside Northwind; Sam Petrov is a member of **both**, which is the
-half that keeps the fix honest, because a read scoped properly and a read
-scoped by accident both stop offering Quinn and only Sam tells them apart.
+All five go through `peopleIn(workspaceId, audience)` now
+(`packages/db/src/people.ts`), and **the audience is the argument** because the
+two questions have different answers: `offerable` for a control that writes a
+person onto something — assignee, watcher, a goal's owner — and `everyone` for
+anything turning a stored id into a name, deactivated people and robots
+included, or a legend prints a uuid.
+
+`loadFilterOptions` asks for `everyone` on purpose: it is a view's assignee menu
+*and* the automations screen's target menu, so it is the one place a service
+account may be named deliberately — a rule can assign to the robot, no human
+picker offers one. The task page unions `offerable` with whoever is already on
+the task, so what a rule did stays removable by hand while nothing lets you add
+it by hand. The membership join also quietly fixed the robot appearing *twice*:
+a stale automation account from a previous seed is not a member here.
+
+**A sixth site, found by the check rather than the audit:**
+`listSwitchableUsers` (the dev switcher in the shell) lists every user in the
+database, while its comment claimed "every user in the workspace". The query is
+deliberately left alone — it is behind `devAuthEnabled()` and is now the only
+way to reach Meridian, since a workspace is resolved from a membership — and the
+comment says what it does.
+
+**Checked:** six in `db:smoke` on `peopleIn` and `namesFor` (including that
+`offerable` still offers the member of *both* workspaces, which is what
+separates a fix from a coincidence), and one in `check:actions` on the assignee
+control's markup, verified to fail by reverting the call site. The goal owner
+picker has no HTTP check and cannot: it is a client component, so its people
+ride the flight payload beside the switcher's own unscoped list.
 
 **And they now offer robots.** A workspace's automation account is a real
 `users` row (D-126), so it appears in the user switcher, in the assignee and
@@ -168,7 +198,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 582 unit tests, 289 live-Postgres checks, 162 action checks, 11
+**Verified:** 582 unit tests, 295 live-Postgres checks, 163 action checks, 11
 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse
@@ -211,21 +241,21 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 ## Where to pick up
 
-**The next job is the two remaining open bugs, in this order** (2026-10-21).
-Both were unprovable until the seed grew its fixture (D-130) and both are now
-provable, which is the only thing that changed — neither is fixed.
+**The next job is the one remaining open bug: the four view renderers' instant**
+(bug 1 above). The people-lists are done (D-131) and the fixture both were
+waiting on is done (D-130).
 
-1. **The five workspace-wide people-lists** (`views.ts:420`, `task.ts:279`,
-   `goals.ts:33`, `dashboards.ts:54`, `column-values.ts:160`). Mechanical now
-   that Quinn exists, but it carries a real decision rather than a `WHERE`: a
-   workspace's automation account is a `users` row (D-126), so whatever scopes
-   these has to say whether an automation may ever be *named* deliberately.
-   Decide that before writing `kind <> 'service'` five times.
-2. **The four view renderers' instant** (bug 1 above). The data exists and the
-   divergence is demonstrated; what it needs that the other does not is a
-   browser pass, because a hydration mismatch is a console warning and nothing
-   else. `check:actions` cannot see one, which is how four copies survived the
-   commit that fixed the fifth.
+What this one needs that the other did not is **a browser pass**, because a
+hydration mismatch is a console warning and nothing else — `check:actions`
+cannot see one, which is how four copies survived the commit that fixed the
+fifth. The data to provoke it is seeded now, and the divergence is already
+demonstrated outside a browser: `Thu 22` in UTC against `Wed 21` in
+America/Los_Angeles, from one stored instant. The fix is `instantStamp`'s two
+renders pushed into the four, and `formatDue` is duplicated in `task-row.tsx`
+and `board.tsx`, so it wants sharing before it wants fixing twice.
+
+(The Chrome extension was not connected on 2026-10-21, which is why the fixture
+landed without one.)
 
 **Phase 9 is complete.** Its roadmap line was "CRDT editor, nested pages,
 backlinks" and all three exist: documents are permission-scoped and editable by

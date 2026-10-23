@@ -2602,6 +2602,60 @@ report(
 
 await db.query(`DELETE FROM automations WHERE workspace_id = $1`, [workspaceId]);
 
+// --- a person who is not in this workspace (D-131) --------------------------
+// `db:smoke` checks `peopleIn` itself; these two check that the screens call
+// it. They are GETs because what went wrong was a *read* — five of them, each
+// filling a menu or labelling an id with `SELECT id, name FROM users`.
+//
+// Each check has a positive half on purpose: a page that rendered no people at
+// all would satisfy "the non-member is absent" and satisfy nothing else.
+const getAuthedPage = async (path: string) => {
+  const response = await fetch(`http://localhost:${PORT}${path}`, {
+    headers: { Cookie: COOKIE },
+  });
+  return { status: response.status, body: await response.text() };
+};
+
+const nonMember = await one(
+  `SELECT name FROM users WHERE email = 'quinn@example.com'`,
+);
+const workspaceMember = await one(`SELECT name FROM users WHERE email = 'sam@example.com'`);
+
+/**
+ * The control, not the page.
+ *
+ * Every screen carries the dev user switcher, and that one lists every user in
+ * the database deliberately — it is how you reach the other workspace at all
+ * (`listSwitchableUsers`). So a check that reads the whole body is a check that
+ * the switcher exists, which is how the first draft of these two passed for the
+ * wrong reason and then failed for the right one.
+ */
+const within = (body: string, open: string, close: string) => {
+  const from = body.indexOf(open);
+  if (from === -1) return null;
+  const to = body.indexOf(close, from);
+  return to === -1 ? body.slice(from) : body.slice(from, to);
+};
+
+const peoplePage = await getAuthedPage("/t/ENG-402");
+const assigneeControl = within(peoplePage.body, 'class="detail-people"', "</div>");
+report(
+  "the assignee control offers this workspace's people and not another's",
+  assigneeControl === null
+    ? `no assignee control on /t/ENG-402 (status ${peoplePage.status})`
+    : assigneeControl.includes(workspaceMember.name!) &&
+        !assigneeControl.includes(nonMember.name!)
+      ? null
+      : `member ${assigneeControl.includes(workspaceMember.name!)}, non-member ${assigneeControl.includes(nonMember.name!)}`,
+);
+
+// The goal owner picker is **not** checked here, and could not be. It is a
+// client component, so the page ships `people` in the flight payload rather
+// than as markup — and the shell's dev switcher ships its own unscoped list in
+// the same payload, so a check over HTTP would be asserting the payload rather
+// than the picker. `peopleIn(…, "offerable")` is checked in `db:smoke`, and
+// what is checked *here* is a call site that renders server-side.
+
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);
 await db.end();

@@ -5,7 +5,7 @@ import {
   type ResolvedColumn,
   fieldValueColumn,
 } from "@arbor/core";
-import { pool } from "@arbor/db";
+import { peopleIn, pool } from "@arbor/db";
 
 /**
  * The values a table's columns need that the compiled row does not carry.
@@ -156,9 +156,10 @@ export async function loadColumnValues(
           [workspaceId],
         )
       : null,
-    needsPeople
-      ? db.query<{ id: string; name: string }>(`SELECT id, name FROM users`)
-      : null,
+    // Labels for ids the rows already hold, so `everyone`: a cell whose
+    // assignee has been deactivated, or is the robot a rule assigned, prints a
+    // name rather than a uuid (D-131).
+    needsPeople ? peopleIn(workspaceId, "everyone", db) : null,
   ]);
 
   const custom = new Map<string, Map<string, unknown>>();
@@ -178,7 +179,7 @@ export async function loadColumnValues(
     custom.set(row.task_id, forTask);
   }
 
-  const people = new Map((peopleRows?.rows ?? []).map((row) => [row.id, row.name]));
+  const people = new Map((peopleRows ?? []).map((row) => [row.id, row.name]));
 
   const tags = new Map<string, TagValue[]>();
   for (const row of tagRows?.rows ?? []) {

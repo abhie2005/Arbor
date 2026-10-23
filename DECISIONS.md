@@ -4914,3 +4914,80 @@ gate to maintain (the pattern CLAUDE.md records for `check:actions`).
 *In one sentence:* the two bugs that were "latent and unprovable" are now
 provable, and nothing about them was fixed — the fixture was the prerequisite
 both of them were waiting on.
+
+---
+
+### D-131
+**The audience is the argument — who may be offered a person, and who merely has to label one** · 2026-10-22 · active
+
+Five reads filled a menu or labelled an id with `SELECT id, name FROM users` and
+no workspace join: `views.ts:420`, `task.ts:279`, `goals.ts:33`,
+`dashboards.ts:54`, `column-values.ts:160`. D-122 had fixed the two that turn
+typed text into a *stored* mention and deliberately left these, which only
+display. D-130 made them provable; this fixes them.
+
+**One helper with an audience, not five `WHERE` clauses.** `peopleIn(workspaceId,
+audience)` in `packages/db/src/people.ts`, because the two questions have
+different answers and the call site is the only thing that knows which it is
+asking:
+
+- **`offerable`** — a control that *writes a person onto something*: an
+  assignee, a watcher, a goal's owner. Members of this workspace, `kind =
+  'person'`, not deactivated.
+- **`everyone`** — anything that turns an id already stored into a name.
+  Members of any kind, the deactivated included, or a dashboard legend and a
+  table cell print a uuid at somebody.
+
+Five `WHERE kind <> 'service'` clauses was the rejected alternative, and it is
+not only duplication: it is the *wrong* answer in the two places that label,
+which is how a policy copied five times drifts.
+
+**`loadFilterOptions` asks for `everyone`, and that is the interesting one.**
+It is a view's assignee menu *and* the automations screen's condition and target
+menus — one read, two screens. So it is the single place a service account may be
+named deliberately: "assign to the workspace's automation account" stays
+expressible in a rule, while no human picker offers one. A view filtering on the
+robot also has to be able to label it. The rejected alternative — excluding
+service accounts everywhere — makes the capability unreachable and the decision
+invisible.
+
+**The task page needed both audiences at once.** Its control renders a checkbox
+per person *and* labels the read-only view by filtering the same list, so a name
+missing from the list is an assignee who is silently not shown. That was already
+true of a deactivated assignee before a rule could assign a robot. So the page
+unions `offerable` with whoever is already on the task, through `namesFor` —
+which gives the honest behaviour: **what a rule did stays removable by hand, and
+what is not offered cannot be newly added.**
+
+**A symptom fixed on the way past.** A workspace's automation account carries
+the workspace id in its synthetic email (D-126), so re-seeding leaves the
+previous one in `users` forever and the pickers showed two. The membership join
+answers that without a word about it: a stale robot is not a member here.
+
+**The sixth site, found by the check rather than by the audit.** The first
+page-level check read the whole response body and failed, because every screen
+carries the dev user switcher and `listSwitchableUsers` lists every user in the
+database — while its comment said "every user in the workspace". The query is
+**left as it is**, deliberately: it is behind `devAuthEnabled()`, and now that a
+second workspace exists it is the only way to get to one, since a person's
+workspace is resolved from their membership. The comment says what the code does
+now. The check was narrowed to the assignee control instead of the page.
+
+**A check that passed for the wrong reason, then failed for the right one.**
+Worth recording because it is the second time in two commits: the first draft
+asserted "the non-member's name is absent from the body", which the switcher
+made false, and would have asserted nothing at all if the page had rendered no
+people. Both halves are checked now — the member present, the non-member absent
+— and the check was verified by reverting the call site inside the dev container
+and watching it fail with `member true, non-member true`.
+
+**What cannot be checked over HTTP, and is not pretended otherwise.** The goal
+owner picker is a client component, so `people` travels in the flight payload
+rather than as markup, beside the switcher's own unscoped list — a check there
+would be asserting the payload, not the picker. `peopleIn` is checked directly
+in `db:smoke` instead, including that `offerable` still offers the member of
+both workspaces, which is the half that separates a fix from a coincidence.
+
+*In one sentence:* the bug was five reads with no workspace join, and the fix
+worth keeping is that "who may be chosen" and "who needs a name" became two
+different questions with one implementation.

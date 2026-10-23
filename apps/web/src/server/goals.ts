@@ -1,6 +1,6 @@
 import "server-only";
 
-import { type GoalRecord, listGoals, loadContainerTree, pool } from "@arbor/db";
+import { type GoalRecord, listGoals, loadContainerTree, peopleIn, pool } from "@arbor/db";
 import { cache } from "react";
 
 /**
@@ -29,9 +29,9 @@ export const loadGoalsPage = cache(
   async (workspaceId: string, includeArchived = false): Promise<GoalsPage> => {
     const [goals, people, containers] = await Promise.all([
       listGoals(workspaceId, { includeArchived }),
-      pool().query<{ id: string; name: string }>(
-        `SELECT id, name FROM users WHERE deactivated_at IS NULL ORDER BY name`,
-      ),
+      // A goal's owner is a commitment somebody made, and a rollup is counted
+      // as them (D-102) — so this offers people and not robots (D-131).
+      peopleIn(workspaceId, "offerable"),
       loadContainerTree(workspaceId),
     ]);
 
@@ -48,6 +48,6 @@ export const loadGoalsPage = cache(
       .map((node) => ({ id: node.id, name: node.name, kind: node.kind as "list" | "space" }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    return { goals, people: people.rows, scopes };
+    return { goals, people, scopes };
   },
 );

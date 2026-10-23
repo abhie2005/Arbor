@@ -57,7 +57,17 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
   return result.rows[0] ?? null;
 }
 
-/** Every user in the workspace, for the switcher's dropdown. */
+/**
+ * Every user in the **database**, for the dev switcher's dropdown — which is
+ * what this has always returned, while the comment here said "in the
+ * workspace" (D-131).
+ *
+ * Unscoped on purpose, and more useful now than when it was an accident: a
+ * second workspace exists (D-130), a person's workspace is resolved from their
+ * membership, so switching to its member is how you get there. The five reads
+ * that fill a *picker* or label an id are scoped now; this one is a development
+ * affordance behind `devAuthEnabled()` and is not one of them.
+ */
 export async function listSwitchableUsers(): Promise<CurrentUser[]> {
   if (!devAuthEnabled()) return [];
 

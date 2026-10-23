@@ -5,6 +5,7 @@ import {
   type ResolvedCard,
   listDashboards,
   loadContainerTree,
+  peopleIn,
   pool,
   resolveCards,
 } from "@arbor/db";
@@ -50,9 +51,9 @@ export const loadDashboardsPage = cache(
          WHERE ss.workspace_id = $1`,
         [workspaceId],
       ),
-      pool().query<{ id: string; name: string }>(
-        `SELECT id, name FROM users WHERE deactivated_at IS NULL`,
-      ),
+      // A legend, not a picker: `everyone`, or a bar grouped by an assignee
+      // who has since been deactivated loses its label (D-131).
+      peopleIn(workspaceId, "everyone"),
       loadContainerTree(workspaceId),
       pool().query<{ id: string; name: string }>(
         `SELECT id, name FROM task_types WHERE workspace_id = $1`,
@@ -64,7 +65,7 @@ export const loadDashboardsPage = cache(
       statuses: new Map(
         statuses.rows.map((row) => [row.id, { name: row.name, color: row.color }]),
       ),
-      people: new Map(people.rows.map((row) => [row.id, row.name])),
+      people: new Map(people.map((row) => [row.id, row.name])),
       containers: new Map([...containers.values()].map((node) => [node.id, node.name])),
       taskTypes: new Map(taskTypes.rows.map((row) => [row.id, row.name])),
     };

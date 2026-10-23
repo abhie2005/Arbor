@@ -26,6 +26,7 @@ import {
   listViews,
   loadFieldCatalog,
   loadFieldNames,
+  peopleIn,
   pool,
   resolveStatusSetFor,
 } from "@arbor/db";
@@ -416,9 +417,11 @@ export async function loadFilterOptions(workspaceId: string): Promise<FilterOpti
        WHERE ss.workspace_id = $1 ORDER BY st.position`,
       [workspaceId],
     ),
-    connection.query<{ id: string; name: string }>(
-      `SELECT id, name FROM users WHERE deactivated_at IS NULL ORDER BY created_at`,
-    ),
+    // `everyone`, deliberately. This one read is a view's assignee menu *and*
+    // the automations screen's target menu, so it is the one place a service
+    // account may be named on purpose (D-131) — and a filter naming one has to
+    // be able to label it either way.
+    peopleIn(workspaceId, "everyone", connection),
     connection.query<{ id: string; name: string }>(
       `SELECT id, name FROM tags WHERE workspace_id = $1 ORDER BY name`,
       [workspaceId],
@@ -453,7 +456,7 @@ export async function loadFilterOptions(workspaceId: string): Promise<FilterOpti
       { id: "3", name: "Normal" },
       { id: "4", name: "Low" },
     ],
-    users: users.rows,
+    users,
     tags: tags.rows,
     taskTypes: taskTypes.rows,
   };
