@@ -122,8 +122,9 @@ and two of the three are no longer wanted:
   it, so moving that loop into a worker service is a deployment decision later
   rather than a rewrite — and the app still reads three environment variables
   instead of growing a fourth (D-125).
-- **`sdk` waits on the public API**, which is the half of phase 10 that has
-  nothing built against it yet.
+- **`sdk` waits on the public API**, whose read half now exists
+  (`/api/v1/views/query`) and whose write half waits on a runtime parser for
+  operations (D-133).
 
 `packages/core` holds the things hardest to get right — the view compiler, the
 field type system, status resolution, ordering, and the document format
@@ -237,7 +238,14 @@ back would be worse than no nudge.
       the editor's offset arithmetic absorbed without a change, plus an edge
       table so the reverse question has an index to answer it.
 - [ ] **10 — Automations, forms, public API.** Automations are built and have a
-      screen; forms and the API do not exist yet. The engine reuses three
+      screen. **The API's read half exists**: `POST /api/v1/views/query` takes a
+      view definition and answers through the compiler, so the API cannot
+      disagree with a saved view about what "overdue and unassigned" means, and
+      a bearer token speaks as a *named service account per integration* — a
+      real member the access index knows, scoped to the one container it was
+      minted against (D-133). Writes wait on a runtime validator for
+      operations, because `Operation` is a TypeScript union and nothing else.
+      Forms do not exist yet. The engine reuses three
       vocabularies rather than inventing any: a trigger names its verb by
       calling the same function that *writes* the activity log, so a rename
       drags every rule along with it instead of quietly unhooking them;
@@ -289,4 +297,4 @@ density on import. Record every import in
 
 [AGPL-3.0-only](LICENSE). The client SDK will be Apache-2.0 when there is one,
 so it can be embedded freely — `packages/sdk` does not exist yet and waits on
-the public API.
+the public API, whose read half landed in D-133.

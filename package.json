@@ -25,6 +25,7 @@
     "db:smoke": "npm run db:smoke -w @arbor/db",
     "check:actions": "npm run check:actions -w @arbor/web",
     "check:search": "npm run check:search -w @arbor/web",
+    "check:api": "npm run check:api -w @arbor/web",
     "db:studio": "npm run db:studio -w @arbor/db",
     "docker:up": "docker compose -f infra/docker/compose.yml up -d",
     "docker:down": "docker compose -f infra/docker/compose.yml down",

@@ -21,11 +21,21 @@ cd apps/web && npx next dev -p 3100       # NOT 3000 — another project owns it
 npm test                                  # unit, no database
 npm run db:seed && npm run db:smoke       # against real Postgres
 PORT=3100 npm run check:actions           # POSTs what a click posts; needs the dev server
+npm run check:api -- 3100                 # the public API over HTTP; any server will do
 npm run typecheck
 ```
 
-`db:generate` then `db:migrate` for schema changes; rename the generated
-migration to something descriptive and update `migrations/meta/_journal.json`.
+**`db:generate` does not run on this machine.** It dies with `TypeError: Do not
+know how to serialize a BigInt` inside `diffSchemasOrTables` before writing
+anything — with the schema unchanged as readily as with a new table, so it is
+the tool and not the schema (D-133). A migration is therefore **hand-written**:
+add the `.sql`, add its entry to `migrations/meta/_journal.json`, and
+`db:migrate` applies it. The cost is that `meta/*_snapshot.json` stops
+describing the schema, so a `generate` that starts working will re-propose what
+it never recorded — already true of 0011 for a different reason.
+
+When it does run: `db:generate` then `db:migrate`, renaming the generated
+migration to something descriptive and updating the journal.
 **Check what `generate` proposes before applying it**: 0011's trigram indexes
 were hand-written with `IF NOT EXISTS`, so the drizzle snapshot never recorded
 them and every generate re-proposes them without the guard — which fails on any
@@ -183,6 +193,9 @@ two applies, because the registry must exist before an image can be pushed.
 | AWS: VPC, RDS, Fargate, ALB, ECR (D-114) | `infra/terraform/` |
 | How to deploy it, and what is not done | `infra/terraform/README.md` |
 | The load balancer's health check | `apps/web/src/app/api/health/route.ts` |
+| API tokens: what one is and who it speaks as (D-133) | `packages/db/src/api-tokens.ts` |
+| The public API's read half | `apps/web/src/app/api/v1/views/query/route.ts` |
+| Bearer auth for the API, and its one refusal shape | `apps/web/src/server/api-auth.ts` |
 
 ## Conventions
 
@@ -191,7 +204,8 @@ two applies, because the registry must exist before an image can be pushed.
   to be explained out loud.
 - **Commit and push each verified chunk**, on `main`. Do not batch.
 - **Gates before any commit**: `npm test`, `db:smoke`, `check:actions`,
-  `check:search`, `typecheck` — plus driving it in Chrome for anything with a UI.
+  `check:search`, `check:api`, `typecheck` — plus driving it in Chrome for
+  anything with a UI.
   `check:search` is the one that runs against the **container image** as happily
   as a dev server (D-115), which is what to reach for when `next dev` will not
   start on this machine.

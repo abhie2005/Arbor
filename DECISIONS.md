@@ -5074,3 +5074,108 @@ failing before it was worth keeping.
 
 *In one sentence:* the fix is ten lines of zone argument, and everything worth
 keeping is about how it was proved without the thing the bug reports itself to.
+
+---
+
+### D-133
+**A token that is not a session — the public API's read half, and the one word that made "scoped" true** · 2026-10-23 · active
+
+Phase 10's untouched half is forms and the public API, and both need the same
+thing first: a request that is not a session, acting as a principal the access
+index already understands. Two decisions were taken before the first line.
+
+**A named service account per integration.** A token names a `users` row with
+`kind = 'service'` — "the nightly importer" — holding its own membership and its
+own grants. This is D-126's answer applied to the half it left open, and the
+payoff is that **no permission code path was added anywhere**: the principal is
+the one every read already joins `access_index` for. History names the
+integration, and one of them can be granted less than another.
+
+Rejected: one principal per workspace, which makes every integration the same
+actor and every grant all-or-nothing; and a token that acts as the person who
+minted it, which writes a person's name on a script's work and outlives the
+intent it was made for.
+
+**The surface is operations and view queries, not REST resources.** Invariant 2
+says no renderer has a query of its own; an API with its own filter syntax is
+exactly the second opinion that rule exists to prevent, and it would arrive
+without custom fields, without nested AND/OR, and without the permission
+scoping all of that is built on. So a caller posts **what a saved view stores**
+and the compiler answers. Validation is compilation: there is no second schema
+to keep in step.
+
+Rejected: REST nouns, which means mapping every future field in two places;
+and REST sugar over the core, which doubles the surface in a phase with no
+consumer yet to say which nouns matter.
+
+**Only the read half shipped, and the reason is a hole worth naming.**
+`Operation` is a TypeScript union and nothing else — there is no runtime
+validator. `undo` has always passed client-supplied operations straight to
+`applyOperations`, which is defensible for a same-origin server action and is
+*not* defensible for an endpoint that takes a bearer token: a malformed or
+hand-made operation would reach the executor. `parseOperations` in core, with
+its own tests, is the next chunk, and `POST /api/v1/operations` waits for it.
+
+**A token is minted against one container, and the minter needs `manage` on
+it** — D-129's rule for writing an automation, for the same reason. The grant
+written at creation is the whole of what the token can touch; widening it is the
+sharing screen, which lists service accounts because an integration needing
+access is what a grant is for.
+
+**And that claim was false when first written.** `check:api` found it: a token
+granted only the private space could read the whole Engineering tree. A
+membership is required — `resolveAccess` drops a principal that has none — and
+as a `member` the account inherits `ROLE_BASELINE.member`, which is `edit` on
+every container nobody marked private. "Scoped to one space" meant "the
+workspace, minus the private bits".
+
+The fix is one word, and the codebase had already written the reasoning down:
+`guest` has a baseline of `null`, and the comment on it says *a guest is someone
+invited to specific things, so "everything not marked private" is precisely the
+wrong default for them*. That is a service account exactly. Grants still apply —
+they are what let a guest into an open list — so the token now reaches what it
+was granted and nothing else.
+
+**The smoke check for it passed on reverted code**, and the reason is this
+project's recurring shape: every open container in the seed lives inside the
+Engineering tree, so a member's baseline had nowhere to appear that the check
+was looking. It grants on **Sprint 24** now, leaving Engineering, Platform and
+Backlog outside the subtree — and it fails with "3 rows outside the granted
+subtree" when the word goes back. Fourth commit in a row where a check had to be
+shown failing before it was worth keeping.
+
+**Smaller calls, each made once:**
+
+- **One 401 for every bad credential** — missing, malformed, revoked, expired.
+  Telling them apart tells a caller which tokens exist (invariant 6).
+- **No cookie fallback.** A session belongs to a browser and brings CSRF
+  questions the API has no answer for; an endpoint accepting either is one a
+  visited page can make a logged-in browser call.
+- **A cross-workspace scope is an empty page, not a refusal**, for the same
+  invariant: a refusal that differed from "empty" would say which containers
+  exist.
+- **Authentication and `last_used_at` are one statement.** It costs a write per
+  request and buys the answer to "can I revoke this?".
+- **Revoking stamps the row rather than deleting it.** The activity log points
+  at the principal; deleting it turns every row it wrote into a uuid nobody can
+  resolve, which is the reason a deactivated person keeps their name (D-083).
+- **`container_id` on the token row** is the scope it was *minted* with, not the
+  sum of its grants today — a settings list says "edit on Engineering", and a
+  revocation has a container to be a sentence about, which it needs because
+  `ConfigEvent`'s object kinds have no workspace member.
+- **0016 is hand-written.** `drizzle-kit generate` dies here with "Do not know
+  how to serialize a BigInt" before writing anything, with or without this
+  table — the tool, not the schema. In `CLAUDE.md` now.
+
+**What this leaves open, and one of them is a live over-reach.** The
+**automation actor is still a `member`** (D-126), so every rule can act on any
+container nobody marked private, granted or not. That is the same inheritance
+this entry just closed for tokens, in a feature that has shipped — narrowing it
+means every workspace's robot needs a grant per container it acts on, which is a
+migration and a decision of its own rather than a word. It is in
+`docs/STATUS.md` as an open question, not a bug, because nothing has been
+promised about it.
+
+*In one sentence:* the design decisions were the easy part, and the thing worth
+remembering is that "least privilege by construction" was a sentence in a doc
+comment until a check disagreed with it.

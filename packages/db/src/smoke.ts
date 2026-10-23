@@ -140,6 +140,7 @@ import {
   requireTasksAccess,
   taskAccess,
 } from "./task-access";
+import { createApiToken, principalForToken, revokeApiToken } from "./api-tokens";
 import { namesFor, peopleIn } from "./people";
 
 const pool = new Pool({
@@ -4663,6 +4664,124 @@ async function main() {
       ? null
       : "a timed due date landed on midnight UTC and reads as a calendar day",
   );
+
+  // --- a token that is not a session (D-133) --------------------------------
+  // The route's half of this is `check:api`; these are the questions that do not
+  // need HTTP. The one that matters most is the last: a token is minted against
+  // one container, and whether that is *true* depends on a single word in the
+  // membership insert.
+  console.log("\na token that is not a session\n");
+
+  const tokenOwner = await one("SELECT id FROM users WHERE email='avery@example.com'");
+  /**
+   * The **list**, not the space.
+   *
+   * Every open container in the seed lives inside the Engineering tree — the
+   * only ones outside it are the private space and its list — so a token
+   * granted on Engineering reaches the whole workspace either way and the
+   * subtree check below passed with the account as a `member`. Granting on one
+   * list leaves Engineering, Platform and Backlog *outside* the subtree, which
+   * is where a baseline shows up if one is inherited. Verified by reverting
+   * `guest` to `member` and watching it fail.
+   */
+  const tokenSpace = await one("SELECT id FROM containers WHERE name='Sprint 24'");
+  // `pool` here is the script's own Pool instance, not `client.ts`'s accessor.
+  const tokenContext = { actorId: tokenOwner.id!, connection: pool };
+
+  const minted = await createApiToken(
+    {
+      workspaceId: ws.id!,
+      name: "db:smoke token",
+      containerId: tokenSpace.id!,
+      permission: "view",
+    },
+    tokenContext,
+  );
+
+  report(
+    "a token resolves to the workspace and principal it was minted for",
+    await (async () => {
+      const principal = await principalForToken(minted.token, pool);
+      return principal?.workspaceId === ws.id && principal?.principalId === minted.record.principalId
+        ? null
+        : `resolved to ${JSON.stringify(principal)}`;
+    })(),
+  );
+
+  report(
+    "a token nobody issued resolves to nobody",
+    (await principalForToken("arb_" + "x".repeat(43), pool)) === null
+      ? null
+      : "a made-up token authenticated",
+  );
+
+  report(
+    "the principal is a service account, which is what makes a write attributable",
+    await (async () => {
+      const row = (
+        await pool.query<{ kind: string; name: string; role: string }>(
+          `SELECT u.kind, u.name, m.role FROM users u
+             JOIN memberships m ON m.user_id = u.id AND m.workspace_id = $1
+            WHERE u.id = $2`,
+          [ws.id, minted.record.principalId],
+        )
+      ).rows[0];
+      return row?.kind === "service" && row?.name === "db:smoke token" && row?.role === "guest"
+        ? null
+        : `the account is ${JSON.stringify(row)}`;
+    })(),
+  );
+
+  /**
+   * **The whole claim of the feature, in one query.**
+   *
+   * A token is minted against one container and reaches what it was granted.
+   * That is only true because the account is a `guest`: as a `member` it would
+   * inherit `ROLE_BASELINE.member` on every container nobody marked private,
+   * and "scoped to one space" would mean "the whole workspace except the
+   * private bits". `check:api` found that; this is the check that fails if the
+   * one word goes back.
+   */
+  report(
+    "and it reaches the container it was granted, and nothing outside that subtree",
+    await (async () => {
+      const rows = (
+        await pool.query<{ outside: string; inside: string }>(
+          // Downwards from the granted container, the way `listGrants` walks
+          // upwards from one (`access.ts`). `containers` has no denormalized
+          // ancestor column — the denormalization lives on `tasks`.
+          `WITH RECURSIVE subtree AS (
+             SELECT id FROM containers WHERE id = $1
+             UNION ALL
+             SELECT c.id FROM containers c JOIN subtree ON c.parent_id = subtree.id
+           )
+           SELECT
+             count(*) FILTER (WHERE container_id NOT IN (SELECT id FROM subtree)) AS outside,
+             count(*) FILTER (WHERE container_id IN (SELECT id FROM subtree)) AS inside
+           FROM access_index WHERE principal_id = $2`,
+          [tokenSpace.id, minted.record.principalId],
+        )
+      ).rows[0]!;
+      if (Number(rows.inside) === 0) return "the token reaches nothing, not even its own container";
+      return Number(rows.outside) === 0
+        ? null
+        : `${rows.outside} rows outside the granted subtree — is the account a member rather than a guest?`;
+    })(),
+  );
+
+  await revokeApiToken(minted.record.id, ws.id!, tokenContext);
+
+  report(
+    "a revoked token resolves to nobody, and its account keeps its name",
+    (await principalForToken(minted.token, pool)) === null &&
+      (
+        await pool.query(`SELECT 1 FROM users WHERE id = $1`, [minted.record.principalId])
+      ).rows.length === 1
+      ? null
+      : "revoking either left the token working or deleted the principal",
+  );
+
+  await pool.query(`DELETE FROM users WHERE id = $1`, [minted.record.principalId]);
 
   console.log(failures === 0 ? "\nall checks passed\n" : `\n${failures} check(s) failed\n`);
   await pool.end();

@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-10-23. Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-23 (API read half). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **Phases 1–9 are done. Phase 10 is under way: automations run, and now they
 have a screen.** A rule can be written, armed, disabled and deleted by a person
@@ -214,8 +214,8 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 588 unit tests, 295 live-Postgres checks, 166 action checks, 11
-search checks, four packages typechecking clean, and the interactions above
+**Verified:** 588 unit tests, 300 live-Postgres checks, 166 action checks, 17
+API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse
 showing as "Linked from" on the page and "Referenced by" on the task.
@@ -257,20 +257,39 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 ## Where to pick up
 
-**The three open bugs are closed** (D-130, D-131, D-132), so the next job is
-Phase 10's own unfinished list rather than a bug. In the order "Where Phase 10
-actually is" argues for:
+**Phase 10 is under way again** (D-133). The three open bugs are closed
+(D-130, D-131, D-132) and the API's read half exists:
+`POST /api/v1/views/query` takes a view definition and answers through the
+compiler, authenticated by a bearer token that speaks as a **named service
+account per integration** — minted against one container, a `guest` so it
+inherits no baseline, reaching what it was granted and nothing else. 17 checks
+in `npm run check:api`, which runs against a dev server, the container image or
+a deployed URL like `check:search` does.
 
-1. **A rule cannot be edited, only deleted and written again.** Renaming is the
+**The next job is the write half, and it has a prerequisite that is not
+optional.** `POST /api/v1/operations` needs `parseOperations` in core first:
+`Operation` is a TypeScript union and *nothing else* — there is no runtime
+validator anywhere, and `undo` has always handed client-supplied operations
+straight to `applyOperations`. Defensible for a same-origin server action,
+indefensible for a bearer-token endpoint. Twelve operation shapes, several with
+nested value objects, so it is a real piece of work with its own unit tests —
+and `undo` should go through it too once it exists.
+
+Then, in the order the rest argues for:
+
+1. **A screen for tokens.** There is none — the seed prints a demo token so a
+   fresh database can call the API at all, and `createApiToken` is otherwise
+   reachable only from a script. `/settings/api` is the obvious home, next to
+   sharing.
+2. **A rule cannot be edited, only deleted and written again.** Renaming is the
    common case and does not need the rule re-validated, so it is probably two
    entry points rather than one.
-2. **The form offers `to` and not `from`**, though `parseAutomationRule` takes
-   both and `describeRule` already prints it — "when the status stops being
-   Blocked" is expressible and nothing offers it.
-3. **Forms and the public API**, which are the half of Phase 10 with nothing
-   built against them. The API needs tokens belonging to a service account,
-   which is where D-126's synthetic-email wart gets revisited — and D-131 now
-   has an opinion about where a service account may legitimately appear.
+3. **The form offers `to` and not `from`**, though `parseAutomationRule` takes
+   both and `describeRule` already prints it.
+4. **Forms**, which are the last untouched piece of the phase. A public form
+   submits without a session, so it is the same question this chunk answered —
+   what a request that is not a session acts as — with "and anonymously" added
+   to it.
 
 **Two things owed on what just landed**, neither blocking:
 
@@ -845,6 +864,24 @@ the ones it does not cover, because they are reading rather than reference:
 
 ## Open questions
 
+- **The automation actor is a `member`, and that is now the odd one out.** A
+  token's service account is a `guest` so it inherits no baseline and reaches
+  only its grants (D-133); the automation account created by
+  `ensureAutomationActor` is a `member`, so **every rule can act on any
+  container nobody marked private**, granted or not. Narrowing it to a guest
+  means every workspace's robot needs a grant per container it acts on — a
+  migration, a backfill, and a decision about what existing rules should keep
+  reaching. Nothing has been promised about it, which is why this is a question
+  rather than a bug, but it is the same inheritance D-133 closed on the other
+  side of the same wall.
+- **The API returns the compiler's own columns** (`due_has_time`, `status_id`),
+  because naming them again at the boundary is the second vocabulary the design
+  avoids. Whether a public API should promise snake_case for ever is open, and
+  the answer probably arrives with `packages/sdk` — which can map once, for
+  everybody, rather than the server mapping for callers who may not want it.
+- **No rate limiting on the API**, and no per-token quota. The automation engine
+  has `MONTHLY_RUN_QUOTA`; a token has nothing. The WAF in `infra/terraform/`
+  is where the blunt version belongs, and a per-token counter is the precise one.
 - **Enterprise features** — in the open repo, or a separately-licensed `ee/`
   directory? Decide before writing the first line of SSO; choosing afterwards
   means an awkward public relicensing.

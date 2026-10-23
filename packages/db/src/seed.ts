@@ -20,6 +20,7 @@ import {
 import { eq, inArray } from "drizzle-orm";
 
 import { rebuildAccessIndex } from "./access";
+import { createApiToken } from "./api-tokens";
 import { setPassword } from "./auth";
 import { createDatabase, pool } from "./client";
 import * as s from "./schema";
@@ -947,6 +948,43 @@ async function main() {
   const access = await rebuildAccessIndex(workspace.id, pool());
   const outsideAccess = await rebuildAccessIndex(outside.id, pool());
 
+  // --- a token for the public API ------------------------------------------
+  // A demo credential, like the demo password above: the endpoint exists and a
+  // fresh database should be able to call it without first building a screen to
+  // mint one (there is none yet).
+  //
+  // Scoped to the Engineering space with `edit`, which is the whole of what it
+  // can touch — a token is minted against one container (D-133), so the private
+  // space and anything outside that subtree are invisible to it. That is also
+  // what makes it a fixture: a token that could see everything would prove
+  // nothing about the scoping.
+  //
+  // Re-seeding leaves the previous token's *service account* in `users` with no
+  // membership, the same way it leaves Quinn. D-131's scoped reads mean nothing
+  // offers or labels it any more, and its token row went with the workspace.
+  const demoToken = await createApiToken(
+    {
+      workspaceId: workspace.id,
+      name: "Demo integration",
+      containerId: space.id,
+      permission: "edit",
+    },
+    { actorId: avery.id, connection: pool() },
+  );
+
+  // Counted here rather than taken from the rebuild above: minting the token
+  // granted its account a container, which rebuilt the index again, so the
+  // earlier number is one revision out of date by the time it is printed.
+  const accessRows = async (workspaceId: string) =>
+    Number(
+      (
+        await pool().query<{ n: string }>(
+          `SELECT count(*) AS n FROM access_index WHERE workspace_id = $1`,
+          [workspaceId],
+        )
+      ).rows[0]!.n,
+    );
+
   const taskCount = await db.$count(s.tasks, eq(s.tasks.workspaceId, workspace.id));
   const outsideTaskCount = await db.$count(s.tasks, eq(s.tasks.workspaceId, outside.id));
   console.log(
@@ -957,15 +995,17 @@ async function main() {
       `  Password    ${DEMO_PASSWORD}  (every account, both workspaces)`,
       `  Hierarchy   ${space.name} › ${folder.name} › ${sprint.name}  (+ folderless "${backlog.name}")`,
       `  Private     ${privateSpace.name} › ${privateList.name}  (granted to ${riley.name} only)`,
-      `  Access      ${access.length} rows, computed by rebuildAccessIndex`,
+      `  Access      ${await accessRows(workspace.id)} rows, computed by rebuildAccessIndex`,
       `  Statuses    ${statusRows.map((r) => r.name).join(", ")}`,
       `  Fields      Severity (Bug only), Story Points, Components`,
       `  Tasks       ${taskCount}  (ENG-421 and ENG-419 are due at a time, not on a day)`,
+      `  API token   ${demoToken.token}`,
+      `              "${demoToken.record.name}" — edit on ${space.name} and nothing else`,
       "",
       `  Workspace   ${outside.name} (/${outside.slug})  — the cross-workspace fixture`,
       `  Members     ${quinn.name} (owner, this workspace only), ${sam.name} (member of both)`,
       `  Hierarchy   ${outsideSpace.name} › ${outsideList.name}`,
-      `  Access      ${outsideAccess.length} rows`,
+      `  Access      ${await accessRows(outside.id)} rows`,
       `  Tasks       ${outsideTaskCount}  (OPS-1 — the row a missing workspace join leaks)`,
       "",
       "  Seed complete.",

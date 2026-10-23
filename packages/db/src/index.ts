@@ -126,6 +126,14 @@ export {
   type DocRecord,
   type DocWithState,
 } from "./documents";
+export {
+  createApiToken,
+  listApiTokens,
+  principalForToken,
+  revokeApiToken,
+  type ApiTokenRecord,
+  type TokenPrincipal,
+} from "./api-tokens";
 export { namesFor, peopleIn, type Audience, type WorkspacePerson } from "./people";
 export {
   MONTHLY_RUN_QUOTA,
