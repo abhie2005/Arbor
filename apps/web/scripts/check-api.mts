@@ -220,6 +220,178 @@ report(
     : `the principal is ${JSON.stringify(principal)}`,
 );
 
+// --- writing ---------------------------------------------------------------
+// The read token above is `view`, which is also the check: the write endpoint
+// has to refuse it. A second token with `edit` does the writing.
+const writer = await createApiToken(
+  { workspaceId: workspace.id!, name: "check:api writer", containerId: engineering.id!, permission: "edit" },
+  context,
+);
+
+async function operations(
+  token: string | null,
+  ops: unknown,
+): Promise<{ status: number; json: Record<string, unknown> }> {
+  const response = await fetch(`${BASE}/api/v1/operations`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ operations: ops }),
+    redirect: "manual",
+  });
+  const text = await response.text();
+  let json: Record<string, unknown> = {};
+  try {
+    json = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    json = { raw: text.slice(0, 200) };
+  }
+  return { status: response.status, json };
+}
+
+const target = await one(`SELECT id, name FROM tasks WHERE key = 'ENG-417'`);
+const unreachable = await one(`SELECT id FROM tasks WHERE key = 'HIRE-1'`);
+
+report(
+  "writing with no token is a 401",
+  (await operations(null, [])).status === 401 ? null : "an unauthenticated write was accepted",
+);
+
+const unknownKind = await operations(writer.token, [{ kind: "dropTable", taskId: target!.id }]);
+report(
+  "an operation the executor cannot apply is a 400, named by index",
+  unknownKind.status === 400 && /operations\[0\]/.test(String(unknownKind.json.error))
+    ? null
+    : `status ${unknownKind.status}, error ${String(unknownKind.json.error)}`,
+);
+
+const badField = await operations(writer.token, [
+  { kind: "setField", taskId: target!.id, field: "workspaceId", from: null, to: "x" },
+]);
+report(
+  "and so is a field outside the closed map, which is a column that would be written",
+  badField.status === 400 && /task field/.test(String(badField.json.error))
+    ? null
+    : `status ${badField.status}, error ${String(badField.json.error)}`,
+);
+
+const rename = await operations(writer.token, [
+  { kind: "setField", taskId: target!.id, field: "name", from: target!.name, to: "Renamed by a token" },
+]);
+report(
+  "a valid batch applies",
+  rename.status === 200 && rename.json.applied === 1
+    ? null
+    : `status ${rename.status}, body ${JSON.stringify(rename.json).slice(0, 160)}`,
+);
+
+const renamed = await one(`SELECT name FROM tasks WHERE id = $1`, [target!.id]);
+report(
+  "and the write reached Postgres",
+  renamed?.name === "Renamed by a token" ? null : `the task is called ${String(renamed?.name)}`,
+);
+
+const actor = await one(
+  `SELECT u.name, u.kind FROM activity a JOIN users u ON u.id = a.actor_id
+    WHERE a.object_id = $1 ORDER BY a.at DESC LIMIT 1`,
+  [target!.id],
+);
+report(
+  "the activity row names the integration, not a person",
+  actor?.kind === "service" && actor?.name === "check:api writer"
+    ? null
+    : `the last activity row is by ${JSON.stringify(actor)}`,
+);
+
+// The undo stack lives with whoever called (D-124), so the response carries
+// what to post to put it back. Posting it back is the whole contract.
+const undone = await operations(writer.token, rename.json.inverse);
+const restored = await one(`SELECT name FROM tasks WHERE id = $1`, [target!.id]);
+report(
+  "the inverse comes back, and posting it undoes the batch",
+  undone.status === 200 && restored?.name === target!.name
+    ? null
+    : `status ${undone.status}, the task is called ${String(restored?.name)}`,
+);
+
+const readOnly = await operations(privileged.token, [
+  { kind: "setField", taskId: unreachable!.id, field: "name", from: null, to: "nope" },
+]);
+report(
+  "a token with view on the container it can reach cannot write there",
+  readOnly.status === 403 && /permission/.test(String(readOnly.json.error))
+    ? null
+    : `status ${readOnly.status}, error ${String(readOnly.json.error)}`,
+);
+
+const outside = await operations(writer.token, [
+  { kind: "setField", taskId: unreachable!.id, field: "name", from: null, to: "nope" },
+]);
+report(
+  "a task it was never granted reads as gone rather than as forbidden (invariant 6)",
+  outside.status === 403 && /no longer exists/.test(String(outside.json.error))
+    ? null
+    : `status ${outside.status}, error ${String(outside.json.error)}`,
+);
+
+// A creation names a container, so it takes `edit` on the list rather than on a
+// task that does not exist yet.
+const sprint = await one(`SELECT id, space_id FROM tasks WHERE key = 'ENG-417'`);
+const sprintList = await one(`SELECT id FROM containers WHERE name = 'Sprint 24'`);
+const hiring = await one(`SELECT id FROM containers WHERE name = 'Hiring'`);
+const newId = crypto.randomUUID();
+
+const created = await operations(writer.token, [
+  {
+    kind: "createTask",
+    taskId: newId,
+    listId: sprintList!.id,
+    values: { name: "Made by a token", position: "zz", spaceId: sprint!.space_id, folderId: null, statusId: null, priority: null },
+  },
+]);
+report(
+  "a creation in a list it may edit lands",
+  created.status === 200 &&
+    (await one(`SELECT 1 AS ok FROM tasks WHERE id = $1`, [newId]))?.ok === 1
+    ? null
+    : `status ${created.status}, body ${JSON.stringify(created.json).slice(0, 160)}`,
+);
+
+const createdElsewhere = await operations(writer.token, [
+  {
+    kind: "createTask",
+    taskId: crypto.randomUUID(),
+    listId: hiring!.id,
+    values: { name: "Should not exist", position: "zz", spaceId: null, folderId: null, statusId: null, priority: null },
+  },
+]);
+report(
+  "and one in a list it cannot reach does not",
+  createdElsewhere.status === 403 &&
+    (await one(`SELECT count(*)::int AS n FROM tasks WHERE name = 'Should not exist'`))?.n === 0
+    ? null
+    : `status ${createdElsewhere.status}`,
+);
+
+const huge = await operations(
+  writer.token,
+  Array.from({ length: 201 }, () => ({ kind: "archiveTask", taskId: target!.id })),
+);
+report(
+  "an absurd batch is refused before anything is applied",
+  huge.status === 400 ? null : `status ${huge.status}`,
+);
+
+const empty = await operations(writer.token, []);
+report(
+  "and an empty one is nothing to do rather than an error",
+  empty.status === 200 && empty.json.applied === 0 ? null : `status ${empty.status}`,
+);
+
+await db.query(`DELETE FROM tasks WHERE id = $1`, [newId]);
+
 // --- revoking --------------------------------------------------------------
 await revokeApiToken(scoped.record.id, workspace.id!, context);
 const afterRevoke = await query(scoped.token, everything);
@@ -251,7 +423,12 @@ report(
 // Clean up: deleting the service accounts takes their tokens, memberships and
 // grants with them, which is why revoking does not delete one (D-133).
 await db.query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [
-  [scoped.record.principalId, privileged.record.principalId, expiring.record.principalId],
+  [
+    scoped.record.principalId,
+    privileged.record.principalId,
+    expiring.record.principalId,
+    writer.record.principalId,
+  ],
 ]);
 
 console.log(failures === 0 ? "\nall api checks passed\n" : `\n${failures} check(s) failed\n`);

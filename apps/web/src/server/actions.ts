@@ -3,8 +3,9 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  type Operation,
   invertBatch,
+  type Operation,
+  parseOperations,
   parseRichText,
   parseStoredDoc,
   positionBetween,
@@ -536,13 +537,29 @@ export async function setCustomFieldValue(
 export async function undo(ops: Operation[]): Promise<void> {
   if (ops.length === 0) return;
   const actor = await requireUser();
+
+  /**
+   * **Parsed, not trusted** (D-134).
+   *
+   * These arrive from the browser as the inverses this server handed out, and
+   * the annotation on the parameter is erased at runtime — so until
+   * `parseOperations` existed, "an `Operation[]`" meant "whatever was posted".
+   * Same-origin and from our own bundle, so the exposure was somebody editing a
+   * request to their own account, which is why this was defensible for five
+   * phases and is not the sort of thing to leave standing once a parser exists.
+   *
+   * It also means one shape check for both doors: the public API's write
+   * endpoint calls the same function on the same payload (D-133).
+   */
+  const parsed = parseOperations(ops);
+
   await requireTasksAccess(
-    ops.map((op) => op.taskId),
+    parsed.map((op) => op.taskId),
     actor.id,
     "edit",
   );
 
-  await applyOperations(ops, { actorId: actor.id });
+  await applyOperations(parsed, { actorId: actor.id });
   revalidatePath("/");
   revalidatePath("/board");
   revalidatePath("/calendar");

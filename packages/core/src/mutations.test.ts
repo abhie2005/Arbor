@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MutationError,
   UndoStack,
   activityVerb,
   describeBatch,
@@ -8,6 +9,8 @@ import {
   invertBatch,
   isNoop,
   type Operation,
+  parseOperation,
+  parseOperations,
 } from "./mutations";
 
 const TASK = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -428,5 +431,191 @@ describe("time entries as operations", () => {
     // The new entry is removed before the old one is restarted, or there would
     // be an instant with two running timers for one person.
     expect(undone.map((op) => op.kind)).toEqual(["deleteTimeEntry", "setTimeEntry"]);
+  });
+});
+
+describe("parsing an operation off the wire", () => {
+  // `Operation` is a type and types are erased, so until `parseOperations`
+  // existed nothing checked one at runtime — `undo` has taken client-supplied
+  // operations since Phase 2 on the strength of an annotation, and the public
+  // API made the same payload reachable with a bearer token (D-134).
+  const FIELD = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const LIST = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const COMMENT = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
+  const ENTRY = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+  const doc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] };
+
+  /** Every kind, in the shape the app and the executor already agree on. */
+  const examples: Operation[] = [
+    { kind: "setField", taskId: TASK, field: "statusId", from: null, to: "x" },
+    { kind: "setCustomField", taskId: TASK, fieldId: FIELD, from: null, to: ["a", "b"] },
+    { kind: "addRelation", taskId: TASK, relation: "assignee", targetId: USER },
+    { kind: "removeRelation", taskId: TASK, relation: "tag", targetId: FIELD },
+    {
+      kind: "createTask",
+      taskId: TASK,
+      listId: LIST,
+      values: { name: "A task", position: "a0", spaceId: LIST, folderId: null, statusId: null, priority: null },
+    },
+    { kind: "archiveTask", taskId: TASK },
+    { kind: "restoreTask", taskId: TASK },
+    { kind: "createComment", commentId: COMMENT, taskId: TASK, body: doc as never, parentId: null },
+    { kind: "deleteComment", commentId: COMMENT, taskId: TASK },
+    { kind: "restoreComment", commentId: COMMENT, taskId: TASK },
+    { kind: "editComment", commentId: COMMENT, taskId: TASK, from: doc as never, to: doc as never },
+    { kind: "setDescription", taskId: TASK, from: null, to: doc as never },
+    {
+      kind: "createTimeEntry",
+      entryId: ENTRY,
+      taskId: TASK,
+      userId: USER,
+      values: { startedAt: "2026-10-24T10:00:00.000Z", endedAt: null, description: null, isBillable: false },
+    },
+    {
+      kind: "setTimeEntry",
+      entryId: ENTRY,
+      taskId: TASK,
+      from: { startedAt: "2026-10-24T10:00:00.000Z", endedAt: null, description: null, isBillable: false },
+      to: { startedAt: "2026-10-24T10:00:00.000Z", endedAt: "2026-10-24T11:00:00.000Z", description: "x", isBillable: true },
+    },
+    {
+      kind: "deleteTimeEntry",
+      entryId: ENTRY,
+      taskId: TASK,
+      userId: USER,
+      values: { startedAt: "2026-10-24T10:00:00.000Z", endedAt: null, description: null, isBillable: false },
+    },
+  ];
+
+  it("accepts every kind the executor can apply, through JSON", () => {
+    // Through `JSON.parse(JSON.stringify(…))` on purpose: invariant 10 says an
+    // operation has to survive the wire, and this is that trip.
+    for (const op of examples) {
+      expect(parseOperation(JSON.parse(JSON.stringify(op)))).toEqual(op);
+    }
+  });
+
+  it("covers every kind, so a new one cannot be added without a test here", () => {
+    // Fifteen `kind` strings across twelve interfaces: `RelationOp`,
+    // `ArchiveOp` and `CommentLifecycleOp` each cover more than one, because
+    // add/remove and archive/restore are the same shape with the sign flipped.
+    expect([...new Set(examples.map((op) => op.kind))].sort()).toEqual([
+      "addRelation",
+      "archiveTask",
+      "createComment",
+      "createTask",
+      "createTimeEntry",
+      "deleteComment",
+      "deleteTimeEntry",
+      "editComment",
+      "removeRelation",
+      "restoreComment",
+      "restoreTask",
+      "setCustomField",
+      "setDescription",
+      "setField",
+      "setTimeEntry",
+    ]);
+  });
+
+  it("returns operations that still invert, which is what the API hands back", () => {
+    for (const op of examples) {
+      expect(() => invert(parseOperation(JSON.parse(JSON.stringify(op))))).not.toThrow();
+    }
+  });
+
+  it("refuses a kind the executor's switch does not handle", () => {
+    expect(() => parseOperation({ kind: "dropTable", taskId: TASK })).toThrow(MutationError);
+    expect(() => parseOperation({ taskId: TASK })).toThrow(MutationError);
+  });
+
+  it("refuses a field outside the closed map, because each one is a column", () => {
+    expect(() =>
+      parseOperation({ kind: "setField", taskId: TASK, field: "workspaceId", from: null, to: "x" }),
+    ).toThrow(/is not a task field/);
+    expect(() =>
+      parseOperation({ kind: "setField", taskId: TASK, field: "name; DROP", from: null, to: "x" }),
+    ).toThrow(/is not a task field/);
+  });
+
+  it("refuses a value that is not a scalar where a column is", () => {
+    expect(() =>
+      parseOperation({ kind: "setField", taskId: TASK, field: "priority", from: null, to: { a: 1 } }),
+    ).toThrow(/is not a string, number, boolean or null/);
+    expect(() =>
+      parseOperation({ kind: "setField", taskId: TASK, field: "priority", from: null, to: [1] }),
+    ).toThrow(MutationError);
+  });
+
+  it("allows a list for a custom field, which is what a multi-select stores", () => {
+    const parsed = parseOperation({
+      kind: "setCustomField",
+      taskId: TASK,
+      fieldId: FIELD,
+      from: null,
+      to: ["a"],
+    });
+    expect(parsed).toMatchObject({ to: ["a"] });
+  });
+
+  it("refuses an id that is not a uuid", () => {
+    expect(() => parseOperation({ kind: "archiveTask", taskId: "1 OR 1=1" })).toThrow(/is not a uuid/);
+    expect(() => parseOperation({ kind: "archiveTask", taskId: "" })).toThrow(/is not a uuid/);
+    expect(() => parseOperation({ kind: "archiveTask" })).toThrow(/is not a uuid/);
+  });
+
+  it("refuses a relation that is not one of the three sets", () => {
+    expect(() =>
+      parseOperation({ kind: "addRelation", taskId: TASK, relation: "owner", targetId: USER }),
+    ).toThrow(/assignee, a watcher or a tag/);
+  });
+
+  it("refuses a document that is not one", () => {
+    expect(() =>
+      parseOperation({ kind: "createComment", commentId: COMMENT, taskId: TASK, body: "hello", parentId: null }),
+    ).toThrow(/is not a document/);
+    expect(() =>
+      parseOperation({
+        kind: "createComment",
+        commentId: COMMENT,
+        taskId: TASK,
+        body: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text" }] }] },
+        parentId: null,
+      }),
+    ).toThrow(/is not a document/);
+  });
+
+  it("refuses time values that are the wrong shape, and leaves the semantics to validateTimeEntry", () => {
+    expect(() =>
+      parseOperation({
+        kind: "createTimeEntry",
+        entryId: ENTRY,
+        taskId: TASK,
+        userId: USER,
+        values: { startedAt: 0, endedAt: null, description: null, isBillable: false },
+      }),
+    ).toThrow(/is not a string/);
+  });
+
+  it("refuses a createTask with nothing to create", () => {
+    expect(() =>
+      parseOperation({ kind: "createTask", taskId: TASK, listId: LIST, values: {} }),
+    ).toThrow(/values.name is not a string/);
+  });
+
+  it("takes a batch, and an empty one means nothing to do", () => {
+    expect(parseOperations([])).toEqual([]);
+    expect(parseOperations(JSON.parse(JSON.stringify(examples)))).toHaveLength(examples.length);
+  });
+
+  it("names the operation that is wrong, so a 400 can say which", () => {
+    expect(() => parseOperations([examples[0], { kind: "nope" }])).toThrow(/operations\[1\]/);
+  });
+
+  it("refuses a batch that is not an array, and one that is absurdly long", () => {
+    expect(() => parseOperations({ 0: examples[0] })).toThrow(/is not an array/);
+    expect(() =>
+      parseOperations(Array.from({ length: 201 }, () => JSON.parse(JSON.stringify(examples[5])))),
+    ).toThrow(/more than 200/);
   });
 });

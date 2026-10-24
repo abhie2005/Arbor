@@ -17,7 +17,7 @@
  * turns an operation into SQL and an activity row.
  */
 
-import { type RichDoc, renderPlain } from "./richtext";
+import { type RichDoc, parseStoredDoc, renderPlain } from "./richtext";
 import { type TimeEntryValues, isRunning, sameTimeEntry } from "./time";
 
 export type TaskField =
@@ -222,6 +222,275 @@ export type Operation =
   | DeleteTimeEntryOp;
 
 export class MutationError extends Error {}
+
+/* ------------------------------------------------------------------------- *
+ * Parsing an operation off the wire
+ * ------------------------------------------------------------------------- */
+
+/**
+ * An operation that arrived as JSON, validated (D-134).
+ *
+ * **`Operation` is a TypeScript union and types are erased.** Nothing checked
+ * one at runtime until this existed: `undo` has taken client-supplied
+ * operations since Phase 2 and handed them to `applyOperations` on the strength
+ * of a type annotation. Same-origin, from our own bundle, so the exposure was
+ * a person editing a request to their own account — and then the public API
+ * made the same payload reachable with a bearer token (D-133), which is a
+ * different proposition entirely.
+ *
+ * **What this refuses is as important as what it accepts:**
+ *
+ * - **an unknown `kind`**, so the executor's `switch` never falls through to a
+ *   default nobody wrote;
+ * - **a `field` outside `TaskField`.** That map is closed because each entry is
+ *   a *column* on `tasks`; the executor would otherwise be asked to write a
+ *   column this code does not know about;
+ * - **a `from`/`to` that is not a scalar.** The type says `unknown` because an
+ *   operation describes a value, and every `TaskField` is a scalar column — an
+ *   object arriving for `priority` is a 500 from Postgres at best;
+ * - **an id that is not a uuid.** Every id on every operation is one, and a
+ *   string that is not reaches the database as a parameter.
+ *
+ * It does **not** check that the ids exist or that the actor may touch them:
+ * existence is the executor's answer and permission is `requireTasksAccess`'s
+ * (invariant 4). This is the shape, nothing more — and the shape is what no
+ * other layer was ever going to check.
+ *
+ * Messages name the offending index and key. They describe the caller's own
+ * payload rather than anything inside the system, so they are safe to return
+ * (invariant 6).
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const TASK_FIELDS: readonly TaskField[] = [
+  "name",
+  "statusId",
+  "priority",
+  "dueAt",
+  "startAt",
+  "points",
+  "timeEstimateMs",
+  "parentTaskId",
+  "homeListId",
+  "taskTypeId",
+  "position",
+];
+
+function fail(where: string, problem: string): never {
+  throw new MutationError(`${where} ${problem}`);
+}
+
+function record(value: unknown, where: string): Record<string, unknown> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    fail(where, "is not an object");
+  }
+  return value as Record<string, unknown>;
+}
+
+function id(value: unknown, where: string): string {
+  if (typeof value !== "string" || !UUID.test(value)) fail(where, "is not a uuid");
+  return value;
+}
+
+function nullableId(value: unknown, where: string): string | null {
+  return value === null || value === undefined ? null : id(value, where);
+}
+
+function text(value: unknown, where: string): string {
+  if (typeof value !== "string") fail(where, "is not a string");
+  return value;
+}
+
+function nullableText(value: unknown, where: string): string | null {
+  return value === null || value === undefined ? null : text(value, where);
+}
+
+/** A JSON scalar. What a column holds, and what an activity row can print. */
+function scalar(value: unknown, where: string): unknown {
+  if (value === null || value === undefined) return null;
+  const type = typeof value;
+  if (type === "string" || type === "number" || type === "boolean") return value;
+  fail(where, "is not a string, number, boolean or null");
+}
+
+/** A custom field's value: a scalar, or a list of them for a multi-select. */
+function fieldValue(value: unknown, where: string): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item, index) => scalar(item, `${where}[${index}]`));
+  }
+  return scalar(value, where);
+}
+
+function doc(value: unknown, where: string): RichDoc {
+  const parsed = parseStoredDoc(value);
+  if (!parsed) fail(where, "is not a document");
+  return parsed;
+}
+
+function nullableDoc(value: unknown, where: string): RichDoc | null {
+  return value === null || value === undefined ? null : doc(value, where);
+}
+
+function timeValues(value: unknown, where: string): TimeEntryValues {
+  const raw = record(value, where);
+  return {
+    startedAt: text(raw.startedAt, `${where}.startedAt`),
+    endedAt: nullableText(raw.endedAt, `${where}.endedAt`),
+    description: nullableText(raw.description, `${where}.description`),
+    isBillable: raw.isBillable === true,
+  };
+}
+
+export function parseOperation(value: unknown, where = "the operation"): Operation {
+  const raw = record(value, where);
+  const kind = raw.kind;
+
+  switch (kind) {
+    case "setField": {
+      const field = raw.field;
+      if (typeof field !== "string" || !TASK_FIELDS.includes(field as TaskField)) {
+        fail(`${where}.field`, "is not a task field");
+      }
+      return {
+        kind,
+        taskId: id(raw.taskId, `${where}.taskId`),
+        field: field as TaskField,
+        from: scalar(raw.from, `${where}.from`),
+        to: scalar(raw.to, `${where}.to`),
+      };
+    }
+
+    case "setCustomField":
+      return {
+        kind,
+        taskId: id(raw.taskId, `${where}.taskId`),
+        fieldId: id(raw.fieldId, `${where}.fieldId`),
+        from: fieldValue(raw.from, `${where}.from`),
+        to: fieldValue(raw.to, `${where}.to`),
+      };
+
+    case "addRelation":
+    case "removeRelation": {
+      const relation = raw.relation;
+      if (relation !== "assignee" && relation !== "watcher" && relation !== "tag") {
+        fail(`${where}.relation`, "is not an assignee, a watcher or a tag");
+      }
+      return {
+        kind,
+        taskId: id(raw.taskId, `${where}.taskId`),
+        relation,
+        targetId: id(raw.targetId, `${where}.targetId`),
+      };
+    }
+
+    case "createTask": {
+      // The keys the executor reads, and no others — it ignores the rest, so a
+      // parser that accepted them would promise something nothing honours.
+      const values = record(raw.values, `${where}.values`);
+      return {
+        kind,
+        taskId: id(raw.taskId, `${where}.taskId`),
+        listId: id(raw.listId, `${where}.listId`),
+        values: {
+          name: text(values.name, `${where}.values.name`),
+          position: text(values.position, `${where}.values.position`),
+          spaceId: nullableId(values.spaceId, `${where}.values.spaceId`),
+          folderId: nullableId(values.folderId, `${where}.values.folderId`),
+          statusId: nullableId(values.statusId, `${where}.values.statusId`),
+          priority:
+            values.priority === null || values.priority === undefined
+              ? null
+              : Number.isInteger(values.priority)
+                ? (values.priority as number)
+                : fail(`${where}.values.priority`, "is not a whole number"),
+        },
+      };
+    }
+
+    case "archiveTask":
+    case "restoreTask":
+      return { kind, taskId: id(raw.taskId, `${where}.taskId`) };
+
+    case "createComment":
+      return {
+        kind,
+        commentId: id(raw.commentId, `${where}.commentId`),
+        taskId: id(raw.taskId, `${where}.taskId`),
+        body: doc(raw.body, `${where}.body`),
+        parentId: nullableId(raw.parentId, `${where}.parentId`),
+      };
+
+    case "deleteComment":
+    case "restoreComment":
+      return {
+        kind,
+        commentId: id(raw.commentId, `${where}.commentId`),
+        taskId: id(raw.taskId, `${where}.taskId`),
+      };
+
+    case "editComment":
+      return {
+        kind,
+        commentId: id(raw.commentId, `${where}.commentId`),
+        taskId: id(raw.taskId, `${where}.taskId`),
+        from: doc(raw.from, `${where}.from`),
+        to: doc(raw.to, `${where}.to`),
+      };
+
+    case "setDescription":
+      return {
+        kind,
+        taskId: id(raw.taskId, `${where}.taskId`),
+        from: nullableDoc(raw.from, `${where}.from`),
+        to: nullableDoc(raw.to, `${where}.to`),
+      };
+
+    case "createTimeEntry":
+      return {
+        kind,
+        entryId: id(raw.entryId, `${where}.entryId`),
+        taskId: id(raw.taskId, `${where}.taskId`),
+        userId: id(raw.userId, `${where}.userId`),
+        values: timeValues(raw.values, `${where}.values`),
+      };
+
+    case "setTimeEntry":
+      return {
+        kind,
+        entryId: id(raw.entryId, `${where}.entryId`),
+        taskId: id(raw.taskId, `${where}.taskId`),
+        from: timeValues(raw.from, `${where}.from`),
+        to: timeValues(raw.to, `${where}.to`),
+      };
+
+    case "deleteTimeEntry":
+      return {
+        kind,
+        entryId: id(raw.entryId, `${where}.entryId`),
+        taskId: id(raw.taskId, `${where}.taskId`),
+        userId: id(raw.userId, `${where}.userId`),
+        values: timeValues(raw.values, `${where}.values`),
+      };
+
+    default:
+      fail(`${where}.kind`, `is not an operation: ${JSON.stringify(kind)}`);
+  }
+}
+
+/**
+ * A batch off the wire.
+ *
+ * An empty array is allowed and means nothing to do — `applyOperations` already
+ * treats it that way, and an endpoint refusing it would make "apply these
+ * zero changes" an error for no reason.
+ */
+export function parseOperations(value: unknown, limit = 200): Operation[] {
+  if (!Array.isArray(value)) fail("operations", "is not an array");
+  if (value.length > limit) {
+    fail("operations", `holds more than ${limit} operations in one batch`);
+  }
+  return value.map((item, index) => parseOperation(item, `operations[${index}]`));
+}
 
 /**
  * The inverse of an operation.

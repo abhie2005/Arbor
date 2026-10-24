@@ -122,9 +122,9 @@ and two of the three are no longer wanted:
   it, so moving that loop into a worker service is a deployment decision later
   rather than a rewrite — and the app still reads three environment variables
   instead of growing a fourth (D-125).
-- **`sdk` waits on the public API**, whose read half now exists
-  (`/api/v1/views/query`) and whose write half waits on a runtime parser for
-  operations (D-133).
+- **`sdk` waits on the public API**, which now reads
+  (`/api/v1/views/query`) and writes (`/api/v1/operations`) — D-133 and D-134.
+  What it does not have yet is a screen for minting a token.
 
 `packages/core` holds the things hardest to get right — the view compiler, the
 field type system, status resolution, ordering, and the document format
@@ -243,9 +243,13 @@ back would be worse than no nudge.
       disagree with a saved view about what "overdue and unassigned" means, and
       a bearer token speaks as a *named service account per integration* — a
       real member the access index knows, scoped to the one container it was
-      minted against (D-133). Writes wait on a runtime validator for
-      operations, because `Operation` is a TypeScript union and nothing else.
-      Forms do not exist yet. The engine reuses three
+      minted against (D-133). **Writes work too**: `POST /api/v1/operations`
+      takes the same `Operation[]` the browser's undo stack holds, so an API
+      write gets its activity row and its inverse by construction and the
+      response hands the inverses back — and `parseOperations` validates the
+      shape at runtime for both that endpoint and `undo`, which had been
+      trusting a type annotation since Phase 2 (D-134). There is no screen for
+      minting a token yet, and forms do not exist. The engine reuses three
       vocabularies rather than inventing any: a trigger names its verb by
       calling the same function that *writes* the activity log, so a rename
       drags every rule along with it instead of quietly unhooking them;
@@ -296,5 +300,5 @@ density on import. Record every import in
 ## License
 
 [AGPL-3.0-only](LICENSE). The client SDK will be Apache-2.0 when there is one,
-so it can be embedded freely — `packages/sdk` does not exist yet and waits on
-the public API, whose read half landed in D-133.
+so it can be embedded freely — `packages/sdk` does not exist yet, and the API it
+would wrap landed in D-133 and D-134.

@@ -195,6 +195,8 @@ two applies, because the registry must exist before an image can be pushed.
 | The load balancer's health check | `apps/web/src/app/api/health/route.ts` |
 | API tokens: what one is and who it speaks as (D-133) | `packages/db/src/api-tokens.ts` |
 | The public API's read half | `apps/web/src/app/api/v1/views/query/route.ts` |
+| The public API's write half | `apps/web/src/app/api/v1/operations/route.ts` |
+| An operation off the wire, validated (D-134) | `parseOperations` in `packages/core/src/mutations.ts` |
 | Bearer auth for the API, and its one refusal shape | `apps/web/src/server/api-auth.ts` |
 
 ## Conventions
@@ -375,12 +377,16 @@ two applies, because the registry must exist before an image can be pushed.
   Check it took before trusting the result: `docker exec arbor-devsrv date`
   prints `PDT`, and `node -e 'console.log(Intl.DateTimeFormat().resolvedOptions().timeZone)'`
   prints the zone rather than `UTC`.
-- **The dev container dies of its own heap if it is left running.** `next dev`
-  reached `FATAL ERROR: Reached heap limit` after a few idle hours, and the
-  container exits 0 — so it reads as something having stopped it cleanly.
-  `-e NODE_OPTIONS=--max-old-space-size=3072` on **Docker Desktop** is the fix
-  and is safe there; the note above about *not* raising it applies to Colima,
-  whose VM cannot back a bigger heap.
+- **The dev container dies of its own heap if it is left running**, and
+  `--max-old-space-size` only buys time. `next dev` reached
+  `FATAL ERROR: Reached heap limit` after a few idle hours at the default, and
+  again ~14 hours later with the heap at 3072 — the container exits **0** both
+  times, so it reads as something having stopped it cleanly rather than as a
+  crash. Treat it as per-session: recreate the container when you come back
+  rather than expecting yesterday's to still be serving. `-e
+  NODE_OPTIONS=--max-old-space-size=3072` is still worth passing on **Docker
+  Desktop**; the note above about *not* raising it applies to Colima, whose VM
+  cannot back a bigger heap.
 - **Postgres's clock is not this machine's.** It runs in the Colima VM and
   drifts tens of milliseconds either way. A check that fences on `activity.at`
   with `new Date()` lets the previous section's writes through at random — take

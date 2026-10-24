@@ -5179,3 +5179,79 @@ promised about it.
 *In one sentence:* the design decisions were the easy part, and the thing worth
 remembering is that "least privilege by construction" was a sentence in a doc
 comment until a check disagreed with it.
+
+---
+
+### D-134
+**A runtime parser for operations, and what the executor already refused** · 2026-10-24 · active
+
+`POST /api/v1/operations` is the write half D-133 left out, and it waited on
+this: `Operation` is a TypeScript union, types are erased, and nothing in the
+repo checked one at runtime. `undo` has handed client-supplied operations to
+`applyOperations` since Phase 2 on the strength of a parameter annotation —
+same-origin, from our own bundle, so the exposure was somebody editing a
+request to their own account. A bearer token is a different proposition.
+
+**`parseOperations` is in core**, next to `invert`, because it is pure and
+because the shape of an operation is the thing core owns. It refuses an unknown
+`kind`, a `field` outside the closed `TaskField` map, a `from`/`to` that is not
+a scalar where the column is one, a list of non-scalars for a custom field, an
+id that is not a uuid, a document that is not one (via `parseStoredDoc`, which
+already existed for the same reason — D-018), a time-entry shape that is not
+one, and a batch longer than 200. It does **not** check that ids exist or that
+the actor may touch them: existence is the executor's answer and permission is
+`requireTasksAccess`'s (invariant 4). The shape is what nothing else was going
+to check.
+
+**What it does not add, which is worth recording because the first version of
+this entry claimed otherwise.** The executor was never the open door it was
+described as. Bypassing the parser in the dev container and posting the same
+payloads:
+
+| payload | parsed | bypassed |
+|---|---|---|
+| unknown `kind` | 400, names the index | 400 `Unhandled operation` |
+| `field` outside the map | 400, names the key | 400 `Field is not writable` |
+| comment body that is not a document | 400, names the key | 400, the comment service catches it |
+| `taskId` that is not a uuid | 400, names the key | 403 `That task no longer exists` |
+| an object where a column is | 400, names the key | **500** |
+| time entry with no `startedAt` | 400, names the key | **500** |
+| 201 operations in one batch | 400 | **200 — applied** |
+
+So the parser's real additions are three: **two caller-triggerable 500s become
+400s**, an **unbounded batch gets a cap**, and the **messages name the offending
+index and key** instead of answering a malformed id with "no longer exists".
+Plus one shape check shared by both doors, which is the part that stops the two
+drifting. That is a smaller claim than "the executor was unguarded", and it is
+the true one — the executor's `default:` and its writable-field list were
+already there, and the honest reason to add a parser is that *three* layers each
+refusing part of a bad payload is how a 500 ends up being the answer to a typo.
+
+**`undo` goes through it too.** One parser, both doors: the public endpoint and
+the server action now check the same payload the same way, which is the only
+arrangement where a fix to one is a fix to both.
+
+**Authorization is per operation, and `createTask` is the exception.** Every
+other kind names a task, so `requireTasksAccess` asks what `undo` asks (D-080).
+A creation names a *container* and its task does not exist yet, so it takes
+`edit` on the list — the check that stops a row being written into a list the
+caller cannot read. A `createTask` sent through `requireTasksAccess` would be
+refused as "no longer exists", which is correct and useless.
+
+**One status for both halves of a refused task.** Invariant 6 forbids
+distinguishing unreachable from missing, and an HTTP status distinguishes
+loudly — so both are 403 and the *message* carries the difference: "That task no
+longer exists" against "You do not have permission to change this task".
+
+**The inverses come back in the response.** The undo stack lives with whoever
+called (D-124): an automation has none because it never asked, and an API caller
+can keep theirs. `check:api` posts the inverse back and asserts the value
+returns, which is the contract in one assertion.
+
+**Thirteen checks in `check:api`, seventeen unit tests**, and the parser's
+contribution was verified by bypassing it in the container rather than by
+argument — which is how the table above exists and how the overclaim was caught.
+
+*In one sentence:* the parser is worth having for the batch cap, the two 500s
+and the error messages, and the thing worth remembering is that the executor
+had been quietly refusing most of this all along.

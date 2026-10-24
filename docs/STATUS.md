@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-10-23 (API read half). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-24. Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **Phases 1–9 are done. Phase 10 is under way: automations run, and now they
 have a screen.** A rule can be written, armed, disabled and deleted by a person
@@ -214,7 +214,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 588 unit tests, 300 live-Postgres checks, 166 action checks, 17
+**Verified:** 603 unit tests, 300 live-Postgres checks, 166 action checks, 30
 API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse
@@ -266,21 +266,30 @@ inherits no baseline, reaching what it was granted and nothing else. 17 checks
 in `npm run check:api`, which runs against a dev server, the container image or
 a deployed URL like `check:search` does.
 
-**The next job is the write half, and it has a prerequisite that is not
-optional.** `POST /api/v1/operations` needs `parseOperations` in core first:
-`Operation` is a TypeScript union and *nothing else* — there is no runtime
-validator anywhere, and `undo` has always handed client-supplied operations
-straight to `applyOperations`. Defensible for a same-origin server action,
-indefensible for a bearer-token endpoint. Twelve operation shapes, several with
-nested value objects, so it is a real piece of work with its own unit tests —
-and `undo` should go through it too once it exists.
+**The write half is done too** (D-134). `POST /api/v1/operations` takes
+`Operation[]`, which is the only thing that writes task data (invariant 1), so
+an API write gets its activity row, its live nudge and its inverse by
+construction. The response carries the inverses, because the undo stack lives
+with whoever called (D-124) — `check:api` posts them back and asserts the value
+returns.
+
+`parseOperations` in core is what it waited on, and **the claim that motivated
+it was too strong**: the executor already refused an unknown `kind`, a
+non-writable `field` and a malformed comment body on its own. What the parser
+actually adds is three things — two caller-triggerable **500s become 400s** (an
+object where a column is, a malformed time-entry shape), an **unbounded batch
+gets a cap** (201 operations applied before it), and messages that **name the
+offending index and key**. `undo` routes through the same parser now, so both
+doors check the same payload the same way. The table is in D-134, and it exists
+because the parser was bypassed in a container rather than argued about.
 
 Then, in the order the rest argues for:
 
 1. **A screen for tokens.** There is none — the seed prints a demo token so a
    fresh database can call the API at all, and `createApiToken` is otherwise
    reachable only from a script. `/settings/api` is the obvious home, next to
-   sharing.
+   sharing, and it is the last thing standing between the API and somebody
+   outside this repo using it.
 2. **A rule cannot be edited, only deleted and written again.** Renaming is the
    common case and does not need the rule re-validated, so it is probably two
    entry points rather than one.
