@@ -54,8 +54,9 @@ export default async function SettingsLayout({ children }: { children: React.Rea
           <div className="notice">
             You are a {role ?? "guest"} in this workspace. Statuses, fields and task types are
             workspace configuration, so only an owner or admin can change them. Everything here
-            is readable; saving will be refused. Sharing is the exception — it goes by what you
-            hold on the container, so a space you manage is yours to share.
+            is readable; saving will be refused. Sharing and API tokens are the exceptions —
+            both go by what you hold on the container, so a space you manage is yours to share
+            and yours to mint a token against.
           </div>
         ) : null}
         {children}

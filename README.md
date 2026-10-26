@@ -123,8 +123,8 @@ and two of the three are no longer wanted:
   rather than a rewrite — and the app still reads three environment variables
   instead of growing a fourth (D-125).
 - **`sdk` waits on the public API**, which now reads
-  (`/api/v1/views/query`) and writes (`/api/v1/operations`) — D-133 and D-134.
-  What it does not have yet is a screen for minting a token.
+  (`/api/v1/views/query`), writes (`/api/v1/operations`) and has a screen for
+  minting the tokens — D-133, D-134, D-135.
 
 `packages/core` holds the things hardest to get right — the view compiler, the
 field type system, status resolution, ordering, and the document format
@@ -248,8 +248,9 @@ back would be worse than no nudge.
       write gets its activity row and its inverse by construction and the
       response hands the inverses back — and `parseOperations` validates the
       shape at runtime for both that endpoint and `undo`, which had been
-      trusting a type annotation since Phase 2 (D-134). There is no screen for
-      minting a token yet, and forms do not exist. The engine reuses three
+      trusting a type annotation since Phase 2 (D-134). `/settings/api` mints
+      and revokes them, taking `manage` on the container a token is scoped to
+      rather than a workspace role (D-135). Forms do not exist yet. The engine reuses three
       vocabularies rather than inventing any: a trigger names its verb by
       calling the same function that *writes* the activity log, so a rename
       drags every rule along with it instead of quietly unhooking them;

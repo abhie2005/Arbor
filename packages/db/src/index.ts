@@ -129,6 +129,7 @@ export {
 export {
   createApiToken,
   listApiTokens,
+  loadApiToken,
   principalForToken,
   revokeApiToken,
   type ApiTokenRecord,

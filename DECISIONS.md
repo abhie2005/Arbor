@@ -5255,3 +5255,67 @@ argument — which is how the table above exists and how the overclaim was caugh
 *In one sentence:* the parser is worth having for the batch cap, the two 500s
 and the error messages, and the thing worth remembering is that the executor
 had been quietly refusing most of this all along.
+
+---
+
+### D-135
+**A screen for the tokens, and the third UI chunk with no browser pass** · 2026-10-26 · active
+
+The endpoints have existed since D-133 and D-134, and the only token a person
+could hold was the one the seed prints — so the public API was usable by anybody
+with a shell on the database and nobody else. `/settings/api` is the screen that
+was owed.
+
+**It is the automations screen's shape, deliberately.** The container tree
+scoped by `reachableContainers(… "manage")`, the same permission the actions
+behind it take, because a token is the same kind of thing a rule is: scoped to
+one container, acting only inside it, which makes it sharing (D-109) rather than
+workspace-wide configuration (D-081). A member holds `edit` at most and so
+cannot mint one — which matters more here than for a rule, because minting a
+token *writes a grant*, and an unauthorized mint would be an unauthorized share.
+
+**It lists the tokens whose container the viewer manages, not the workspace's**
+(D-123). A viewer who cannot manage a token's container cannot revoke it and has
+no business being told it exists.
+
+**The container is read off the token when revoking, never from the request** —
+D-129's rule, for the same reason: an id arriving from a form says which token,
+not which container, and checking the container the form claims would let
+somebody name one they manage and a token they do not.
+
+**The token is shown once, and that is a statement of fact rather than a
+policy.** It is stored as a hash, so nothing — this screen included — can print
+it again; the panel says so in those words rather than "keep it safe". It
+travels in the action's return value because no revalidation could bring it
+back.
+
+**A member gets an explanation, not a form.** Nobody manages a container by
+being a member, so the panel renders why there is nothing to mint instead of a
+form whose every submission would be refused — the rule the unsortable table
+headers follow (D-065), and the one the settings layout already states at the
+top. That notice named *sharing* as the only exception to "saving will be
+refused"; it names tokens now too, because it was wrong the moment this screen
+existed.
+
+**A check that failed for the wrong reason, again.** "The screen prints no
+secret" asserted `!body.includes(String(mintedValue?.token))` — and
+`mintedValue.token` was `undefined`, because `returned()` answers "did it
+succeed" and nothing more, so the assertion was `!body.includes("undefined")`
+and reported a leak that did not exist. The token is matched out of the response
+payload for what a token looks like now, and the page assertion refuses to run
+on a null. Fifth commit running where a check had to be understood rather than
+trusted.
+
+**What is not verified, and this is the third time.** Nobody has opened this
+screen in a browser: the Chrome extension has not been connected since
+2026-10-21. What *is* covered is more than it sounds — `check:actions` POSTs
+what each control posts, so both actions, both refusals, the revoke-stamps-
+rather-than-deletes behaviour and the rendered markup are checked over HTTP,
+including that neither the token nor its hash appears on the page. What is not
+covered is what only a browser can see: hydration, layout, and whether the
+"copy it now" block reads as urgent when it is actually on screen. It is logged
+in `docs/STATUS.md` with the other two.
+
+*In one sentence:* the screen is reuse — the automations tree, the sharing
+node, the settings vocabulary — and the only new idea in it is that a secret
+shown once needs the page to say *why* rather than to ask for care.

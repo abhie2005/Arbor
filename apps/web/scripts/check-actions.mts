@@ -2602,6 +2602,150 @@ report(
 
 await db.query(`DELETE FROM automations WHERE workspace_id = $1`, [workspaceId]);
 
+// --- the tokens screen (D-135) ---------------------------------------------
+// The endpoints have existed since D-133; until this screen the only token
+// anybody could hold was the one the seed prints. `check:api` drives the API
+// itself — these are the two actions behind the form, and the authorization
+// boundary they draw: `manage` on the container, like an automation (D-129),
+// not a workspace role.
+console.log("\napi tokens → minted and revoked by a form\n");
+
+await warm("/settings/api");
+const TOKEN_URL = `http://localhost:${PORT}/settings/api`;
+const TOKEN_ACTIONS = actionIds("app/settings/api/page");
+
+const tokenSpace = await one(`SELECT id FROM containers WHERE name = 'Engineering'`);
+const privateSpace = await one(`SELECT id FROM containers WHERE name = 'Founders'`);
+
+const mintedByForm = await callOn(TOKEN_URL, TOKEN_ACTIONS.createApiTokenAction!, [
+  { containerId: tokenSpace.id, name: "minted by check:actions", permission: "edit" },
+]);
+/**
+ * Read out of the payload rather than through `returned()`.
+ *
+ * That helper answers "did the action succeed", which is all every other
+ * action here returns. This one returns the token too — the only time it
+ * exists outside the database (D-133) — and the point of the check is that the
+ * *value* arrives, so it is matched for what a token looks like.
+ */
+const mintedToken = mintedByForm.text.match(/arb_[A-Za-z0-9_-]{20,}/)?.[0] ?? null;
+
+report(
+  "a manager mints a token, and the plaintext comes back exactly once",
+  returned(mintedByForm.text)?.ok === true && mintedToken !== null
+    ? null
+    : `ok ${String(returned(mintedByForm.text)?.ok)}, token ${String(mintedToken)}`,
+);
+
+const mintedRow = await one(
+  `SELECT id, token_hash, prefix, container_id FROM api_tokens
+    WHERE name = 'minted by check:actions'`,
+);
+report(
+  "the row holds a hash rather than the token, and the container it was minted against",
+  mintedRow?.token_hash &&
+    mintedRow.token_hash !== mintedToken &&
+    mintedRow.container_id === tokenSpace.id
+    ? null
+    : `the row is ${JSON.stringify(mintedRow)}`,
+);
+
+// Sam is a plain member: `edit` at most, never `manage`, so a member cannot
+// mint a credential that outlives their own session.
+const samsSession = await signIn("sam@example.com", "arbor-demo-2026");
+const samsMint = await callOn(
+  TOKEN_URL,
+  TOKEN_ACTIONS.createApiTokenAction!,
+  [{ containerId: tokenSpace.id, name: "sam's token", permission: "edit" }],
+  `arbor_session=${samsSession.token}`,
+);
+report(
+  "a member cannot mint one, because minting writes a grant",
+  /permission|no longer exists/i.test(samsMint.text) &&
+    Number(
+      (await one(`SELECT count(*) AS n FROM api_tokens WHERE name = $1`, ["sam's token"])).n,
+    ) === 0
+    ? null
+    : `response ${samsMint.text.slice(-200)}`,
+);
+
+// An owner has `manage` on an open container by role, and none on a private
+// space nobody granted them — the narrower half of the same rule.
+const privateMint = await callOn(TOKEN_URL, TOKEN_ACTIONS.createApiTokenAction!, [
+  { containerId: privateSpace.id, name: "a token on Founders", permission: "view" },
+]);
+report(
+  "and the owner can, even on the private space they created",
+  returned(privateMint.text)?.ok === true ? null : `response ${privateMint.text.slice(-200)}`,
+);
+
+const samsRevoke = await callOn(
+  TOKEN_URL,
+  TOKEN_ACTIONS.revokeApiTokenAction!,
+  [mintedRow.id],
+  `arbor_session=${samsSession.token}`,
+);
+report(
+  "a member cannot revoke one either",
+  /permission|no longer exists/i.test(samsRevoke.text) &&
+    (await one(`SELECT revoked_at FROM api_tokens WHERE id = $1`, [mintedRow.id]))
+      .revoked_at === null
+    ? null
+    : `response ${samsRevoke.text.slice(-200)}`,
+);
+
+const revoked = await callOn(TOKEN_URL, TOKEN_ACTIONS.revokeApiTokenAction!, [mintedRow.id]);
+report(
+  "the manager's revoke lands, and stamps rather than deletes",
+  returned(revoked.text)?.ok === true &&
+    (await one(`SELECT revoked_at FROM api_tokens WHERE id = $1`, [mintedRow.id]))
+      .revoked_at !== null
+    ? null
+    : `response ${revoked.text.slice(-200)}`,
+);
+
+// The screen itself, since nobody has driven it in a browser.
+// Its own fetch rather than `getAuthedPage`, which is a `const` declared
+// further down this file and would be in its temporal dead zone here.
+const tokensResponse = await fetch(`http://localhost:${PORT}/settings/api`, {
+  headers: { Cookie: COOKIE },
+});
+const tokensPage = { status: tokensResponse.status, body: await tokensResponse.text() };
+report(
+  "the screen lists a token by name and prefix, and prints no secret",
+  tokensPage.status === 200 &&
+    tokensPage.body.includes("minted by check:actions") &&
+    tokensPage.body.includes(String(mintedRow.prefix)) &&
+    // A real string, never `String(undefined)` — the first draft of this check
+    // asserted the page did not contain "undefined" and called it a leak.
+    mintedToken !== null &&
+    !tokensPage.body.includes(mintedToken) &&
+    !tokensPage.body.includes(String(mintedRow.token_hash))
+    ? null
+    : `status ${tokensPage.status}, name ${tokensPage.body.includes("minted by check:actions")}, token present ${mintedToken !== null && tokensPage.body.includes(mintedToken)}`,
+);
+
+// A member manages no container, so the screen has nothing to offer them and
+// says so rather than rendering a form whose every submission is refused —
+// the rule the unsortable table headers follow (D-065).
+const samsView = await fetch(`http://localhost:${PORT}/settings/api`, {
+  headers: { Cookie: `arbor_session=${samsSession.token}` },
+});
+const samsBody = await samsView.text();
+report(
+  "a member sees why there is nothing to mint, not a form that would refuse them",
+  samsView.status === 200 &&
+    /manage none in this workspace/.test(samsBody) &&
+    !samsBody.includes("minted by check:actions")
+    ? null
+    : `status ${samsView.status}, explained ${/manage none in this workspace/.test(samsBody)}`,
+);
+
+await db.query(`DELETE FROM users WHERE id IN (SELECT principal_id FROM api_tokens WHERE name IN ($1, $2))`, [
+  "minted by check:actions",
+  "a token on Founders",
+]);
+
 // --- a person who is not in this workspace (D-131) --------------------------
 // `db:smoke` checks `peopleIn` itself; these two check that the screens call
 // it. They are GETs because what went wrong was a *read* — five of them, each

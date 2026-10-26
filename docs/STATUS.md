@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-10-24. Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-26. Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **Phases 1–9 are done. Phase 10 is under way: automations run, and now they
 have a screen.** A rule can be written, armed, disabled and deleted by a person
@@ -214,7 +214,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 603 unit tests, 300 live-Postgres checks, 166 action checks, 30
+**Verified:** 603 unit tests, 300 live-Postgres checks, 173 action checks, 30
 API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse
@@ -285,11 +285,12 @@ because the parser was bypassed in a container rather than argued about.
 
 Then, in the order the rest argues for:
 
-1. **A screen for tokens.** There is none — the seed prints a demo token so a
-   fresh database can call the API at all, and `createApiToken` is otherwise
-   reachable only from a script. `/settings/api` is the obvious home, next to
-   sharing, and it is the last thing standing between the API and somebody
-   outside this repo using it.
+1. ~~**A screen for tokens.**~~ **Done** (2026-10-26, D-135).
+   `/settings/api` mints, lists and revokes, taking `manage` on the container
+   like the automations screen — a member gets an explanation rather than a
+   form, and the token is shown once because it is stored as a hash and nothing
+   can print it again. Seven checks in `check:actions`, including that neither
+   the token nor its hash reaches the page. **No browser pass** — see below.
 2. **A rule cannot be edited, only deleted and written again.** Renaming is the
    common case and does not need the rule re-validated, so it is probably two
    entry points rather than one.
@@ -302,10 +303,18 @@ Then, in the order the rest argues for:
 
 **Two things owed on what just landed**, neither blocking:
 
-- **No browser pass on the renderers.** Three server-side checks cover them and
-  were shown failing when reverted, but nobody has watched a timed due date
-  hydrate in Chrome. The extension was not connected on 2026-10-21 through
-  2026-10-23.
+- **No browser pass on three things now**, and the reason is the same each
+  time: the Chrome extension has not been connected since 2026-10-21.
+  - **the four renderers' instant** (D-132) — three server-side checks cover
+    them and were shown failing when reverted, but nobody has watched a timed
+    due date hydrate;
+  - **`/settings/api`** (D-135) — both actions, both refusals and the rendered
+    markup are checked over HTTP, including that no secret reaches the page;
+    hydration and layout are not;
+  - **the second workspace**, below.
+
+  What a browser would add in all three cases is the same short list: hydration
+  warnings, the first-click-swallowed behaviour, and whether the layout holds.
 - **A second-workspace browser pass of any kind.** Meridian exists and no
   screen has been opened as Quinn. The dev user switcher lists them (it is
   unscoped on purpose, D-131), so it is one click away.

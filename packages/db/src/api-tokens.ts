@@ -275,6 +275,58 @@ export async function listApiTokens(
 }
 
 /**
+ * One token by id, whatever its state.
+ *
+ * Revoking has to authorize against the container the token was **minted
+ * against**, and that container is read from here rather than taken from the
+ * request — an id arriving from a form says which token, not which container,
+ * and checking the one the form claims would let somebody name a container they
+ * manage and a token they do not (D-129's rule for a rule, D-135 for a token).
+ *
+ * A revoked token is still returned: revoking an already-revoked token is a
+ * no-op rather than an error, and a loader that hid them would make the
+ * revocation itself unauthorizable.
+ */
+export async function loadApiToken(
+  tokenId: string,
+  connection: Connection = pool(),
+): Promise<ApiTokenRecord | null> {
+  const result = await connection.query<{
+    id: string;
+    workspace_id: string;
+    principal_id: string;
+    name: string;
+    container_id: string;
+    prefix: string;
+    created_at: Date;
+    last_used_at: Date | null;
+    expires_at: Date | null;
+    revoked_at: Date | null;
+  }>(
+    `SELECT id, workspace_id, principal_id, name, container_id, prefix, created_at,
+            last_used_at, expires_at, revoked_at
+       FROM api_tokens WHERE id = $1`,
+    [tokenId],
+  );
+
+  const row = result.rows[0];
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    principalId: row.principal_id,
+    name: row.name,
+    containerId: row.container_id,
+    prefix: row.prefix,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    expiresAt: row.expires_at,
+    revokedAt: row.revoked_at,
+  };
+}
+
+/**
  * Revoking stamps the row rather than deleting it.
  *
  * The account, its membership and its grants are left alone deliberately: the
