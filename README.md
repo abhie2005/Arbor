@@ -21,9 +21,14 @@ and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 > screen: a rule is a trigger, the filter bar's own conditions and actions that
 > compile to the same operations a person's click does, it acts as a service
 > account the permission model already knows, and a delayed rule asks its
-> conditions when it acts rather than when it was queued. Forms, a public API,
-> chat and AI are not built. The AWS deployment (Terraform and a container
-> image) has been applied to a real account once and destroyed again.
+> conditions when it acts rather than when it was queued. **The public API is
+> built**: a read posts the same view definition a saved view stores and a write
+> posts the same operations a click does, authenticated by a token that speaks
+> as a service account scoped to one container — so an integration gets the
+> activity log, the permission join and undo by construction rather than by a
+> second implementation. Forms, chat and AI are not built. The AWS deployment
+> (Terraform and a container image) has been applied to a real account once and
+> destroyed again.
 > **[docs/STATUS.md](docs/STATUS.md) is the current state and where to pick up.**
 
 ---
@@ -43,18 +48,21 @@ npm run dev
 ```
 
 Requires Node 22+ and Docker. Nothing else, and no cloud account sign-in is
-part of the app rather than a service you register for. The seed prints the
-demo password.
+part of the app rather than a service you register for. The seed prints the demo
+password and an API token scoped to the demo space.
 
 Verify the stack end to end:
 
 ```bash
-npm test               # 582 unit tests, no database needed
-npm run db:smoke       # 278 checks against real Postgres: compiled queries,
-                       # permission scoping, mutations, the activity log, and
-                       # the automation engine end to end
-npm run check:actions  # 162 checks that POST what a button click posts, then
+npm test               # 603 unit tests, no database needed
+npm run db:smoke       # 300 checks against real Postgres: compiled queries,
+                       # permission scoping, mutations, the activity log, the
+                       # automation engine, and API tokens end to end
+npm run check:actions  # 173 checks that POST what a button click posts, then
                        # assert against Postgres — needs a dev server running
+npm run check:api      # 30 checks over HTTP against /api/v1 — reads, writes,
+                       # every way a token can be refused, and posting an
+                       # inverse back to undo a batch
 npm run check:search   # 11 GETs against /search, asserting what the screen
                        # renders — runs against a dev server, the container
                        # image, or a deployed URL
@@ -64,10 +72,10 @@ They run at different depths on purpose. Unit tests cover logic with no
 fixtures; `db:smoke` proves the SQL the compiler emits is valid and that
 permission scoping actually filters rows; `check:actions` covers the seam
 between a UI handler and a service, which is where the bugs that survived
-longest have lived; `check:search` covers a screen that has no server action at
-all, so none of `check:actions`' machinery applies to it (D-115) — and unlike
-the others it will run against a deployed environment, because all it needs is
-a URL and the seeded workspace.
+longest have lived; `check:api` and `check:search` cover the two surfaces with
+no server action at all, so none of `check:actions`' machinery applies to
+either (D-115) — and unlike the others those two run against a deployed
+environment, because all they need is a URL and the seeded workspace.
 
 ---
 
@@ -85,6 +93,60 @@ without writing code.
 | **Permissions** | Grants are the source of truth; a materialized access index is what queries actually join against, so permission checks cost one join instead of one per level of nesting. The rule that flattens one into the other is a pure function, tested without a database. Reads and writes both go through it. |
 
 The [architecture teardown](docs/) covers the reasoning in full.
+
+---
+
+## The API
+
+Two endpoints, because the app already has a query language and a write
+vocabulary and a second set would be free to disagree with them. A read posts
+**the same view definition a saved view stores**; a write posts **the same
+operations a click posts**. So custom fields, nested `AND`/`OR`, permission
+scoping, the activity log and invertibility all arrive without the API knowing
+they exist.
+
+A token speaks as a *service account of its own* — a real member the permission
+index knows, scoped to the one container it was minted against (D-133). Mint one
+at **Settings → API tokens**; the seed prints one for the demo workspace.
+
+```bash
+TOKEN=arb_…   # printed by db:seed, or minted at /settings/api
+
+# Read: the default view, over everything the token can reach
+curl -s localhost:3000/api/v1/views/query \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{
+        "scope": { "kind": "everything" },
+        "definition": {
+          "grouping": { "field": "status", "dir": "asc" },
+          "sort": [{ "field": "position", "dir": "asc" }],
+          "filters": { "op": "AND", "conditions": [], "showClosed": false, "showSubtasks": 2 }
+        },
+        "limit": 10
+      }'
+
+# Write: rename a task, and keep what comes back to undo it
+curl -s localhost:3000/api/v1/operations \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{
+        "operations": [
+          { "kind": "setField", "taskId": "…", "field": "name",
+            "from": "Old name", "to": "New name" }
+        ]
+      }'
+# → { "applied": 1, "skipped": 0, "notified": 0, "inverse": [ … ] }
+```
+
+The `inverse` in that response is the batch that undoes it: the undo stack
+belongs to whoever called rather than to the server (D-124), so POST it back and
+the change is reversed. Every operation is validated at runtime before it
+reaches the executor (D-134), and a refusal names the key it refused rather than
+describing the inside of the system.
+
+What is deliberately not there: REST resources (a second vocabulary to keep in
+step), a cookie fallback (a session belongs to a browser and brings CSRF
+questions the API has no answer for), and rate limiting, which is an open
+question in [docs/STATUS.md](docs/STATUS.md).
 
 ---
 
@@ -302,4 +364,4 @@ density on import. Record every import in
 
 [AGPL-3.0-only](LICENSE). The client SDK will be Apache-2.0 when there is one,
 so it can be embedded freely — `packages/sdk` does not exist yet, and the API it
-would wrap landed in D-133 and D-134.
+would wrap landed in D-133 through D-135.
