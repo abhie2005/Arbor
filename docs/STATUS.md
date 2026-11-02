@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-10-26. Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-27. Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **Phases 1–9 are done. Phase 10 is under way: automations run, and now they
 have a screen.** A rule can be written, armed, disabled and deleted by a person
@@ -262,9 +262,15 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 `POST /api/v1/views/query` takes a view definition and answers through the
 compiler, authenticated by a bearer token that speaks as a **named service
 account per integration** — minted against one container, a `guest` so it
-inherits no baseline, reaching what it was granted and nothing else. 17 checks
+inherits no baseline, reaching what it was granted and nothing else. 30 checks
 in `npm run check:api`, which runs against a dev server, the container image or
 a deployed URL like `check:search` does.
+
+**The README documents it** — the two endpoints, why there are only two, and a
+runnable `curl` for each, including posting the returned inverse back to undo a
+batch. Both examples were executed against the dev container before being
+written down, so they are copy-pasteable rather than illustrative. Start there
+rather than reading the routes to learn the shape.
 
 **The write half is done too** (D-134). `POST /api/v1/operations` takes
 `Operation[]`, which is the only thing that writes task data (invariant 1), so
