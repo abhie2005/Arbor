@@ -82,3 +82,46 @@ export async function namesFor(
 
   return result.rows;
 }
+
+/**
+ * The service accounts previous runs left behind (D-139).
+ *
+ * The paragraph above describes the symptom — a re-seed leaves the old
+ * automation account in `users` forever — and this is what removes it. They
+ * had reached **24 against 5 people** on this machine, one per token ever
+ * minted by a seed or a check run, so the dev switcher's dropdown was mostly
+ * robots with the same name.
+ *
+ * **No membership is the whole test, and it is not a heuristic.** A principal
+ * reaches containers by joining `access_index`, which is built from
+ * memberships and grants, so a service account in no workspace can reach
+ * nothing at all — it is not disabled, it is inert. Dropping a workspace takes
+ * its memberships and its tokens with it and leaves the account, which is the
+ * only way one gets into this state.
+ *
+ * **The two guards are what make it a cleanup rather than a risk**, and both
+ * are checked:
+ *
+ * - `activity.actor_id` is **SET NULL**, so deleting an account that wrote
+ *   history would quietly erase who did it. "A rule did this" becoming nobody
+ *   is a worse outcome than a stale row in a dropdown.
+ * - An account that still has a token is one somebody may still be holding,
+ *   whatever its memberships say. A token outliving its workspace is a
+ *   separate bug and this must not hide it.
+ *
+ * Deliberately **not** scoped to a workspace: an orphan belongs to none, which
+ * is what makes it an orphan. It is called from the seed rather than on a
+ * timer, because that is the thing that creates them.
+ */
+export async function sweepOrphanedServiceAccounts(
+  connection: Connection = pool(),
+): Promise<number> {
+  const result = await connection.query(
+    `DELETE FROM users u
+      WHERE u.kind = 'service'
+        AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = u.id)
+        AND NOT EXISTS (SELECT 1 FROM activity a    WHERE a.actor_id = u.id)
+        AND NOT EXISTS (SELECT 1 FROM api_tokens t  WHERE t.principal_id = u.id)`,
+  );
+  return result.rowCount ?? 0;
+}

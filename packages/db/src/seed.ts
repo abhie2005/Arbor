@@ -23,6 +23,7 @@ import { rebuildAccessIndex } from "./access";
 import { createApiToken } from "./api-tokens";
 import { setPassword } from "./auth";
 import { createDatabase, pool } from "./client";
+import { sweepOrphanedServiceAccounts } from "./people";
 import * as s from "./schema";
 
 const DEMO_SLUG = "northwind";
@@ -58,6 +59,14 @@ async function main() {
       await db.delete(s.workspaces).where(eq(s.workspaces.id, existing.id));
     }
   }
+
+  // Every token ever minted by a seed or a check run is a real `users` row by
+  // design (D-126), and dropping the workspaces above takes their memberships
+  // and tokens with them but not the accounts — 24 against 5 people before
+  // this line existed. The guards that keep it safe are on the function
+  // (D-139).
+  const swept = await sweepOrphanedServiceAccounts(pool());
+  if (swept) console.log(`Removing ${swept} service account(s) left by previous runs`);
 
   // --- people ---------------------------------------------------------------
   const people = [

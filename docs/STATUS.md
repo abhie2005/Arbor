@@ -55,14 +55,16 @@ of the three. They call one `DueDate` now, pinned to UTC before hydration and
 the viewer's own day after it — and the browser pass of 2026-10-27 watched that
 happen in a Pacific browser against a UTC server with nothing in the console.
 
-**That pass opened three bugs and the largest is now closed** (2026-11-02,
-D-137): `requireWorkspace()` resolved the workspace by hard-coded slug, so a
+**That pass opened three bugs and all three are now closed** (2026-11-02,
+D-137 to D-139): `requireWorkspace()` resolved the workspace by hard-coded slug, so a
 member of any workspace but Northwind could not reach theirs. **Meridian is
 reachable now** — resolution is the viewer's memberships, narrowed by a
 validated cookie — and fixing it turned up two more readers that had quietly
 answered "Northwind": the list a renderer opens on, and a row in the sidebar
-that was a string rather than a query. Two bugs from that pass remain open
-below; the archaeology is in `docs/HISTORY.md`.
+that was a string rather than a query. The dev switcher works again — it ends
+the session rather than writing underneath it (D-138) — and the seed no longer
+leaves a service account behind for every token it ever minted (D-139). The
+archaeology is in `docs/HISTORY.md`.
 
 The archaeology of the bugs that are fixed, and what browser verification found
 in each phase, is in `docs/HISTORY.md`.
@@ -71,7 +73,7 @@ in each phase, is in `docs/HISTORY.md`.
 
 ## Open bugs
 
-### Found by the browser pass, 2026-10-27
+### Found by the browser pass, 2026-10-27 — all three closed 2026-11-02
 
 ~~**1. `requireWorkspace()` is hard-coded to the slug `northwind`.**~~ **Done**
 (2026-11-02, D-137). Resolution is the viewer's **memberships**, narrowed by a
@@ -138,12 +140,17 @@ and learned `in 5m` / `in 3h`; two layout defects on the tokens screen went with
 it. Both were invisible to every gate because the string only exists after
 hydration.
 
-**3. `users` is 19 service accounts to 5 people**, one per token ever minted by
-a seed or a check run. Each is a real row by design (D-126) and the switcher
-lists every user in the database on purpose (D-131), so the dropdown is mostly
-robots. The seed deletes its workspace and the tokens go with it, but the
-accounts outlive it — the same wart D-133 moved rather than removed. Cheap fix:
-have the seed delete service accounts that have no membership left.
+~~**3. `users` is 19 service accounts to 5 people.**~~ **Done** (2026-11-02,
+D-139). It had reached 24 against 5. The seed sweeps service accounts with no
+membership left — which is not a heuristic: a principal reaches containers by
+joining `access_index`, so one in no workspace can reach nothing at all. **The
+two guards are the decision**: an account that wrote activity is kept, because
+`activity.actor_id` is `SET NULL` and deleting it rewrites history to nobody;
+and one that still holds a token is kept, because a token outliving its
+workspace is a separate bug and a sweep must not hide it. It is a function in
+`people.ts` rather than SQL in the seed, so the guards can be tested — six
+checks in `db:smoke` (314), two of which fail when the guards are removed. The
+dev switcher's dropdown is 7 entries now, 5 of them people.
 
 
 ### Closed — the three that were open until 2026-10-23
@@ -299,7 +306,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 608 unit tests, 308 live-Postgres checks, 186 action checks, 30
+**Verified:** 608 unit tests, 314 live-Postgres checks, 186 action checks, 30
 API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse

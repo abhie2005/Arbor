@@ -142,7 +142,7 @@ import {
   workspacesFor,
 } from "./task-access";
 import { createApiToken, principalForToken, revokeApiToken } from "./api-tokens";
-import { namesFor, peopleIn } from "./people";
+import { namesFor, peopleIn, sweepOrphanedServiceAccounts } from "./people";
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL ?? "postgres://arbor:arbor@localhost:5432/arbor",
@@ -4718,6 +4718,103 @@ async function main() {
         : `a home list nobody reaches: ${JSON.stringify(homes.rows)}`,
     );
   }
+
+  // --- service accounts previous runs left behind (D-139) -------------------
+  // The sweep the seed runs. Checked with fixtures rather than against
+  // whatever the database happens to hold, because the interesting cases are
+  // the three it must *not* take: these build one orphan and three near
+  // misses, and a sweep missing any guard takes one it should have left.
+  console.log("\nservice accounts previous runs left behind\n");
+
+  const serviceUser = async (name: string) =>
+    (
+      await pool.query<{ id: string }>(
+        `INSERT INTO users (email, name, kind) VALUES ($1, $2, 'service') RETURNING id`,
+        [`sweep+${randomUUID()}@service.arbor.local`, name],
+      )
+    ).rows[0]!.id;
+
+  const orphan = await serviceUser("sweep: orphan");
+  const member = await serviceUser("sweep: has a membership");
+  const historian = await serviceUser("sweep: wrote history");
+  const holder = await serviceUser("sweep: still has a token");
+  const person = (
+    await pool.query<{ id: string }>(
+      `INSERT INTO users (email, name, kind) VALUES ($1, 'sweep: a person', 'person') RETURNING id`,
+      [`sweep+${randomUUID()}@example.com`],
+    )
+  ).rows[0]!.id;
+
+  await pool.query(`INSERT INTO memberships (workspace_id, user_id, role) VALUES ($1, $2, 'member')`, [
+    ws.id,
+    member,
+  ]);
+  await pool.query(
+    `INSERT INTO activity (workspace_id, actor_id, object_kind, object_id, verb)
+     VALUES ($1, $2, 'task', $3, 'updated')`,
+    [ws.id, historian, (await one(`SELECT id FROM tasks WHERE key = 'ENG-402'`)).id],
+  );
+  await createApiToken(
+    {
+      workspaceId: ws.id!,
+      containerId: sprintList.id!,
+      name: "sweep: a live token",
+      permission: "view",
+    },
+    { actorId: viewer.id!, connection: pool },
+  );
+  const tokenHolder = (
+    await pool.query<{ principal_id: string }>(
+      `SELECT principal_id FROM api_tokens WHERE name = 'sweep: a live token'`,
+    )
+  ).rows[0]!.principal_id;
+  // The token's own principal has a membership (D-126), so it tests nothing on
+  // its own. Take the membership away and it is an orphan in every way but the
+  // token — which is the guard.
+  await pool.query(`DELETE FROM memberships WHERE user_id = $1`, [tokenHolder]);
+  await pool.query(`DELETE FROM users WHERE id = $1`, [holder]);
+
+  const removed = await sweepOrphanedServiceAccounts(pool);
+  const alive = async (id: string) =>
+    Number((await pool.query(`SELECT count(*) AS n FROM users WHERE id = $1`, [id])).rows[0].n) === 1;
+
+  report(
+    "a service account in no workspace is removed",
+    !(await alive(orphan)) ? null : "the orphan survived the sweep",
+  );
+
+  report(
+    "one with a membership is not, because it can still reach things",
+    (await alive(member)) ? null : "a live service account was swept",
+  );
+
+  report(
+    "nor one that wrote history, because activity.actor_id is SET NULL",
+    (await alive(historian))
+      ? null
+      : "an account with activity was swept — its history now says nobody did it",
+  );
+
+  report(
+    "nor one that still has a token somebody may be holding",
+    (await alive(tokenHolder)) ? null : "an account with a live token was swept",
+  );
+
+  report(
+    "and a person is never touched, whatever their memberships",
+    (await alive(person)) ? null : "the sweep took a human being",
+  );
+
+  report(
+    "the sweep reports what it took",
+    removed >= 1 ? null : `reported ${removed}`,
+  );
+
+  await pool.query(`DELETE FROM api_tokens WHERE name = 'sweep: a live token'`);
+  await pool.query(`DELETE FROM activity WHERE actor_id = $1`, [historian]);
+  await pool.query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [
+    [member, historian, tokenHolder, person],
+  ]);
 
   // --- a due date that is a moment ------------------------------------------
   // Until the seed grew these two, every seeded due date was a calendar day, so

@@ -5550,3 +5550,50 @@ needed it and nothing had asked for one before.
 *In one sentence:* the fix is three lines, and finding it took a browser,
 because every gate in this repo drives exactly one identity per run and this
 bug only exists in the transition between two.
+
+### D-139
+**The seed sweeps the service accounts previous runs left behind** · 2026-11-02 · active
+
+Open bug 3. A service account is a real `users` row by design (D-126) and the
+dev switcher lists every user in the database on purpose (D-131), so the two
+correct decisions met and the dropdown filled with robots: **24 service
+accounts against 5 people**, one per token ever minted by a seed or a check
+run, most of them named "Automation" or "Demo integration" and
+indistinguishable from each other. Dropping a workspace takes its memberships
+and its tokens with it and leaves the account standing, which is the only way
+one gets into this state. D-133 moved this wart rather than removing it.
+
+**No membership is the whole test, and it is not a heuristic.** A principal
+reaches containers by joining `access_index`, which is built from memberships
+and grants — so a service account in no workspace can reach nothing at all. It
+is not disabled, it is inert.
+
+**The two guards are the decision**, and both are checked with fixtures rather
+than against whatever the database happens to hold:
+
+- **`activity.actor_id` is `SET NULL`.** Deleting an account that wrote history
+  would silently rewrite that history to nobody, and "a rule did this"
+  becoming "someone did this" is a worse outcome than a stale row in a
+  dropdown. An account that acted is kept, however orphaned.
+- **A token outliving its workspace is a separate bug**, and a sweep that
+  deleted its principal would hide it rather than fix it. An account somebody
+  may still be holding a token for is kept.
+
+**It is a function in `packages/db/src/people.ts`, not SQL in the seed.** The
+seed is what *creates* them so it is the right caller, but the guards are the
+whole substance and inline SQL in a seed script cannot be tested. Six checks in
+`db:smoke` (314) build one orphan and four near misses — a service account with
+a membership, one that wrote activity, one holding a live token, and a person —
+and **the two guard checks fail** when the guards are removed, which is the
+only way to know they are doing anything.
+
+`people.ts` is the home because its own doc comment already described this
+symptom from the other end: a re-seeded automation account's synthetic email
+carries the workspace id, so the previous one stays in `users` forever and
+appeared *twice* in a picker until the membership join removed it. That
+paragraph described the leftover; this removes it.
+
+*In one sentence:* two correct decisions — a service account is a real user,
+and the dev switcher shows every user — multiply into a dropdown that is 80%
+robots, and the fix belongs in the thing that creates them rather than in
+either decision.

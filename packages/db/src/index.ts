@@ -135,7 +135,13 @@ export {
   type ApiTokenRecord,
   type TokenPrincipal,
 } from "./api-tokens";
-export { namesFor, peopleIn, type Audience, type WorkspacePerson } from "./people";
+export {
+  namesFor,
+  peopleIn,
+  sweepOrphanedServiceAccounts,
+  type Audience,
+  type WorkspacePerson,
+} from "./people";
 export {
   MONTHLY_RUN_QUOTA,
   automationQuota,
