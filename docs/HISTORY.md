@@ -215,3 +215,50 @@ purpose (D-131), so the dropdown is now mostly robots.
 *The lesson is the one this file keeps recording.* Every one of these was
 invisible to 603 unit tests, 300 database checks, 173 action checks and 30 API
 checks, because all of them tell the system which workspace they mean.
+
+## The pass of 2026-11-02, which closed all three and found a fourth
+
+The three bugs above, fixed in order of how much they explained (D-137, D-138,
+D-139), each verified in the same headless Chromium at `localhost:3300`.
+**Seventeen browser checks across four identities** — the first pass in this
+repo to drive more than one person in a run, which is precisely what the three
+bugs required: every one of them lives in the difference between two viewers,
+and every gate in the repo had been driving exactly one.
+
+**The workspace nobody could reach, reached.** Quinn signs in with a password
+like anybody else and lands on *Meridian* — Field Ops › Dispatch board, OPS-1
+in it, Meridian's own status set drawn across the top (Queued, Dispatched,
+Closed out) — with nothing in the console. Avery is the control and still lands
+on Northwind's Sprint 24, which is what stops "fixed it for Quinn" from meaning
+"broke it for everybody". Sam, who is in both, gets the one they joined first
+and the same one again after a reload.
+
+**The fix was two readers wider than the bug.** Resolution came from the slug;
+so did `listMeta`, which also hard-coded the *list by name*. Fixing only the
+first would have landed Quinn on Meridian and then shown them Northwind's
+Sprint 24 — the second lie would have hidden inside the first being fixed.
+
+**And the fourth, which is the one only a screenshot could show.** With Quinn
+on Meridian and the page otherwise correct, the sidebar read `Field Ops →
+Dispatch board, Backlog`. Meridian has no Backlog. It was never a query: a
+hard-coded `<a>` in the shell's JSX, a demo string that had looked like the
+real tree for as long as the only reachable workspace happened to contain a
+list by that name. Every assertion in the repo was happy, including the ones
+written that same hour about *this* sidebar, because they asked whether the
+right things were present and never whether a wrong one was.
+
+**What the pass cost in false starts, which is its own lesson.** Three of the
+first checks written for `check:actions` failed against correct code: React
+separates adjacent text nodes with `<!-- -->` in server HTML, so
+`acting as {viewer.name}` never matches as the sentence it reads as (`words()`
+strips the markers now); and one browser assertion broke the moment the
+workspace switcher shipped, because Sam's page legitimately contains the word
+"Meridian" — in the switcher's own options — so the assertion had to move from
+"the name appears" to "the selected option is". Both are the same mistake:
+asserting on the presence of a string rather than on the thing the string is
+supposed to mean.
+
+*The lesson, again.* All four were invisible to 608 unit tests, 314 database
+checks, 186 action checks and 30 API checks. Three of them because every gate
+names its workspace; the fourth because no gate had ever asked what the sidebar
+*should not* say.
