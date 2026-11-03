@@ -1,9 +1,8 @@
-import { findMatches, highlight } from "@arbor/core";
+import { findMatches, highlight, relative } from "@arbor/core";
 import type { Match } from "@arbor/core";
 
 import type { SearchResults } from "@/server/search";
 
-import { relative } from "./relative-time";
 
 /**
  * The results list.

@@ -1946,6 +1946,36 @@ select.filter-add option {
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
+/**
+ * A token row.
+ *
+ * `.sharing-node` is a flex row and spaces its *children*, which left the name,
+ * the container and the prefix inside one child with nothing between them —
+ * "browser pass tokenEngineering" (D-136). Found by looking at the screen; no
+ * assertion about rendered markup would have minded.
+ */
+.token-node {
+  justify-content: space-between;
+}
+
+.token-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.token-node .sharing-detail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.token-node[data-revoked="true"] .token-head strong {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
 .sharing-kind {
   color: var(--text-3);
 }

@@ -203,6 +203,52 @@ export function isOverdue(
 }
 
 /**
+ * How long ago, or how long until — coarsely.
+ *
+ * **It lived in `apps/web` and was past-only** (D-136). `Date.now() - then` is
+ * *negative* for an instant that has not happened yet, so every future one fell
+ * through `minutes < 1` and rendered as **"just now"**: a rule delayed three
+ * days said it would run just now, and a token expiring in a month said it
+ * expires just now. Both were on screen for anybody to see and invisible to
+ * every gate, because the string only exists after hydration.
+ *
+ * It is here rather than in the app for the reason the bug survived: `apps/web`
+ * has no unit tests and core has six hundred, and this is a pure function about
+ * dates sitting beside the other three.
+ *
+ * **`timeZone` is for the last line only**, and it is not optional information
+ * dressed up as a parameter. Everything above that line is a difference between
+ * two instants and means the same thing anywhere; the fallback is a *date*, and
+ * a date has to be read in some zone. Leaving it implied is what made the same
+ * document read "10 Oct" on a UTC server and "9 Oct" in a Pacific browser
+ * (D-121).
+ *
+ * So: pass a zone when something other than a browser is going to render the
+ * result — a server component has no viewer to be local to. Pass nothing when
+ * the browser is the only thing calling it, which is what `Timestamp` arranges
+ * by calling this after hydration and never before.
+ *
+ * Coarse on purpose: no screen here needs seconds, and the day falls back to a
+ * date rather than counting weeks nobody reads.
+ */
+export function relative(value: string | Date, timeZone?: string, now: Date = new Date()): string {
+  const then = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  if (Number.isNaN(then)) throw new RangeError(`Not a date: ${String(value)}`);
+
+  const minutes = Math.round((now.getTime() - then) / 60_000);
+  const ahead = minutes < 0;
+  const size = Math.abs(minutes);
+
+  if (size < 1) return "just now";
+  if (size < 60) return ahead ? `in ${size}m` : `${size}m ago`;
+  if (size < 60 * 24) {
+    const hours = Math.round(size / 60);
+    return ahead ? `in ${hours}h` : `${hours}h ago`;
+  }
+  return instantDay(value, timeZone);
+}
+
+/**
  * The weeks of a month as day keys, Monday-first, padded with the neighbouring
  * days that share a week.
  *

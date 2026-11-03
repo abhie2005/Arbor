@@ -158,3 +158,60 @@ hydrates, which cost twenty minutes here on a checkbox that looked broken and
 was not.
 
 ---
+
+
+---
+
+## The browser pass of 2026-10-27, and the workspace nobody could reach
+
+Three chunks had shipped with every server-side gate green and no browser pass
+behind them — the four renderers' instant (D-132), the tokens screen (D-135),
+and the second workspace (D-130). The Chrome extension had not been connected
+since 2026-10-21, so the pass was finally driven with a **headless Chromium**
+(Playwright, installed in a scratch directory rather than into this repo) at
+`localhost:3300` against the container dev server.
+
+**Two of the three passed, and one of those was the point of the exercise.**
+
+The renderers' instant, in a browser whose zone is `America/Los_Angeles`
+against a server running UTC: the HTML carried `Fri 6 UTC` and the hydrated DOM
+showed `Thu 5` — on the list, the board and the table alike, with the
+calendar-day control (`Tue 10` / `10 Nov`) identical on both sides — and **zero
+console errors or warnings** across all of them. That is the exact mismatch
+D-121 produced and D-132 fixed, demonstrated in the only place it ever reported
+itself.
+
+The tokens screen minted on the first click (the swallowed-first-click trap did
+not bite), showed the plaintext once, dropped it on dismissal, listed the new
+token, and revoked it through the confirm step, with nothing in the console.
+
+**The third did not pass, and what it found is bigger than the screen.**
+`requireWorkspace()` resolves the workspace by **hard-coded slug** —
+`SELECT … WHERE slug = 'northwind'` — for every page, regardless of who is
+asking. Its own comment says the swap to "the workspace this request belongs
+to" would arrive "with real auth in Phase 5"; real sessions arrived in Phase 9
+and this was never swapped. So **Meridian is unreachable in the UI**: a dev
+session as Quinn, who is a member of Meridian and nothing else, lands on
+*Northwind* with an empty task list — the access index doing its job inside a
+workspace they do not belong to.
+
+Which also explains why nothing caught it. Every gate names its workspace
+explicitly: `db:smoke` passes an id, `check:api` holds a token that carries
+one, `check:actions` looks one up by slug like the app does. The only reader
+that has to *infer* which workspace it is in is a screen, and no screen had
+been opened as somebody whose answer differed.
+
+**And the dev switcher is inert under a real session.** `getCurrentUser()`
+returns the session user first and only falls back to the dev cookie, which is
+what "survives underneath real sessions" means (D-034) — but the switcher is
+still rendered, still selectable, and silently changes nothing once you have
+signed in. Selecting Quinn from it looks exactly like a switch that worked.
+
+**A smaller thing the same screen showed:** `users` holds 19 service accounts
+to 5 people — one per token ever minted by a seed or a check run, each a real
+row by design (D-126) — and the switcher lists every user in the database on
+purpose (D-131), so the dropdown is now mostly robots.
+
+*The lesson is the one this file keeps recording.* Every one of these was
+invisible to 603 unit tests, 300 database checks, 173 action checks and 30 API
+checks, because all of them tell the system which workspace they mean.

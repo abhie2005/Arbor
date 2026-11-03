@@ -190,8 +190,8 @@ export function ApiTokensPanel({
         ) : (
           <div className="sharing-tree">
             {tokens.map((token) => (
-              <div className="sharing-node" key={token.id} data-revoked={!!token.revokedAt}>
-                <div>
+              <div className="sharing-node token-node" key={token.id} data-revoked={!!token.revokedAt}>
+                <div className="token-head">
                   <strong>{token.name}</strong>
                   <span className="sharing-kind">{token.containerName}</span>
                   <code className="settings-badge quiet">{token.prefix}…</code>

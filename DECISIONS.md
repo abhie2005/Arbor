@@ -5319,3 +5319,59 @@ in `docs/STATUS.md` with the other two.
 *In one sentence:* the screen is reuse — the automations tree, the sharing
 node, the settings vocabulary — and the only new idea in it is that a secret
 shown once needs the page to say *why* rather than to ask for care.
+
+---
+
+### D-136
+**What the browser saw: a function that could not count forwards** · 2026-10-27 · active
+
+The browser pass that had been owed since 2026-10-21 was finally driven — in a
+**headless Chromium** rather than Claude's Chrome extension, which was not
+connected. D-132 and D-135 both passed (the archaeology is in
+`docs/HISTORY.md`). What it *found* is this entry.
+
+**`relative()` was past-only, and two screens showed it.**
+
+```ts
+const minutes = Math.round((Date.now() - then) / 60_000);
+if (minutes < 1) return "just now";
+```
+
+For an instant that has not happened yet, `Date.now() - then` is **negative**,
+so every future one fell through the first branch. A token expiring in thirty
+days said it expires **just now**. And — the one that is not mine — a *pending*
+automation run has carried `runAfter` into this since D-129, so a rule delayed
+three days has been announcing that it will run **just now** since 2026-10-14.
+
+**It was invisible to everything.** The string only exists after hydration:
+the server renders `Timestamp`'s pinned UTC form (D-121), so every HTTP
+assertion in `check:actions` sees a date and not the word. There is no unit
+test because the function lived in `apps/web`, which **has no test task at
+all** — `npm test` runs `core`, `db` and `ui`.
+
+So the fix is where the bug could have been caught: `relative` moved into
+`packages/core/src/dates.ts`, beside `instantDay`, `instantStamp` and
+`isOverdue`, and learned the other direction — `in 5m`, `in 3h`, and past a
+day the same date fallback it always had. Six tests, including the direction
+that was broken and the zone rule the fallback inherits from D-121. The `now`
+is a parameter with a default, which is what makes testing either direction
+possible without faking a clock.
+
+**The rejected alternative was fixing it at the call sites** — formatting the
+expiry badge and the pending run differently. That leaves the next caller to
+rediscover it, and there was already a next caller: I wrote the second one
+without noticing the first.
+
+**Two layout defects in the same screen, found by looking at it.**
+`.sharing-node` is a flex row that spaces its *children*, and the name, the
+container and the prefix were all inside one child — so it rendered
+`browser pass tokenEngineering`, with no separator anywhere. A `.token-head`
+with its own gap fixes it, `.token-node` uses `space-between` so the row uses
+its width, and a revoked row now strikes its name through. **No assertion about
+rendered markup would have minded any of this**; `check:actions` asserts the
+name is *present*, and it was — welded to the next word.
+
+*In one sentence:* three of the four things this pass found were invisible to
+603 unit tests, 300 database checks and 173 action checks for the same reason —
+they are what the page says *after* it has hydrated, and until today nothing
+had read that.

@@ -14,6 +14,7 @@ import {
   monthGrid,
   monthOf,
   monthRange,
+  relative,
   startOfUtcDay,
   utcDayKey,
 } from "./dates";
@@ -263,5 +264,52 @@ describe("a due date in the four view renderers", () => {
 
   it("throws on a value that is not a date, like its siblings", () => {
     expect(() => dueLabel("not a date", true, "weekday", "UTC")).toThrow(RangeError);
+  });
+});
+
+describe("relative, in both directions", () => {
+  // It was past-only and lived in `apps/web`, which has no unit tests — so
+  // `Date.now() - then` going negative for a future instant rendered "just
+  // now" on two screens for weeks (D-136).
+  const now = new Date("2026-11-03T12:00:00.000Z");
+  const at = (ms: number) => new Date(now.getTime() + ms).toISOString();
+
+  it("counts backwards for something that happened", () => {
+    // "just now" is under half a minute either way — 30s rounds to 1.
+    expect(relative(at(-20_000), "UTC", now)).toBe("just now");
+    expect(relative(at(20_000), "UTC", now)).toBe("just now");
+    expect(relative(at(-5 * 60_000), "UTC", now)).toBe("5m ago");
+    expect(relative(at(-3 * 3_600_000), "UTC", now)).toBe("3h ago");
+  });
+
+  it("counts forwards for something that has not happened — the bug", () => {
+    expect(relative(at(5 * 60_000), "UTC", now)).toBe("in 5m");
+    expect(relative(at(3 * 3_600_000), "UTC", now)).toBe("in 3h");
+  });
+
+  it("falls back to a date past a day, in the zone it was given", () => {
+    expect(relative(at(3 * 86_400_000), "UTC", now)).toBe("6 Nov");
+    expect(relative(at(-3 * 86_400_000), "UTC", now)).toBe("31 Oct");
+  });
+
+  it("reads that fallback date in the viewer's zone when none is named", () => {
+    // The same rule D-121 settled: a date needs a frame, and an unnamed one is
+    // whatever the process is running in.
+    const inZone = <T,>(timeZone: string, read: () => T): T => {
+      const before = process.env.TZ;
+      process.env.TZ = timeZone;
+      try {
+        return read();
+      } finally {
+        process.env.TZ = before;
+      }
+    };
+    const instant = "2026-11-06T01:10:00.000Z";
+    expect(inZone("UTC", () => relative(instant, undefined, now))).toBe("6 Nov");
+    expect(inZone("America/Los_Angeles", () => relative(instant, undefined, now))).toBe("5 Nov");
+  });
+
+  it("throws on a value that is not a date, like its siblings", () => {
+    expect(() => relative("not a date", "UTC", now)).toThrow(RangeError);
   });
 });

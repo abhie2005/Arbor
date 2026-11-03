@@ -1,8 +1,7 @@
 "use client";
 
-import { instantDay, instantStamp } from "@arbor/core";
+import { instantDay, instantStamp, relative } from "@arbor/core";
 
-import { relative } from "./relative-time";
 import { useHydrated } from "./use-hydrated";
 
 /**

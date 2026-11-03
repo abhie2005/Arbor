@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-10-27. Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-10-27 (browser pass). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **Phases 1–9 are done. Phase 10 is under way: automations run, and now they
 have a screen.** A rule can be written, armed, disabled and deleted by a person
@@ -50,13 +50,16 @@ a stored id into a name. A rule may still name the workspace's automation
 account, because that menu and a view's assignee filter are the same read; no
 human picker offers one.
 
-**And the four renderers are fixed** (2026-10-23, D-132), which closes the last
+**And the four renderers are fixed** (2026-10-23, D-132), which closed the last
 of the three. They call one `DueDate` now, pinned to UTC before hydration and
-the viewer's own day after it — proved by rendering the same page from two
-differently-zoned servers rather than by a browser, since the extension was not
-connected and the symptom is a console warning. **All three open bugs are
-closed.** What is left is Phase 10's own list: forms, the public API, and a rule
-that can be edited rather than deleted and rewritten.
+the viewer's own day after it — and the browser pass of 2026-10-27 watched that
+happen in a Pacific browser against a UTC server with nothing in the console.
+
+**That pass also opened three new bugs**, and one of them is the largest thing
+on this file: `requireWorkspace()` resolves the workspace by hard-coded slug, so
+**a member of any workspace but Northwind cannot reach theirs**. Meridian has
+existed since D-130 and is unreachable in the UI. See "Open bugs" below; the
+archaeology is in `docs/HISTORY.md`.
 
 The archaeology of the bugs that are fixed, and what browser verification found
 in each phase, is in `docs/HISTORY.md`.
@@ -64,6 +67,58 @@ in each phase, is in `docs/HISTORY.md`.
 ---
 
 ## Open bugs
+
+### Found by the browser pass, 2026-10-27
+
+**1. `requireWorkspace()` is hard-coded to the slug `northwind`, so a member of
+any other workspace cannot reach it.** Every page resolves which workspace it is
+showing with `SELECT … WHERE slug = 'northwind'`, regardless of who is asking —
+the function's own comment says the swap to "the workspace this request belongs
+to" would arrive "with real auth in Phase 5", and real sessions arrived in Phase
+9 without it. Found by the browser pass of 2026-10-27, which D-130's fixture is
+what made possible: a dev session as **Quinn**, a member of Meridian and nothing
+else, lands on *Northwind* with an empty list — the access index correctly
+refusing them inside a workspace they do not belong to.
+
+**Nothing caught it because every gate names its workspace.** `db:smoke` passes
+an id, `check:api`'s token carries one, `check:actions` looks one up by slug
+exactly as the app does. A screen is the only reader that has to *infer* which
+workspace it is in.
+
+The fix is not a one-liner: resolution has to come from the viewer's
+memberships, and **Sam is a member of both**, so it needs an answer to "which
+one" — a picker, a last-used preference, or a path segment. That is a decision
+before it is code, and it is the thing standing between this app and more than
+one workspace.
+
+**2. The dev user switcher is inert while a real session exists, and still looks
+live.** `getCurrentUser()` returns the session user and only falls back to the
+dev cookie, which is what "survives underneath real sessions" means (D-034) —
+but the control is still rendered and still selectable after sign-in, so
+choosing somebody else looks exactly like a switch that worked. Either hide it
+when a session is present, or have it mint a session for the chosen user. Found
+in the same pass.
+
+~~**Fixed in the same pass:** `relative()` could not count forwards~~ (D-136).
+A token expiring in thirty days said it expires "just now", and so did a
+*pending* automation run — `runAfter` is in the future by definition, so a rule
+delayed three days has been saying it will run just now since D-129 shipped.
+The function has moved into `packages/core/src/dates.ts` where it can be tested
+and learned `in 5m` / `in 3h`; two layout defects on the tokens screen went with
+it. Both were invisible to every gate because the string only exists after
+hydration.
+
+**3. `users` is 19 service accounts to 5 people**, one per token ever minted by
+a seed or a check run. Each is a real row by design (D-126) and the switcher
+lists every user in the database on purpose (D-131), so the dropdown is mostly
+robots. The seed deletes its workspace and the tokens go with it, but the
+accounts outlive it — the same wart D-133 moved rather than removed. Cheap fix:
+have the seed delete service accounts that have no membership left.
+
+
+### Closed — the three that were open until 2026-10-23
+
+Numbers kept as they were, because D-130 through D-132 refer to them.
 
 ~~**1. The four view renderers format an instant with no zone.**~~ **Done**
 (2026-10-23, D-132). `task-row.tsx`, `board.tsx`, `task-table.tsx` and
@@ -214,7 +269,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 603 unit tests, 300 live-Postgres checks, 173 action checks, 30
+**Verified:** 608 unit tests, 300 live-Postgres checks, 173 action checks, 30
 API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse
@@ -309,18 +364,22 @@ Then, in the order the rest argues for:
 
 **Two things owed on what just landed**, neither blocking:
 
-- **No browser pass on three things now**, and the reason is the same each
-  time: the Chrome extension has not been connected since 2026-10-21.
-  - **the four renderers' instant** (D-132) — three server-side checks cover
-    them and were shown failing when reverted, but nobody has watched a timed
-    due date hydrate;
-  - **`/settings/api`** (D-135) — both actions, both refusals and the rendered
-    markup are checked over HTTP, including that no secret reaches the page;
-    hydration and layout are not;
-  - **the second workspace**, below.
-
-  What a browser would add in all three cases is the same short list: hydration
-  warnings, the first-click-swallowed behaviour, and whether the layout holds.
+- ~~**No browser pass on three things**~~ **Driven 2026-10-27**, in a headless
+  Chromium rather than the Chrome extension, which has not been connected since
+  2026-10-21. Two passed and one found a real gap — the archaeology is in
+  `docs/HISTORY.md`.
+  - **the four renderers' instant** (D-132) — **passes.** A browser in
+    `America/Los_Angeles` against a UTC server: the HTML carried `Fri 6 UTC`,
+    the hydrated DOM showed `Thu 5`, the calendar-day control was identical on
+    both sides, and there were **zero console errors or warnings**. The one
+    branch still unseen is the detail page's, which renders a date *input* for
+    anybody with `edit` — so its `DueDate` only appears to a read-only viewer,
+    and the seed has none on that task.
+  - **`/settings/api`** (D-135) — **passes.** Minted on the first click,
+    showed the token once, dropped it on dismissal, listed it, revoked it
+    through the confirm step. Nothing in the console.
+  - **the second workspace** (D-130) — **fails, and not in the screen.** See
+    open bug 1.
 - **A second-workspace browser pass of any kind.** Meridian exists and no
   screen has been opened as Quinn. The dev user switcher lists them (it is
   unscoped on purpose, D-131), so it is one click away.

@@ -217,6 +217,17 @@ two applies, because the registry must exist before an image can be pushed.
 
 ## Environment gotchas that cost real time
 
+- **A browser pass without the extension.** When Claude's Chrome extension is
+  not connected (`list_connected_browsers` returns `[]`), drive a headless
+  Chromium instead — it catches the thing that matters most here, which is
+  console output, because a hydration mismatch is a warning and nothing else.
+  Install it in a **scratch directory**, never into this repo: `npm i playwright
+  && npx playwright install chromium` in `/tmp/...`, then point scripts at
+  `http://localhost:3300`. The pass of 2026-10-27 is written up in
+  `docs/HISTORY.md`; it verified D-132 and D-135 and found three bugs. Set
+  `timezoneId` on the context (`America/Los_Angeles` against a UTC server) or
+  the zone half of any date assertion proves nothing. Whether this becomes a
+  real gate in `package.json` is an open decision, not a thing to assume.
 - **The first click after a navigation is swallowed** while the dev server
   hydrates. It looks exactly like a broken handler. Click twice, or wait.
 - **Synthetic drags do not trigger HTML5 drag-and-drop.** `left_click_drag`
