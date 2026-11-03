@@ -5375,3 +5375,90 @@ name is *present*, and it was — welded to the next word.
 603 unit tests, 300 database checks and 173 action checks for the same reason —
 they are what the page says *after* it has hydrated, and until today nothing
 had read that.
+
+### D-137
+**Which workspace a request is in: the viewer's memberships, narrowed by a cookie** · 2026-11-02 · active
+
+The largest thing on `docs/STATUS.md`, and the one standing between this app
+and more than one workspace. Every screen resolved which workspace it was
+showing with `SELECT … WHERE slug = 'northwind'`, regardless of who was
+asking — the function's own comment promised the swap to "the workspace this
+request belongs to" would arrive "with real auth in Phase 5", and real
+sessions arrived in Phase 9 without it. **A member of any workspace but
+Northwind could not reach theirs.** Quinn, who is in Meridian and nothing
+else, landed on Northwind with an empty list: the access index correctly
+refusing them inside a workspace they are not in, which is what made it read
+as a permissions bug rather than a routing one.
+
+**Nothing caught it because every gate names its workspace.** `db:smoke`
+passes an id, `check:api`'s token carries one, `check:actions` looks one up by
+slug exactly as the app did. A screen is the only reader that has to *infer*
+which workspace it is in, so a browser pass was the only thing that could find
+it — and could only find it once D-130 seeded a second workspace to be wrong
+about.
+
+**The decision was never "read the membership".** That much is forced: a grant
+is about a container *inside* a workspace and so presupposes the answer.
+Memberships alone do not resolve it either — **Sam is in both** — so the real
+question was where the choice lives. Three answers:
+
+| | What it costs | What it buys |
+|---|---|---|
+| **A cookie, validated against memberships** (taken) | A link is not workspace-qualified; two tabs share one workspace | All 27 call sites and every URL unchanged; the change is one file plus a control |
+| A path segment, `/w/:slug/…` | Every route moves under a dynamic segment; ~45 link sites, 15 redirects and three gate scripts learn the prefix | Shareable cross-workspace links; two tabs can differ |
+| A stored preference on `users` | A server write per switch, and a picker screen for the ambiguous case | Follows the person across devices |
+
+The cookie wins on the only axis that is not speculative: there is no list
+navigation yet, so there are no cross-workspace links to qualify, and a path
+segment designed before navigation exists would be designing the URL twice.
+**The resolution stays in one function**, so the path segment remains
+available later as a narrowing *input* to the same resolver rather than as a
+rewrite.
+
+**The cookie is a narrowing, never a grant.** It is checked against the
+viewer's own memberships on every read, so a hand-edited cookie naming
+somebody else's workspace resolves to the viewer's first one rather than to
+what it names. Nothing authorizes it because it cannot widen anything — which
+is the property that makes an unsigned cookie the right shape here. The
+fallback is the first membership by `joined_at`: stable across requests and
+across processes, where "whichever row came back" would let a reload move you.
+
+**The bug was wider than it was written up as, which is the pattern of
+D-121/D-122/D-123 again.** Fixing resolution alone would have landed Quinn on
+Meridian and then shown them *Northwind's Sprint 24*, because `listMeta` in
+`apps/web/src/server/views.ts` was a second hard-coded reader — the workspace
+by slug **and the list by name** — that asked neither who was looking nor
+which workspace they were in. It takes both now and **joins `access_index`**
+(invariant 5), so the list a renderer opens on is one the viewer can see. Where
+the demo list is named moved to `workspaces.settings.homeListId`, which is what
+the hard-coded name was really expressing: a jsonb column that had held `{}`
+since Phase 1 and been read by nothing. It is a preference, not a permission —
+the index join still has the last word, so a member with no grant on the
+configured list falls through to one they do have rather than landing on a page
+with nothing on it.
+
+**And a third hard-coded reader, found in a screenshot rather than in text.**
+The sidebar rendered a second list row reading `Backlog` — a string in the
+JSX, not a query. It looked like the tree in the demo workspace because
+Northwind's Engineering really does hold a list by that name, and it read as a
+list Meridian does not have the moment anybody else's workspace was reachable.
+The same mistake as resolving a workspace by slug, in markup rather than in
+SQL. Removed rather than replaced with the real tree: every href in that group
+is still `#`, and a fabricated row is worse than a short one.
+
+**Checked at three levels, each with its revert verified.** Eight in
+`db:smoke` (308) on the resolver — Quinn resolving to exactly `[meridian]`,
+Sam to `[northwind, meridian]` in join order, an archived workspace excluded, a
+malformed principal resolving to nothing rather than throwing, and the seed's
+home lists being ones somebody can reach; **five of the eight fail** against a
+resolver with the membership join removed. The screen half cannot be checked
+there, so it is a browser pass in a headless Chromium — Quinn signing in and
+landing on Field Ops › Dispatch board with OPS-1, Avery as the control still
+landing on Sprint 24, and Sam's fallback holding across a reload — and **three
+of those fail** against the reverted resolver, on the "No demo workspace yet"
+screen, which is the original bug's exact shape.
+
+*In one sentence:* the workspace a request is in is now read from the person
+asking, and the two other places that had quietly answered "Northwind" — the
+list a renderer opens on, and a row in the sidebar — were only findable once
+the first one stopped lying.

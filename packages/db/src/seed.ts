@@ -233,6 +233,18 @@ async function main() {
     .returning();
   if (!sprint) throw new Error("seed: sprint insert failed");
 
+  // Which list a renderer opens on, now that it is not a name in a SQL string
+  // (D-137). `settings` has held `{}` since Phase 1 and been read by nothing;
+  // this is what the hard-coded "Sprint 24" was really expressing, and writing
+  // it here keeps the demo landing where it always has while the resolver stays
+  // workspace-agnostic. It is a preference, not a permission — `listMeta`
+  // still joins the index, so a member with no grant on this list falls through
+  // to one they do have.
+  await db
+    .update(s.workspaces)
+    .set({ settings: { homeListId: sprint.id } })
+    .where(eq(s.workspaces.id, workspace.id));
+
   // --- task types and custom fields ----------------------------------------
   const taskTypeRows = await db
     .insert(s.taskTypes)
@@ -908,6 +920,13 @@ async function main() {
     })
     .returning();
   if (!outsideList) throw new Error("seed: second workspace list insert failed");
+
+  // The same for Meridian, so the fixture exercises a *configured* home list in
+  // both workspaces rather than one configured and one falling back.
+  await db
+    .update(s.workspaces)
+    .set({ settings: { homeListId: outsideList.id } })
+    .where(eq(s.workspaces.id, outside.id));
 
   // One task in it, for the reason the private list has one: an empty workspace
   // leaks nothing, so a check that reads across the boundary cannot fail.

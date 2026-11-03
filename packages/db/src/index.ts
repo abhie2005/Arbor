@@ -171,9 +171,11 @@ export {
   requireWorkspaceRole,
   taskAccess,
   workspaceRole,
+  workspacesFor,
   type MemberRole,
   type TaskAccess,
   type ViewAccess,
+  type WorkspaceMembership,
 } from "./task-access";
 export {
   addCard,

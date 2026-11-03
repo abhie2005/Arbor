@@ -391,3 +391,51 @@ export async function requireViewAccess(
   await requireContainerAccess(row.parent_id, userId, "edit", connection);
   return access;
 }
+
+export interface WorkspaceMembership {
+  id: string;
+  name: string;
+  slug: string;
+  role: MemberRole;
+}
+
+/**
+ * Which workspaces this person is actually in.
+ *
+ * The question every screen has to answer before it can answer anything else,
+ * and the one nothing asked until D-137: resolution was `WHERE slug =
+ * 'northwind'` regardless of who was asking, so a member of any other
+ * workspace reached Northwind and the access index correctly showed them
+ * nothing. A membership is the only honest source for it — a grant is about a
+ * container inside a workspace and presupposes the answer.
+ *
+ * It lives beside `workspaceRole` because it is the same axis: both read
+ * `memberships` and neither touches `access_index`. Reaching a workspace is
+ * strictly weaker than reaching anything in it, which is why this does not
+ * filter on having a grant — a member who has been shared nothing still has an
+ * inbox, a profile and an empty tree, and hiding the workspace from them would
+ * report "you are in no workspace" to somebody who plainly is.
+ *
+ * Archived workspaces are excluded: `archivedAt` is the one state where a
+ * membership outlives the thing it is a membership of.
+ *
+ * Ordered by `joined_at`, so "the first one" is stable across requests and
+ * across processes — the fallback when nothing has been chosen has to be the
+ * same answer twice or a reload moves you.
+ */
+export async function workspacesFor(
+  userId: string,
+  connection: Connection = pool(),
+): Promise<WorkspaceMembership[]> {
+  if (!isId(userId)) return [];
+
+  const result = await connection.query<WorkspaceMembership>(
+    `SELECT w.id, w.name, w.slug, m.role
+     FROM memberships m
+     JOIN workspaces w ON w.id = m.workspace_id
+     WHERE m.user_id = $1 AND w.archived_at IS NULL
+     ORDER BY m.joined_at, w.name`,
+    [userId],
+  );
+  return result.rows;
+}

@@ -269,9 +269,15 @@ async function Sidebar({ chrome }: { chrome: ShellChrome }) {
             {location.listName}
             <span className="count">{location.listTaskCount}</span>
           </a>
-          <a className="nav depth-1" href="#">
-            <span className="ic">▤</span>Backlog
-          </a>
+          {/* There was a second row here reading "Backlog" — a hard-coded
+              string, not a query. It looked like the tree in the demo workspace
+              because Northwind's Engineering really does hold a list by that
+              name, and it read as a list Meridian does not have the moment
+              anybody else's workspace was reachable (D-137). The same mistake
+              as resolving a workspace by slug, in markup rather than in SQL.
+              The real tree belongs here once a list is something you can
+              navigate to; until then every href in this group is "#", and a
+              fabricated row is worse than a short one. */}
         </nav>
       ) : (
         // A screen with no location has no Spaces group to sit in, and would

@@ -133,24 +133,59 @@ interface MetaRow {
 }
 
 /**
- * The demo list. Replaced by routing on a list id once there is navigation;
- * kept in one place so that change is one edit rather than one per renderer.
+ * Which list a renderer opens on, for this viewer in this workspace.
+ *
+ * This was `WHERE w.slug = 'northwind' AND l.name = 'Sprint 24'` — the demo
+ * list, by name, for everybody. It is the second half of D-137 and the half the
+ * bug report missed: fixing workspace resolution alone would have landed Quinn
+ * on *Meridian* and then shown them Northwind's Sprint 24 anyway, because this
+ * query never asked who was looking or which workspace they were in.
+ *
+ * Two changes. It takes the resolved workspace, so a renderer cannot show a
+ * list from outside it. And it **joins `access_index`** (invariant 5), so the
+ * list it lands on is one the viewer can actually see — the alternative being
+ * the empty page that looks like an empty list.
+ *
+ * `settings.homeListId` is where a workspace says which list that is, which is
+ * what the hard-coded name was really expressing. It is a preference, not a
+ * permission: the join still has the last word, so a member with no grant on
+ * the configured list falls through to one they do have rather than landing on
+ * a page with nothing on it. There is still no list navigation (that is what
+ * replaces this), so the fallback has to be deterministic — `created_at` then
+ * `id`, because two spaces seeded together hold the same fractional position
+ * and tree order alone would let a reload move you.
  */
-async function listMeta(): Promise<MetaRow | undefined> {
-  const result = await pool().query<MetaRow>(`
+async function listMeta(
+  workspaceId: string,
+  viewerId: string,
+): Promise<MetaRow | undefined> {
+  const result = await pool().query<MetaRow>(
+    `
     SELECT w.id AS workspace_id, w.name AS workspace_name,
            l.id AS list_id,      l.name AS list_name,
            f.name AS folder_name, sp.name AS space_name
     FROM workspaces w
     JOIN containers l  ON l.workspace_id = w.id AND l.kind = 'list'
+                      AND l.archived_at IS NULL
+    -- Invariant 5: a read is scoped by joining the index, never by filtering
+    -- after the fact.
+    JOIN access_index ai ON ai.container_id = l.id AND ai.principal_id = $2
     -- A list may sit straight under a space, in which case there is no folder.
     -- Without the kind test the space matches here as well and the breadcrumb
     -- names it twice.
     LEFT JOIN containers f  ON f.id = l.parent_id AND f.kind = 'folder'
     LEFT JOIN containers sp ON sp.id = COALESCE(f.parent_id, l.parent_id)
-    WHERE w.slug = 'northwind' AND l.name = 'Sprint 24'
+    WHERE w.id = $1
+    -- Compared as text on purpose: a cast to uuid throws on a settings value
+    -- that is not one, and a malformed preference should be ignored rather than
+    -- 500 every screen. COALESCE because ->> of a missing key is NULL, and
+    -- DESC sorts those first.
+    ORDER BY COALESCE(l.id::text = w.settings->>'homeListId', false) DESC,
+             l.created_at, l.id
     LIMIT 1
-  `);
+  `,
+    [workspaceId, viewerId],
+  );
   return result.rows[0];
 }
 
@@ -189,6 +224,13 @@ async function savedView(
 }
 
 export interface LoadViewOptions {
+  /**
+   * The workspace the request resolved to (D-137). Passed in rather than looked
+   * up here: `requireWorkspace()` is the one place that decides which workspace
+   * a request is in, and a second resolver is a second answer waiting to
+   * disagree with it.
+   */
+  workspaceId: string;
   viewerId: string;
   type: ViewType;
   /** Renderer-specific overrides — a board always groups, whatever was saved. */
@@ -218,6 +260,7 @@ export interface LoadViewOptions {
  */
 export async function loadView(options: LoadViewOptions): Promise<ViewContext | null> {
   const {
+    workspaceId,
     viewerId,
     type,
     override = {},
@@ -228,7 +271,7 @@ export async function loadView(options: LoadViewOptions): Promise<ViewContext | 
     limit,
   } = options;
 
-  const meta = await listMeta();
+  const meta = await listMeta(workspaceId, viewerId);
   if (!meta) return null;
 
   const connection = pool();

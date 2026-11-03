@@ -64,11 +64,17 @@ export default async function CalendarPage({
     viewer = await getCurrentUser();
     if (viewer) {
       const workspace = await requireWorkspace();
-      const saved = await loadView({ viewerId: viewer.id, type: "calendar", viewId: view });
+      const saved = await loadView({
+        workspaceId: workspace.id,
+        viewerId: viewer.id,
+        type: "calendar",
+        viewId: view,
+      });
       const field = dateFieldOf(saved?.definition.settings);
 
       [data, options] = await Promise.all([
         loadView({
+          workspaceId: workspace.id,
           viewerId: viewer.id,
           type: "calendar",
           viewId: view,

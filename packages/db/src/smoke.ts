@@ -139,6 +139,7 @@ import {
   requireTaskAccess,
   requireTasksAccess,
   taskAccess,
+  workspacesFor,
 } from "./task-access";
 import { createApiToken, principalForToken, revokeApiToken } from "./api-tokens";
 import { namesFor, peopleIn } from "./people";
@@ -4617,6 +4618,104 @@ async function main() {
       everyone.some((person) => person.id === quinn.id)
         ? "a non-member is in the label map"
         : null,
+    );
+
+    // --- which workspace a request is in (D-137) ----------------------------
+    // The resolver a screen uses to answer the one question every gate in this
+    // repo answers for it: `db:smoke` passes a workspace id, `check:api`'s
+    // token carries one, `check:actions` looks one up by slug. Resolution was
+    // `WHERE slug = 'northwind'` for everybody, so Quinn reached Northwind and
+    // saw nothing — correctly, which is what made it read as a permissions bug.
+    //
+    // Quinn is the subject and Sam is the control: a resolver that returns
+    // every workspace passes the Quinn check only if you squint at the *count*,
+    // so both assertions are about the exact set.
+    console.log("\nwhich workspace a request is in\n");
+
+    const slugsFor = async (userId: string) =>
+      (await workspacesFor(userId, pool)).map((w) => w.slug);
+
+    report(
+      "a member of one workspace resolves to that one, not to the demo",
+      JSON.stringify(await slugsFor(quinn.id)) === JSON.stringify(["meridian"])
+        ? null
+        : `Quinn resolved to ${JSON.stringify(await slugsFor(quinn.id))}`,
+    );
+
+    report(
+      "a member of both gets both, oldest membership first",
+      JSON.stringify(await slugsFor(bothWorkspaces.id!)) ===
+        JSON.stringify(["northwind", "meridian"])
+        ? null
+        : `Sam resolved to ${JSON.stringify(await slugsFor(bothWorkspaces.id!))}`,
+    );
+
+    report(
+      "and a Northwind-only member does not reach Meridian",
+      JSON.stringify(await slugsFor(viewer.id!)) === JSON.stringify(["northwind"])
+        ? null
+        : `the owner resolved to ${JSON.stringify(await slugsFor(viewer.id!))}`,
+    );
+
+    // A cookie naming somebody else's workspace is the untrusted input here,
+    // and it is checked against this list on every read — so the resolver
+    // returning nothing for a non-id is what makes that check safe rather than
+    // a 500.
+    report(
+      "an id that is not one resolves to nothing rather than throwing",
+      (await workspacesFor("'; DROP TABLE workspaces; --", pool)).length === 0
+        ? null
+        : "a malformed principal resolved to a workspace",
+    );
+
+    // `archived_at` is the one state where a membership outlives the thing it
+    // is a membership of, so it is the one exclusion the join needs.
+    await pool.query(`UPDATE workspaces SET archived_at = now() WHERE id = $1`, [
+      outsideWs.id,
+    ]);
+    const whileArchived = await slugsFor(quinn.id);
+    await pool.query(`UPDATE workspaces SET archived_at = NULL WHERE id = $1`, [
+      outsideWs.id,
+    ]);
+
+    report(
+      "an archived workspace is not one you are in",
+      whileArchived.length === 0 ? null : `resolved to ${JSON.stringify(whileArchived)}`,
+    );
+
+    report(
+      "and un-archiving puts it back, so this check left the fixture alone",
+      JSON.stringify(await slugsFor(quinn.id)) === JSON.stringify(["meridian"])
+        ? null
+        : "the archive check did not restore Meridian",
+    );
+
+    // The fixture half, like the timed-due-date checks below: what these
+    // protect is the ability of the HTTP gate to be about a *configured* home
+    // list at all. `listMeta` prefers `settings.homeListId` and still joins the
+    // index, so a configured list its own members cannot see would fall through
+    // silently and the screen would look right for the wrong reason.
+    const homes = await pool.query<{ slug: string; list: string | null; reach: number }>(
+      `SELECT w.slug, c.name AS list,
+              (SELECT count(*) FROM access_index ai WHERE ai.container_id = c.id) AS reach
+         FROM workspaces w
+         LEFT JOIN containers c
+           ON c.id::text = w.settings->>'homeListId' AND c.workspace_id = w.id
+        ORDER BY w.slug`,
+    );
+
+    report(
+      "both workspaces say which list a renderer opens on",
+      homes.rows.length === 2 && homes.rows.every((r) => r.list !== null)
+        ? null
+        : `homeListId: ${JSON.stringify(homes.rows)}`,
+    );
+
+    report(
+      "and somebody can see each of them, or the fallback would hide the bug",
+      homes.rows.every((r) => Number(r.reach) > 0)
+        ? null
+        : `a home list nobody reaches: ${JSON.stringify(homes.rows)}`,
     );
   }
 

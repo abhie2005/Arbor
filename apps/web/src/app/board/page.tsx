@@ -39,6 +39,7 @@ export default async function BoardPage({
       const workspace = await requireWorkspace();
       [data, options] = await Promise.all([
         loadView({
+          workspaceId: workspace.id,
           viewerId: viewer.id,
           type: "board",
           viewId: view,

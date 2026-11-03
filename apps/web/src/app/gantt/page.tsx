@@ -56,6 +56,7 @@ export default async function GanttPage({
       const workspace = await requireWorkspace();
       [data, options] = await Promise.all([
         loadView({
+          workspaceId: workspace.id,
           viewerId: viewer.id,
           type: "gantt",
           viewId: view,

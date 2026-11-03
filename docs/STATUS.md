@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-10-27 (browser pass). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-11-02 (multi-workspace). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **Phases 1–9 are done. Phase 10 is under way: automations run, and now they
 have a screen.** A rule can be written, armed, disabled and deleted by a person
@@ -55,11 +55,14 @@ of the three. They call one `DueDate` now, pinned to UTC before hydration and
 the viewer's own day after it — and the browser pass of 2026-10-27 watched that
 happen in a Pacific browser against a UTC server with nothing in the console.
 
-**That pass also opened three new bugs**, and one of them is the largest thing
-on this file: `requireWorkspace()` resolves the workspace by hard-coded slug, so
-**a member of any workspace but Northwind cannot reach theirs**. Meridian has
-existed since D-130 and is unreachable in the UI. See "Open bugs" below; the
-archaeology is in `docs/HISTORY.md`.
+**That pass opened three bugs and the largest is now closed** (2026-11-02,
+D-137): `requireWorkspace()` resolved the workspace by hard-coded slug, so a
+member of any workspace but Northwind could not reach theirs. **Meridian is
+reachable now** — resolution is the viewer's memberships, narrowed by a
+validated cookie — and fixing it turned up two more readers that had quietly
+answered "Northwind": the list a renderer opens on, and a row in the sidebar
+that was a string rather than a query. Two bugs from that pass remain open
+below; the archaeology is in `docs/HISTORY.md`.
 
 The archaeology of the bugs that are fixed, and what browser verification found
 in each phase, is in `docs/HISTORY.md`.
@@ -70,26 +73,35 @@ in each phase, is in `docs/HISTORY.md`.
 
 ### Found by the browser pass, 2026-10-27
 
-**1. `requireWorkspace()` is hard-coded to the slug `northwind`, so a member of
-any other workspace cannot reach it.** Every page resolves which workspace it is
-showing with `SELECT … WHERE slug = 'northwind'`, regardless of who is asking —
-the function's own comment says the swap to "the workspace this request belongs
-to" would arrive "with real auth in Phase 5", and real sessions arrived in Phase
-9 without it. Found by the browser pass of 2026-10-27, which D-130's fixture is
-what made possible: a dev session as **Quinn**, a member of Meridian and nothing
-else, lands on *Northwind* with an empty list — the access index correctly
-refusing them inside a workspace they do not belong to.
+~~**1. `requireWorkspace()` is hard-coded to the slug `northwind`.**~~ **Done**
+(2026-11-02, D-137). Resolution is the viewer's **memberships**, narrowed by a
+cookie that is validated against them on every read — so a hand-edited cookie
+naming somebody else's workspace resolves to the viewer's first one rather than
+to what it names, and nothing has to authorize it because it cannot widen
+anything. Sam is in both, and the fallback is the first membership by
+`joined_at` because it has to be the same answer on a reload. A cookie rather
+than a path segment because there is no list navigation yet, so there are no
+cross-workspace links to qualify; the resolution stays in one function, so a
+path segment remains available later as an *input* to the same resolver rather
+than as a rewrite. All 27 call sites and every URL are unchanged.
 
-**Nothing caught it because every gate names its workspace.** `db:smoke` passes
-an id, `check:api`'s token carries one, `check:actions` looks one up by slug
-exactly as the app does. A screen is the only reader that has to *infer* which
-workspace it is in.
+**It was two more readers than the bug report said**, which is the
+D-121/D-122/D-123 pattern again. `listMeta` hard-coded the workspace **and the
+list by name**, so fixing resolution alone would have landed Quinn on Meridian
+and shown them Northwind's Sprint 24; it takes the workspace and the viewer now
+and joins `access_index`, with the demo list named by
+`workspaces.settings.homeListId` — a jsonb column that had held `{}` since
+Phase 1 and been read by nothing. And the sidebar rendered a row reading
+`Backlog` that was a **string in the JSX**, not a query: it looked like the tree
+in Northwind, which has a list by that name, and read as a phantom list in
+Meridian. Found in a screenshot rather than in any assertion.
 
-The fix is not a one-liner: resolution has to come from the viewer's
-memberships, and **Sam is a member of both**, so it needs an answer to "which
-one" — a picker, a last-used preference, or a path segment. That is a decision
-before it is code, and it is the thing standing between this app and more than
-one workspace.
+**Checked at three levels with every revert verified:** eight in `db:smoke`
+(308 now), of which five fail against a resolver with the membership join
+removed, and a browser pass — Quinn landing on Field Ops › Dispatch board with
+OPS-1, Avery as the control still on Sprint 24, Sam's fallback holding across a
+reload, nothing in any console — of which three fail against the same revert,
+on the "No demo workspace yet" screen that is the original bug's exact shape.
 
 **2. The dev user switcher is inert while a real session exists, and still looks
 live.** `getCurrentUser()` returns the session user and only falls back to the
@@ -269,7 +281,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 608 unit tests, 300 live-Postgres checks, 173 action checks, 30
+**Verified:** 608 unit tests, 308 live-Postgres checks, 174 action checks, 30
 API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse

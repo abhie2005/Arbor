@@ -44,6 +44,7 @@ export default async function Page({
       const workspace = await requireWorkspace();
       [data, options] = await Promise.all([
         loadView({
+          workspaceId: workspace.id,
           viewerId: viewer.id,
           type: "list",
           viewId: view,
