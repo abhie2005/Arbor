@@ -18,6 +18,11 @@ import { cookies } from "next/headers";
  * browser with no cookies is signed out and sees the login screen. Being able
  * to become another user without their password is worth keeping for a demo
  * workspace, and it is gated on `devAuthEnabled()`.
+ *
+ * **That ordering is also what made the control inert** (D-138): a session
+ * outranks the dev cookie, so writing one while signed in changed nothing and
+ * looked like it had. The rule here is unchanged and correct; what changed is
+ * that `switchUser` now ends the session before writing the cookie.
  */
 
 export const SESSION_COOKIE = "arbor_session";
@@ -63,10 +68,12 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
  * workspace" (D-131).
  *
  * Unscoped on purpose, and more useful now than when it was an accident: a
- * second workspace exists (D-130), a person's workspace is resolved from their
- * membership, so switching to its member is how you get there. The five reads
- * that fill a *picker* or label an id are scoped now; this one is a development
- * affordance behind `devAuthEnabled()` and is not one of them.
+ * second workspace exists (D-130) and a person's workspace is resolved from
+ * their membership (D-137), so becoming its member is one way to see it. No
+ * longer the *only* way — Quinn has a password like everybody else, and a
+ * person in two workspaces has a switcher — but still the quickest. The five
+ * reads that fill a *picker* or label an id are scoped now; this one is a
+ * development affordance behind `devAuthEnabled()` and is not one of them.
  */
 export async function listSwitchableUsers(): Promise<CurrentUser[]> {
   if (!devAuthEnabled()) return [];

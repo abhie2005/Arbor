@@ -5493,3 +5493,60 @@ a render.
 asking, and the two other places that had quietly answered "Northwind" — the
 list a renderer opens on, and a row in the sidebar — were only findable once
 the first one stopped lying.
+
+### D-138
+**The dev switcher ends the session rather than writing underneath it** · 2026-11-02 · active
+
+Open bug 2 from the browser pass of 2026-10-27. The development user switcher
+(D-034) wrote `arbor_dev_user` and `getCurrentUser()` never looked at it:
+sessions became real in Phase 9, the dev cookie survives *underneath* a session
+rather than instead of it, so choosing somebody else while signed in changed
+nothing and **looked exactly like a switch that had worked**. The control
+stayed rendered, stayed selectable, and the page came back as whoever was
+signed in. A control that silently does nothing is worse than one that is not
+there.
+
+**The ordering is not the bug and has not changed.** A dev cookie that could
+override a live session would be the actual vulnerability, and the check that
+says so is the first one in this section: a request carrying both still
+resolves to the session. What changed is the *write* side — switching now
+`signOut`s the current token and deletes the cookie before writing the dev one.
+
+| | Why not |
+|---|---|
+| **Hide it once a session exists** | Honest, and it removes the affordance exactly when it is most useful — a demo is a thing you are signed into |
+| **Mint a session for the chosen user** | The most faithful, and it puts a password-less session mint in `@arbor/db` where anything can call it. A development affordance is not worth that primitive existing |
+| **End the session, then write the cookie** (taken) | No new primitive, and it is the honest reading of the control: "become somebody else without their password" *is* signing out and back in as them |
+
+**The row, not only the cookie.** `signOut` deletes the `sessions` row, because
+a token left valid in the database is a live credential for an account the
+browser has stopped using — the cookie being gone from one browser is not the
+same as the session being over.
+
+**The workspace cookie is deliberately left alone**, and that is a property of
+D-137 rather than an oversight: it is validated against the viewer's
+memberships on every read, so becoming somebody who is not in that workspace
+falls back to one of theirs by itself, and becoming somebody who *is* keeps you
+where you were. Verified in the browser — switching from Avery to Quinn lands
+on Field Ops › Dispatch board with the Northwind workspace cookie still in the
+jar.
+
+**Four checks in `check:actions`, three of which fail against the old
+`switchUser`.** The fourth is the one that must *not* change: a session
+outranking a dev cookie. The third started out passing against the broken code
+too — it asked for the dev cookie alone, which always worked — and the fix was
+to send **both** cookies, which is what a browser that switched before today
+actually held: the session the switch failed to end, outranking the choice that
+was just made. That is the bug's exact shape, and it is now the assertion.
+
+**And it found a second thing about this gate.** React separates adjacent text
+nodes with `<!-- -->` in server-rendered HTML, so `acting as {viewer.name}`
+never matches as the sentence it reads as — the first two of these checks
+failed for that reason and not because of any code. `words()` strips the
+markers, which is the HTTP gate's version of what Playwright's `innerText`
+does for free. Every assertion about rendered *prose* from `check:actions`
+needed it and nothing had asked for one before.
+
+*In one sentence:* the fix is three lines, and finding it took a browser,
+because every gate in this repo drives exactly one identity per run and this
+bug only exists in the transition between two.

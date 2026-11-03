@@ -15,6 +15,7 @@ import {
   applyOperations,
   mentionableIn,
   pool,
+  signOut,
   requireListAccess,
   requireTaskAccess,
   requireTasksAccess,
@@ -23,7 +24,7 @@ import {
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 
-import { DEV_USER_COOKIE, devAuthEnabled, requireUser } from "./auth";
+import { DEV_USER_COOKIE, SESSION_COOKIE, devAuthEnabled, requireUser } from "./auth";
 import { WORKSPACE_COOKIE, viewerWorkspaces } from "./workspace";
 
 /**
@@ -601,11 +602,41 @@ export async function switchWorkspace(workspaceId: string): Promise<void> {
   revalidatePath("/gantt");
 }
 
-/** Development only — see D-034. */
+/**
+ * Development only — see D-034.
+ *
+ * **It ends the session first, which is the whole fix** (D-138). The dev
+ * cookie survives *underneath* a real session rather than instead of it, so
+ * `getCurrentUser()` has preferred the session since Phase 9 and this wrote a
+ * cookie nothing ever read: choosing somebody else looked exactly like a
+ * switch that worked, and the page came back as whoever was signed in. A
+ * control that silently does nothing is worse than one that is not there.
+ *
+ * Ending the session is the honest reading of what this control is for —
+ * "become somebody else without their password" is signing out and signing in
+ * as them — and it needs no new primitive. The alternative, minting a session
+ * for the chosen user, would mean a password-less session mint living in
+ * `@arbor/db` where anything could call it; a development affordance is not
+ * worth that.
+ *
+ * The workspace cookie is deliberately left alone: it is validated against the
+ * viewer's memberships on every read (D-137), so becoming somebody who is not
+ * in that workspace falls back to one of theirs by itself, and becoming
+ * somebody who *is* keeps you where you were.
+ */
 export async function switchUser(userId: string): Promise<void> {
   if (!devAuthEnabled()) throw new Error("The user switcher is disabled outside development");
 
   const store = await cookies();
+
+  const token = store.get(SESSION_COOKIE)?.value;
+  if (token) {
+    // The row, not only the cookie: a token left valid in the database is a
+    // live credential for an account the browser has stopped using.
+    await signOut(token);
+    store.delete(SESSION_COOKIE);
+  }
+
   store.set(DEV_USER_COOKIE, userId, { httpOnly: true, sameSite: "lax", path: "/" });
   revalidatePath("/");
 }

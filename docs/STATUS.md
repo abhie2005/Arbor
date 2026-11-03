@@ -115,13 +115,19 @@ between the two and the choice surviving a reload. Three of those fail against
 the reverted resolver, on the "No demo workspace yet" screen that is the
 original bug's exact shape. Nothing in any console.
 
-**2. The dev user switcher is inert while a real session exists, and still looks
-live.** `getCurrentUser()` returns the session user and only falls back to the
-dev cookie, which is what "survives underneath real sessions" means (D-034) —
-but the control is still rendered and still selectable after sign-in, so
-choosing somebody else looks exactly like a switch that worked. Either hide it
-when a session is present, or have it mint a session for the chosen user. Found
-in the same pass.
+~~**2. The dev user switcher is inert while a real session exists.**~~ **Done**
+(2026-11-02, D-138). Switching now ends the session — `signOut` on the token
+and the cookie deleted — before writing the dev cookie. **The ordering was
+never the bug**: a dev cookie that could override a live session would be the
+actual vulnerability, and the first of the four new checks says it still
+cannot. Rejected minting a session for the chosen user, which is more faithful
+and puts a password-less session mint in `@arbor/db` where anything could call
+it. The workspace cookie is left alone on purpose: D-137 validates it against
+the new person's memberships, so becoming somebody in another workspace moves
+you there by itself. Three of the four checks fail against the old
+`switchUser`, and the one that started out passing against it is why the
+assertion now sends *both* cookies — the jar a browser that switched before
+today actually held.
 
 ~~**Fixed in the same pass:** `relative()` could not count forwards~~ (D-136).
 A token expiring in thirty days said it expires "just now", and so did a
@@ -293,7 +299,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 608 unit tests, 308 live-Postgres checks, 182 action checks, 30
+**Verified:** 608 unit tests, 308 live-Postgres checks, 186 action checks, 30
 API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse

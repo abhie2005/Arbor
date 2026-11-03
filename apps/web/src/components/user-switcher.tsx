@@ -21,7 +21,10 @@ export function UserSwitcher({
   const [pending, startTransition] = useTransition();
 
   return (
-    <label className="switcher" title="Development only — not real authentication">
+    <label
+      className="switcher"
+      title="Development only — not real authentication. Choosing somebody signs out of the current session."
+    >
       <span className="switcher-tag">dev</span>
       <select
         value={currentId}

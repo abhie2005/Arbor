@@ -2984,6 +2984,99 @@ report(
     : "a sidebar named a container from the wrong workspace",
 );
 
+// --- the dev switcher, which was inert (D-138) ------------------------------
+// It wrote a cookie nothing read: `getCurrentUser()` prefers the session, and
+// the dev cookie survives *underneath* one (D-034), so choosing somebody else
+// looked exactly like a switch that worked. Both halves are here — the rule
+// that made it inert is still the rule, and the write side is what changed.
+console.log("\nthe dev switcher, under a real session\n");
+
+/**
+ * React separates adjacent text nodes with `<!-- -->` in server-rendered HTML,
+ * so "acting as {viewer.name}" never matches as the sentence it reads as.
+ * Stripping the markers is what makes an assertion about rendered *words*
+ * possible at all from here — Playwright's innerText does it for free, and
+ * this is the HTTP gate's version of the same thing.
+ */
+const words = (html: string) => html.replace(/<!--.*?-->/g, "");
+
+const quinnId = (await one(`SELECT id FROM users WHERE email = 'quinn@example.com'`)).id;
+const rileyId = (await one(`SELECT id FROM users WHERE email = 'riley@example.com'`)).id;
+
+const bothCookies = await (
+  await fetch(`http://localhost:${PORT}/`, {
+    headers: { Cookie: `${COOKIE}; arbor_dev_user=${quinnId}` },
+  })
+).text();
+
+report(
+  "a session still outranks a dev cookie, which is what D-034 promised",
+  /acting as Avery Mills/.test(words(bothCookies))
+    ? null
+    : "the dev cookie overrode a real session",
+);
+
+// A separate session on purpose: this check destroys the one it is standing
+// on, and everything above runs as Avery.
+const { token: doomed } = await signIn("riley@example.com", "arbor-demo-2026");
+const sessionsBefore = Number(
+  (await one(`SELECT count(*) AS n FROM sessions WHERE user_id = $1`, [rileyId])).n,
+);
+
+const userSwitch = await fetch(`http://localhost:${PORT}/`, {
+  method: "POST",
+  headers: {
+    "Next-Action": PAGE_ACTIONS.switchUser!,
+    "Content-Type": "text/plain;charset=UTF-8",
+    Cookie: `arbor_session=${doomed}`,
+  },
+  body: JSON.stringify([quinnId]),
+});
+const switchedCookies = String(userSwitch.headers.get("set-cookie") ?? "");
+await userSwitch.text();
+
+const sessionsAfter = Number(
+  (await one(`SELECT count(*) AS n FROM sessions WHERE user_id = $1`, [rileyId])).n,
+);
+
+report(
+  "switching ends the session it was standing on, in the database",
+  sessionsAfter === sessionsBefore - 1
+    ? null
+    : `${sessionsBefore} sessions before, ${sessionsAfter} after — the row outlived the switch`,
+);
+
+report(
+  "and clears the cookie, so the browser is not holding a dead token",
+  /arbor_session=;/.test(switchedCookies) || /arbor_session=[^;]*;[^]*Max-Age=0/.test(switchedCookies)
+    ? null
+    : `set-cookie: ${switchedCookies.slice(0, 200) || "(none)"}`,
+);
+
+/**
+ * The bug's exact shape, which is why this sends *both* cookies: a browser
+ * that switched before D-138 kept its session, and the session outranks the
+ * dev cookie — so the next request came back as whoever was signed in. It is
+ * the same jar either way; what differs is whether the session behind it is
+ * still alive. Asserting with the dev cookie alone passes on the broken code
+ * too, which is how this check started.
+ */
+report(
+  "and the chosen person is who the next request is, old session cookie and all",
+  /arbor_dev_user=/.test(switchedCookies) &&
+    /acting as Quinn Alvarez/.test(
+      words(
+        await (
+          await fetch(`http://localhost:${PORT}/`, {
+            headers: { Cookie: `arbor_session=${doomed}; arbor_dev_user=${quinnId}` },
+          })
+        ).text(),
+      ),
+    )
+    ? null
+    : "the switch did not take effect — a live session outranked it",
+);
+
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);
 await db.end();
