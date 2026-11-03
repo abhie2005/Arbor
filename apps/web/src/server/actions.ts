@@ -24,6 +24,7 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 
 import { DEV_USER_COOKIE, devAuthEnabled, requireUser } from "./auth";
+import { WORKSPACE_COOKIE, viewerWorkspaces } from "./workspace";
 
 /**
  * Server actions are the API boundary.
@@ -563,6 +564,41 @@ export async function undo(ops: Operation[]): Promise<void> {
   revalidatePath("/");
   revalidatePath("/board");
   revalidatePath("/calendar");
+}
+
+/**
+ * Which of your workspaces to look at (D-137).
+ *
+ * Not development-only, and not the user switcher's sibling despite sitting
+ * beside it: this is an ordinary thing a person in two workspaces does.
+ *
+ * **It narrows, it does not grant.** The cookie is checked against the
+ * viewer's own memberships on every read, so writing one that names somebody
+ * else's workspace achieves nothing — `currentWorkspace()` would ignore it and
+ * fall back. The membership check here is therefore not the security boundary;
+ * it is so that choosing something impossible fails loudly at the click rather
+ * than silently on the next render, which is the difference between a bug
+ * report and a shrug.
+ */
+export async function switchWorkspace(workspaceId: string): Promise<void> {
+  const mine = await viewerWorkspaces();
+  if (!mine.some((workspace) => workspace.id === workspaceId)) {
+    // Same words as any other unreachable thing (invariant 6): a workspace you
+    // are not in should not be distinguishable from one that does not exist.
+    throw new Error("That workspace no longer exists");
+  }
+
+  const store = await cookies();
+  store.set(WORKSPACE_COOKIE, workspaceId, { httpOnly: true, sameSite: "lax", path: "/" });
+
+  // Every screen is scoped to a workspace, so every screen is now showing the
+  // wrong one. The renderers' paths are the ones a person is most likely to be
+  // standing on when they switch.
+  revalidatePath("/");
+  revalidatePath("/board");
+  revalidatePath("/table");
+  revalidatePath("/calendar");
+  revalidatePath("/gantt");
 }
 
 /** Development only — see D-034. */

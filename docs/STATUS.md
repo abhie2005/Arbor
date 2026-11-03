@@ -96,12 +96,24 @@ Phase 1 and been read by nothing. And the sidebar rendered a row reading
 in Northwind, which has a list by that name, and read as a phantom list in
 Meridian. Found in a screenshot rather than in any assertion.
 
+**And there is a switcher**, in the sidebar where the workspace name was,
+rendered only when the viewer is in more than one — a select with one option is
+a control that cannot do anything. The sidebar looks the list up for itself
+rather than taking it through `ShellChrome`, the way it already does the inbox
+badge (D-085), so no page changed. `switchWorkspace` checks the membership
+before writing the cookie, which is not the security boundary — the read is —
+but a choice that cannot work should fail at the click.
+
 **Checked at three levels with every revert verified:** eight in `db:smoke`
 (308 now), of which five fail against a resolver with the membership join
-removed, and a browser pass — Quinn landing on Field Ops › Dispatch board with
-OPS-1, Avery as the control still on Sprint 24, Sam's fallback holding across a
-reload, nothing in any console — of which three fail against the same revert,
-on the "No demo workspace yet" screen that is the original bug's exact shape.
+removed; eight in `check:actions` (182), where the pair that matters is the
+same forged cookie naming Meridian sent with two different sessions — ignored
+for Avery, honoured for Sam — which goes red the moment the cookie is trusted;
+and a browser pass of thirteen, including Quinn landing on Field Ops › Dispatch
+board with OPS-1, Avery as the control still on Sprint 24, and Sam switching
+between the two and the choice surviving a reload. Three of those fail against
+the reverted resolver, on the "No demo workspace yet" screen that is the
+original bug's exact shape. Nothing in any console.
 
 **2. The dev user switcher is inert while a real session exists, and still looks
 live.** `getCurrentUser()` returns the session user and only falls back to the
@@ -281,7 +293,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 608 unit tests, 308 live-Postgres checks, 174 action checks, 30
+**Verified:** 608 unit tests, 308 live-Postgres checks, 182 action checks, 30
 API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse

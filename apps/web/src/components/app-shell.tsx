@@ -4,7 +4,9 @@ import { Live } from "@/components/live";
 import { RunningTimerReadout } from "@/components/running-timer";
 import { UndoButton, UndoProvider } from "@/components/undo";
 import { UserSwitcher } from "@/components/user-switcher";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { inboxBadge, shellTimer } from "@/server/inbox";
+import { currentWorkspace, viewerWorkspaces } from "@/server/workspace";
 
 /**
  * The chrome every screen sits inside.
@@ -196,14 +198,29 @@ async function TimerSlot({ viewerId }: { viewerId: string }) {
  * for the same number costs one query, not two.
  */
 async function Sidebar({ chrome }: { chrome: ShellChrome }) {
-  const unread = await inboxBadge(chrome.viewer.id);
+  // Looked up here for the same reason the badge is (D-085): it belongs to the
+  // person rather than to any one screen, and fourteen pages each remembering
+  // to pass it is the drift this file exists to remove. Both calls are
+  // request-cached, so the page asking for the same workspace costs nothing.
+  const [unread, mine, here] = await Promise.all([
+    inboxBadge(chrome.viewer.id),
+    viewerWorkspaces(),
+    currentWorkspace(),
+  ]);
   const { location } = chrome;
 
   return (
     <aside className="sidebar">
       <div className="ws">
         <div className="mark">{chrome.workspaceName[0]}</div>
-        <div className="ws-name">{chrome.workspaceName}</div>
+        {/* A switcher only when there is something to switch to. A select
+            holding one option is a control that cannot do anything, and most
+            people are in one workspace. */}
+        {mine.length > 1 && here ? (
+          <WorkspaceSwitcher workspaces={mine} currentId={here.id} />
+        ) : (
+          <div className="ws-name">{chrome.workspaceName}</div>
+        )}
       </div>
 
       <nav className="nav-group">

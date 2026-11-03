@@ -2869,6 +2869,121 @@ report(
       : `the server decided overdue for an instant: ${pastSpan.slice(0, 120)}`,
 );
 
+// --- which workspace a request is in (D-137) --------------------------------
+// The cookie half, over HTTP, because the property that matters is not "does
+// the switcher work" but "can a cookie reach a workspace you are not in". It
+// cannot: `currentWorkspace()` checks it against the viewer's memberships on
+// every read, so the same forged cookie is honoured for one person and ignored
+// for another, and that pair is this section.
+console.log("\nwhich workspace a request is in\n");
+
+const northwindId = (await one(`SELECT id FROM workspaces WHERE slug = 'northwind'`)).id;
+const meridianId = (await one(`SELECT id FROM workspaces WHERE slug = 'meridian'`)).id;
+
+const asAveryInMeridian = await (
+  await fetch(`http://localhost:${PORT}/`, {
+    headers: { Cookie: `${COOKIE}; arbor_workspace=${meridianId}` },
+  })
+).text();
+
+report(
+  "a cookie naming a workspace you are not in is ignored, not obeyed",
+  /Northwind/.test(asAveryInMeridian) && !/Dispatch board/.test(asAveryInMeridian)
+    ? null
+    : "a forged cookie moved somebody into a workspace they are not a member of",
+);
+
+const asSamInMeridian = await (
+  await fetch(`http://localhost:${PORT}/`, {
+    headers: { Cookie: `${SAM}; arbor_workspace=${meridianId}` },
+  })
+).text();
+
+report(
+  "and the same cookie is honoured for somebody who is in it",
+  /Dispatch board/.test(asSamInMeridian)
+    ? null
+    : "the member of both could not reach the second workspace",
+);
+
+report(
+  "while their default without one is still the workspace they joined first",
+  /Sprint 24/.test(await (
+    await fetch(`http://localhost:${PORT}/`, { headers: { Cookie: SAM } })
+  ).text())
+    ? null
+    : "the fallback moved",
+);
+
+/**
+ * The action's own refusal, and what it wrote.
+ *
+ * Not the security boundary — the read above is, which is why that pair comes
+ * first — but a choice that cannot work should fail at the click rather than
+ * silently on the next render. The cookie is the assertion either way: the
+ * refusal must not set one, and the success must.
+ */
+const switchAs = async (cookie: string) => {
+  const response = await fetch(`http://localhost:${PORT}/`, {
+    method: "POST",
+    headers: {
+      "Next-Action": PAGE_ACTIONS.switchWorkspace!,
+      "Content-Type": "text/plain;charset=UTF-8",
+      Cookie: cookie,
+    },
+    body: JSON.stringify([meridianId]),
+  });
+  return { text: await response.text(), setCookie: String(response.headers.get("set-cookie") ?? "") };
+};
+
+const averySwitches = await switchAs(COOKIE);
+
+report(
+  "switching to a workspace you are not in is refused in the words of a missing one",
+  /That workspace no longer exists/.test(averySwitches.text)
+    ? null
+    : `response ${averySwitches.text.slice(-200)}`,
+);
+
+report(
+  "and the refusal writes no cookie, so the next read is unaffected",
+  !averySwitches.setCookie.includes("arbor_workspace=")
+    ? null
+    : `set-cookie: ${averySwitches.setCookie.slice(0, 160)}`,
+);
+
+const samSwitches = await switchAs(SAM);
+
+report(
+  "while a member of both may switch, which is what the control is for",
+  samSwitches.setCookie.includes(`arbor_workspace=${meridianId}`)
+    ? null
+    : `set-cookie: ${samSwitches.setCookie.slice(0, 160) || "(none)"}`,
+);
+
+report(
+  "the switcher is offered to the member of both and not to anybody else",
+  /ws-switch/.test(asSamInMeridian) && !/ws-switch/.test(asAveryInMeridian)
+    ? null
+    : `switcher on Sam: ${/ws-switch/.test(asSamInMeridian)}, on Avery: ${/ws-switch/.test(asAveryInMeridian)}`,
+);
+
+// The sidebar had a hard-coded "Backlog" row that read as a real list in the
+// only workspace with one by that name (D-137). What replaces the assertion
+// "it is gone" is this: the sidebar names the containers of the workspace it
+// is showing, and none of the other one's.
+report(
+  "a sidebar names its own workspace's containers and none of the other's",
+  /Field Ops/.test(asSamInMeridian) &&
+    /Dispatch board/.test(asSamInMeridian) &&
+    !/Sprint 24/.test(asSamInMeridian) &&
+    !/Backlog/.test(asSamInMeridian) &&
+    /Engineering/.test(asAveryInMeridian) &&
+    !/Dispatch board/.test(asAveryInMeridian)
+    ? null
+    : "a sidebar named a container from the wrong workspace",
+);
+
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);
 await db.end();

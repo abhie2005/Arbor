@@ -5458,6 +5458,37 @@ landing on Sprint 24, and Sam's fallback holding across a reload — and **three
 of those fail** against the reverted resolver, on the "No demo workspace yet"
 screen, which is the original bug's exact shape.
 
+**The control, which is what makes the cookie writable by a person.** A
+`<select>` in the sidebar where the workspace name was, rendered **only when
+the viewer is in more than one** — a select holding one option is a control
+that cannot do anything, and most people are in one workspace. The sidebar
+looks the list up for itself rather than taking it through `ShellChrome`, for
+the reason the inbox badge does (D-085): it belongs to the person rather than
+to any one screen, and fourteen pages each remembering to pass it is the drift
+`app-shell.tsx` exists to remove. Both reads are request-cached, so the page
+asking the same question again costs nothing. It is deliberately **not** the
+dev user switcher's twin: that one is a debug control and is dressed as one
+(D-034), while this is an ordinary piece of the product and reads as the
+workspace name until you click it.
+
+`switchWorkspace` checks the membership before writing the cookie, and that
+check is **not** the security boundary — the read is. It is there so that
+choosing something impossible fails at the click rather than silently on the
+next render, which is the difference between a bug report and a shrug. It
+refuses in the words of a missing workspace (invariant 6), because one you are
+not in should not be distinguishable from one that does not exist.
+
+**Eight more in `check:actions` (182), and the pair that matters is the first
+two**: the *same* forged `arbor_workspace` cookie, naming Meridian, sent with
+two different sessions — ignored for Avery, honoured for Sam. That is the
+narrowing property stated as a test rather than as a comment, and it fails the
+moment the cookie is trusted: against a `currentWorkspace()` that takes the
+cookie at its word, that check and the sidebar's both go red. Four more in the
+browser pass drive the control itself — the switcher offered to Sam and to
+nobody else, offering exactly their two workspaces, moving the whole screen on
+a choice, and surviving a reload, which is the difference between a cookie and
+a render.
+
 *In one sentence:* the workspace a request is in is now read from the person
 asking, and the two other places that had quietly answered "Northwind" — the
 list a renderer opens on, and a row in the sidebar — were only findable once
