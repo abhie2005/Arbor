@@ -1,28 +1,31 @@
 # Status — resume here
 
-Last updated 2026-11-02 (multi-workspace). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-11-03 (Phase 10 closed). Repo: https://github.com/abhie2005/Arbor (`main`).
 
-**Phases 1–9 are done. Phase 10 is under way: automations run, and now they
-have a screen.** A rule can be written, armed, disabled and deleted by a person
-rather than by a smoke test — the conditions are the filter bar's own menus,
-because a rule's conditions *are* a `FilterGroup` (D-129). Building it found the
-bug below, which is the kind only running the thing finds.
+**Phases 1–10 are done.** Phase 10's roadmap line was "automations, forms,
+public API" and all three exist, each with the screens that make it reachable
+by a person rather than by a smoke test:
 
-**The automation service account was in no access index, so every rule with a
-condition skipped forever in a fresh workspace** (D-129). `ensureAutomationActor`
-created the account and its membership and never rebuilt the index; conditions
-are evaluated *as the robot* through the compiler, which joins `access_index`,
-so they matched nothing and recorded `skipped_conditions` — which reads as the
-condition being wrong. Fixed in the transaction that creates the account. Every
-check passed while this was broken because the actor survived between smoke
-runs and an earlier rebuild had already indexed it; the fixture now deletes it
-each run, so the path that creates one is exercised every time.
-Phase 9's roadmap line read "CRDT editor, nested pages, backlinks" and all
-three now exist: documents are editable *including the paragraphs that name
-somebody*, ⌘Z in one is the CRDT's and puts the caret back where the edit was,
-search reads them, the page tree is a tree you can rearrange, and `[[` links a
-page or a task with the reverse lookup on both ends. The AWS path has been
-applied against a real account once and destroyed again.
+- **Automations** — a rule is written, armed, renamed, edited, disabled and
+  deleted from `/settings/automations`, with the filter bar's own menus for its
+  conditions because a rule's conditions *are* a `FilterGroup` (D-129, D-140,
+  D-141).
+- **The public API** — `POST /api/v1/views/query` and `/api/v1/operations`,
+  authenticated by a bearer token that speaks as a named service account per
+  integration, minted and revoked at `/settings/api` (D-133 → D-135).
+- **Forms** — `/settings/forms` opens a door into one list and `/f/<id>` is that
+  door: the only screen here that renders with no session at all (D-142,
+  D-143).
+
+**One question runs through all three, and it was answered once:** what a
+request that is not a session acts as. An automation writes as a per-workspace
+service account (D-126), a token as a named one per integration (D-133), and a
+form as one of its own (D-142) — each a real `users` row with an ordinary
+membership, so no permission code path ever learned a new principal kind.
+
+**And the app is multi-workspace as of D-137**, which was the largest thing on
+this file for a week: every screen resolved its workspace by hard-coded slug,
+so a member of any workspace but Northwind could not reach theirs.
 
 **`CLAUDE.md` at the repo root is the map** — invariants, where things live,
 commands, gotchas. It loads automatically. This file is only *current state and
@@ -350,7 +353,33 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 ## Where to pick up
 
-**Phase 10 is under way again** (D-133). The three open bugs are closed
+**Phase 10 is closed, and nothing is half-built.** Every numbered item below is
+struck through, both bug lists are empty, and the gates are green: 622 unit
+tests, 345 live-Postgres checks, 208 action checks, 30 API checks, 11 search
+checks, four packages typechecking, and the screens driven in a browser.
+
+**What is actually next is a decision, not a task**, and there are three
+candidates:
+
+1. **The things the roadmap never promised but the gaps list keeps naming** —
+   a rule that fails is never retried, quota is counted and barely surfaced,
+   the filter bar still shows a text box for a container filter, derived field
+   types are declared and compute nothing. Each is small and each has been
+   deferred at least twice, which is usually a sign the list is the wrong
+   shape.
+2. **Deploying it again.** The Terraform path has been applied against a real
+   account once and destroyed; nothing has run against it since Phase 10 added
+   three ways in. A second apply is the only thing that tells you whether the
+   app still reads three environment variables.
+3. **Making the browser pass a real gate.** It has now found six bugs across
+   two sessions — the phantom sidebar row, the null status on a submission —
+   and it is still a script in a scratch directory that dies with the session.
+   CLAUDE.md records this as an open decision; it is the one with the best
+   evidence behind it.
+
+The history below is the state before that, and still accurate.
+
+**Phase 10 was under way again** (D-133). The three open bugs are closed
 (D-130, D-131, D-132) and the API's read half exists:
 `POST /api/v1/views/query` takes a view definition and answers through the
 compiler, authenticated by a bearer token that speaks as a **named service
