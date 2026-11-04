@@ -87,6 +87,13 @@ two applies, because the registry must exist before an image can be pushed.
    **Which one is a decision**: sharing one container takes `manage` on it
    (D-109), while status sets, custom fields and task types are scoped to no
    container and take the workspace role.
+   **`submitFormAction` is the one exception, and it is deliberate** (D-142,
+   D-143): a public form is filled in by somebody with no account, so there is
+   no principal to authorize. What stands in for it is narrower and is not held
+   by the caller — a manager wrote the form, the form names the list and the
+   fields, the write happens as the form's own `guest` principal, and
+   `parseSubmission` refuses anything the form did not ask for. **Do not "fix"
+   it by adding `requireUser`**; that deletes the feature.
 5. **Reads are permission-scoped by joining `access_index`.** Grants are truth;
    the index is what queries join (ADR 3). It holds a row per (person,
    **container**) — every kind, not only lists (D-108) — so "may this person
@@ -194,6 +201,9 @@ two applies, because the registry must exist before an image can be pushed.
 | How to deploy it, and what is not done | `infra/terraform/README.md` |
 | The load balancer's health check | `apps/web/src/app/api/health/route.ts` |
 | API tokens: what one is and who it speaks as (D-133) | `packages/db/src/api-tokens.ts` |
+| What a form asks, and what an anonymous submission may say (pure) | `packages/core/src/forms.ts` |
+| Forms: the service account, the submission, the ceiling | `packages/db/src/forms.ts` |
+| The public form page — the only screen that renders with no session | `apps/web/src/app/f/[id]/page.tsx` |
 | The public API's read half | `apps/web/src/app/api/v1/views/query/route.ts` |
 | The public API's write half | `apps/web/src/app/api/v1/operations/route.ts` |
 | An operation off the wire, validated (D-134) | `parseOperations` in `packages/core/src/mutations.ts` |
@@ -361,7 +371,13 @@ two applies, because the registry must exist before an image can be pushed.
   export names, because they are minified away. So the gate needs `next dev`,
   and that is inherent rather than an oversight.
 - Deleting a `grants` row does **not** update `access_index`. Revoke properly or
-  clear both, or the next thing you check sees stale access.
+  clear both, or the next thing you check sees stale access. Walked into again
+  in D-142, where a deleted form's principal could still write.
+- **`db:smoke` and `check:actions` share a database, so do not run them at
+  once.** Overlapping runs fail checks that are about neither of them — status
+  migration, a batch being one nudge, a rollup agreeing with a list — because
+  the other process is writing tasks underneath. The failures look like real
+  regressions and move around between runs. One at a time.
 - **A dev-server 503 on `/api/live` or an `?_rsc=` request** is Next compiling,
   not a bug in the stream. It resolves on the next attempt; check twice before
   chasing it.
