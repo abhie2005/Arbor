@@ -58,7 +58,8 @@ export interface ConfigEvent {
     | "key_result"
     | "dashboard"
     | "automation"
-    | "doc";
+    | "doc"
+    | "form";
   objectId: string;
   verb: string;
   field?: string | null;

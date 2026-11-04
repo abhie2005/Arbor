@@ -144,6 +144,15 @@ import {
   workspacesFor,
 } from "./task-access";
 import { createApiToken, principalForToken, revokeApiToken } from "./api-tokens";
+import {
+  SUBMISSION_LIMIT,
+  createForm,
+  deleteForm,
+  loadForm,
+  loadFormsForContainers,
+  setFormOpen,
+  submitForm,
+} from "./forms";
 import { namesFor, peopleIn, sweepOrphanedServiceAccounts } from "./people";
 
 const pool = new Pool({
@@ -5068,6 +5077,242 @@ async function main() {
       ? null
       : "a timed due date landed on midnight UTC and reads as a calendar day",
   );
+
+  // --- a form, which is a write with no session at all (D-142) ---------------
+  // The third time the same question is answered the same way: an automation
+  // writes as a service account (D-126), a token writes as a named one
+  // (D-133), and a form writes as one of its own — with "and anonymously"
+  // added. These are the checks that matter most in the repo, because this is
+  // the only path where a request with no identity causes a write.
+  console.log("\na form, and what an anonymous submission may do\n");
+
+  const formId = await createForm(
+    {
+      workspaceId: ws.id!,
+      containerId: sprintList.id!,
+      name: "Report a problem",
+      intro: "Tell us what broke.",
+      fields: [
+        { field: "name", label: "What happened?" },
+        { field: "priority", label: "How bad?" },
+        { field: "dueAt", label: "Needed by" },
+      ],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const form = (await loadForm(formId, pool))!;
+
+  report(
+    "a form owns a service account, not a person",
+    (
+      await one(`SELECT kind, name FROM users WHERE id = $1`, [form.principalId])
+    ).kind === "service"
+      ? null
+      : "a form writes as somebody with a mailbox",
+  );
+
+  report(
+    "which is a guest, so it inherits no baseline over the workspace",
+    (
+      await one(`SELECT role FROM memberships WHERE user_id = $1 AND workspace_id = $2`, [
+        form.principalId,
+        ws.id,
+      ])
+    ).role === "guest"
+      ? null
+      : "a form's principal is a member, and can read what it was never granted",
+  );
+
+  const formReach = await reachableContainers(ws.id!, form.principalId, "edit", pool);
+  report(
+    "and reaches the list it was made on and nothing outside that subtree",
+    formReach.has(sprintList.id!) && !formReach.has(hiring.id!)
+      ? null
+      : `reaches ${formReach.size} containers`,
+  );
+
+  const first = await submitForm(
+    formId,
+    { name: "The depot router is down", priority: "1", dueAt: "2026-12-24" },
+    pool,
+  );
+
+  const submitted = await one(
+    `SELECT t.name, t.priority, t.due_at, t.due_has_time::text AS due_has_time,
+            t.home_list_id, t.created_by
+       FROM tasks t WHERE t.id = $1`,
+    [first.taskId],
+  );
+
+  report(
+    "a submission creates a task in the form's list, with the answers on it",
+    submitted.name === "The depot router is down" &&
+      Number(submitted.priority) === 1 &&
+      submitted.home_list_id === sprintList.id
+      ? null
+      : `task reads ${JSON.stringify(submitted)}`,
+  );
+
+  report(
+    "written as the form, so the log says which door it came through",
+    submitted.created_by === form.principalId ? null : "a submission was attributed to a person",
+  );
+
+  // Invariant 9: a date from a form is a calendar day at midnight UTC, or the
+  // same answer means a different day either side of a timezone (D-121).
+  report(
+    "a date answer is a calendar day, not an instant",
+    new Date(String(submitted.due_at)).toISOString() === "2026-12-24T00:00:00.000Z" &&
+      submitted.due_has_time === "false"
+      ? null
+      : `stored ${String(submitted.due_at)} hasTime=${String(submitted.due_has_time)}`,
+  );
+
+  // Invariant 1: the task arrived through `applyOperations`, so it has an
+  // activity row like every other write. A form with its own INSERT would be
+  // the second writer, and the second writer is the one that forgets to log.
+  report(
+    "and it went through the operation layer, so it has history",
+    Number(
+      (
+        await one(
+          `SELECT count(*) AS n FROM activity
+            WHERE object_kind = 'task' AND object_id = $1 AND actor_id = $2`,
+          [first.taskId, form.principalId],
+        )
+      ).n,
+    ) > 0
+      ? null
+      : "a submission wrote a task with no activity row",
+  );
+
+  /**
+   * The check this whole feature turns on.
+   *
+   * A stranger may fill what the form asked and nothing else. An undeclared
+   * field is refused rather than dropped — `statusId` here is the interesting
+   * one, because it is a real column a real task has and the only thing
+   * stopping an anonymous writer setting it is this bound.
+   */
+  report(
+    "a submission cannot write a field the form did not ask for",
+    await expectRejection(() =>
+      submitForm(formId, { name: "Sneaky", statusId: inReview.id }, pool),
+    ),
+  );
+
+  report(
+    "nor one the form could never ask for",
+    await expectRejection(() =>
+      submitForm(formId, { name: "Sneaky", homeListId: hiring.id }, pool),
+    ),
+  );
+
+  report(
+    "and a required answer that is missing is refused",
+    await expectRejection(() => submitForm(formId, { priority: "2" }, pool)),
+  );
+
+  report(
+    "none of those wrote a task",
+    Number(
+      (await one(`SELECT count(*) AS n FROM tasks WHERE name IN ('Sneaky')`)).n,
+    ) === 0
+      ? null
+      : "a refused submission left a task behind",
+  );
+
+  await setFormOpen(formId, false, { actorId: owner.id!, connection: pool });
+  report(
+    "a closed form takes nothing",
+    await expectRejection(() => submitForm(formId, { name: "After hours" }, pool)),
+  );
+
+  await setFormOpen(formId, true, { actorId: owner.id!, connection: pool });
+  report(
+    "and reopening it works, because closing is not deleting",
+    await expectNoRejection(async () => {
+      const again = await submitForm(formId, { name: "Reopened" }, pool);
+      await pool.query(`DELETE FROM tasks WHERE id = $1`, [again.taskId]);
+    }),
+  );
+
+  // The ceiling. Deliberately blunt rather than rate limiting, which needs an
+  // identity the submitter does not have.
+  await pool.query(`UPDATE forms SET submission_count = $2 WHERE id = $1`, [
+    formId,
+    SUBMISSION_LIMIT,
+  ]);
+  report(
+    "a form stops at its limit, because a public endpoint with no ceiling fills up",
+    await expectRejection(() => submitForm(formId, { name: "One too many" }, pool)),
+  );
+  await pool.query(`UPDATE forms SET submission_count = 2 WHERE id = $1`, [formId]);
+
+  report(
+    "the screen's read holds the form with its parsed definition",
+    (await loadFormsForContainers([sprintList.id!], pool)).some(
+      (row) => row.id === formId && row.definition?.fields.length === 3 && row.problem === null,
+    )
+      ? null
+      : "the form did not come back parsed",
+  );
+
+  // A definition that no longer parses is shown rather than dropped (D-129's
+  // rule), and refuses submissions in the same words a closed form uses — a
+  // stranger learns it is not taking submissions, not that it is broken.
+  await pool.query(`UPDATE forms SET fields = $2 WHERE id = $1`, [
+    formId,
+    JSON.stringify([{ field: "statusId" }]),
+  ]);
+  report(
+    "a form whose definition broke is still visible to whoever can fix it",
+    (await loadFormsForContainers([sprintList.id!], pool)).some(
+      (row) => row.id === formId && row.definition === null && (row.problem ?? "") !== "",
+    )
+      ? null
+      : "a broken form vanished from the screen",
+  );
+  report(
+    "and refuses submissions without saying why to a stranger",
+    (await messageOf(() => submitForm(formId, { name: "x" }, pool))) === "This form is closed"
+      ? null
+      : "a broken form leaked its problem to the public",
+  );
+
+  await deleteForm(formId, { actorId: owner.id!, connection: pool });
+
+  report(
+    "deleting a form takes its grant, so its principal reaches nothing",
+    (await reachableContainers(ws.id!, form.principalId, "edit", pool)).size === 0
+      ? null
+      : "a deleted form's account can still write",
+  );
+
+  report(
+    "but keeps the account, or the tasks it wrote would say nobody made them",
+    Number(
+      (await one(`SELECT count(*) AS n FROM users WHERE id = $1`, [form.principalId])).n,
+    ) === 1
+      ? null
+      : "deleting a form erased the author of its tasks",
+  );
+
+  /**
+   * Everything this section wrote, including anything a *previous* run left.
+   *
+   * A form's tasks land in Sprint 24, which is the list the goal rollup and
+   * the dashboard card count — so a leftover submission does not fail a check
+   * here, it fails four checks a thousand lines earlier, in the section about
+   * whether a rollup and a list agree. Found exactly that way.
+   */
+  await pool.query(
+    `DELETE FROM tasks WHERE created_by IN (
+       SELECT id FROM users WHERE kind = 'service' AND email LIKE 'form+%'
+     ) OR name IN ('Sneaky', 'One too many', 'After hours')`,
+  );
+  await pool.query(`DELETE FROM users WHERE kind = 'service' AND email LIKE 'form+%'`);
 
   // --- a token that is not a session (D-133) --------------------------------
   // The route's half of this is `check:api`; these are the questions that do not

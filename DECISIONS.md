@@ -5703,3 +5703,74 @@ only between two values, and the round trip through save and reopen.
 *In one sentence:* the engine, the matcher and the sentence all knew about
 `from`; this is the menu catching up, and the only hard part is that "not
 narrowed" has to stay the absence of a key rather than a null.
+
+### D-142
+**A form writes as a service account of its own, and may write only what it asked** · 2026-11-03 · active
+
+The last untouched piece of Phase 10, and the question it turns on has been
+answered twice already. D-126: an automation writes as a per-workspace service
+account. D-133: an API token writes as a named one per integration. **A public
+form is the same answer a third time, with "and anonymously" added** — each
+form owns a `users` row with `kind = 'service'`, a `guest` membership and a
+grant on its container. No permission code path learns a new principal kind,
+and the activity log can say which door a task came through.
+
+`guest` rather than `member` for D-133's reason exactly: a member's baseline is
+`edit` on everything nobody marked private, so a form "on one list" would
+quietly reach the workspace. `edit` rather than `comment` because a submission
+creates a task, and rather than `manage` because a stranger's door must not be
+able to re-share the list.
+
+Rejected: writing as the person who *made* the form, which puts a manager's
+name on a stranger's words and keeps doing it after they leave; and a nullable
+actor, which is the one thing an activity log must never contain — a row that
+looks trustworthy and names nobody.
+
+**The declaration is a whitelist, and that is the whole security story.** This
+is the only path in the codebase where a request with no identity causes a
+write, so the bound on it lives in `packages/core/src/forms.ts` as a pure
+function with 14 unit tests rather than as a condition inside a route handler.
+A submission may fill the fields a manager declared and nothing else, and an
+undeclared key is **refused rather than dropped** — "silently ignored" and
+"accepted" are indistinguishable from outside, and the person who finds out
+otherwise is whoever reads the task a week later. Removing that loop is not a
+style regression: three `db:smoke` checks go red and the refused submissions
+*write tasks*, with `statusId` and `homeListId` set by a stranger.
+
+`FORMABLE_FIELDS` is deliberately smaller than `TaskField`: no `statusId`,
+`taskTypeId` or `homeListId`, because where a task lands and what state it
+arrives in are decisions the list's manager already made by pointing the form
+at a list.
+
+**Three things the checks found, which is why they exist:**
+
+- `createTask` carries `name`, `priority` and the placement, and **nothing
+  else** — so a form that asked for a due date silently dropped it. A
+  submission is now one batch of `createTask` plus a `setField` per remaining
+  answer: one transaction, one activity group, one event.
+- Deleting a `grants` row leaves `access_index` holding rows nobody can
+  explain, so a deleted form's principal could still write. `revokeAccess`
+  rebuilds the index inside the transaction that changed the grant (D-071).
+  The trap is named in CLAUDE.md and I walked into it anyway.
+- `new Date("2026-02-31")` is not `NaN` — it rolls over to 3 March. A shape
+  check plus a NaN check still accepts a day that does not exist and silently
+  moves it, so the date is round-tripped back to the string it came from.
+
+**No submissions table.** A submission creates a task through
+`applyOperations` (invariant 1), so the task *is* the record, with the activity
+row and the inverse that come with it. A second table would be a second source
+of truth about one event, and "what came in from this form?" is a filter on
+tasks. `submission_count` is a counter rather than a `COUNT(*)` because it is
+the ceiling's number and has to survive the tasks being archived.
+
+**The ceiling is blunt on purpose.** 500 submissions and the form stops, rather
+than rate limiting — which needs state per client, which needs an identity,
+which is the one thing a form does not have. A manager reopens it.
+
+A form whose definition no longer parses is shown to whoever can fix it (D-129's
+rule) and refuses submissions **in the same words a closed form uses**, so a
+stranger learns it is not taking submissions rather than that it is broken.
+
+*In one sentence:* every hard question here had already been answered somewhere
+else in the repo, and the only new one — what an unauthenticated writer may
+write — is answered by a pure function that can be tested without a database.

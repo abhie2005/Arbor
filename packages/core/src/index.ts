@@ -20,3 +20,4 @@ export * from "./goals";
 export * from "./automations";
 export * from "./time";
 export * from "./mutations";
+export * from "./forms";
