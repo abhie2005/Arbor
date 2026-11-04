@@ -26,7 +26,10 @@ and real-time collaboration — self-hostable, and open source under AGPL-3.0.
 > posts the same operations a click does, authenticated by a token that speaks
 > as a service account scoped to one container — so an integration gets the
 > activity log, the permission join and undo by construction rather than by a
-> second implementation. Forms, chat and AI are not built. The AWS deployment
+> second implementation. **Forms are built too**: a link anybody can open with no
+> account, whose submissions become tasks written by the form's own service
+> account, bounded by the fields a manager declared — the same question a third
+> time, answered the same way. Chat and AI are not built. The AWS deployment
 > (Terraform and a container image) has been applied to a real account once and
 > destroyed again.
 > **[docs/STATUS.md](docs/STATUS.md) is the current state and where to pick up.**
@@ -108,6 +111,15 @@ they exist.
 A token speaks as a *service account of its own* — a real member the permission
 index knows, scoped to the one container it was minted against (D-133). Mint one
 at **Settings → API tokens**; the seed prints one for the demo workspace.
+
+**A form is the third way in, and the same answer again.** `/f/<id>` takes a
+submission from somebody with no account at all and turns it into a task
+written by the form's own service account, granted `edit` on one list and
+nothing else. What a stranger may write is bounded by the fields a manager
+declared — an undeclared key is refused rather than dropped — which is forty
+lines of pure function with its own tests, because it is the only path here
+where a request with no identity causes a write. Open one at
+**Settings → Forms**.
 
 ```bash
 TOKEN=arb_…   # printed by db:seed, or minted at /settings/api
@@ -299,8 +311,8 @@ back would be worse than no nudge.
       links a page or a task: one more embed kind in the same format, which
       the editor's offset arithmetic absorbed without a change, plus an edge
       table so the reverse question has an index to answer it.
-- [ ] **10 — Automations, forms, public API.** Automations are built and have a
-      screen. **The API's read half exists**: `POST /api/v1/views/query` takes a
+- [x] **10 — Automations, forms, public API.** All three are built and each has
+      a screen. **The API's read half exists**: `POST /api/v1/views/query` takes a
       view definition and answers through the compiler, so the API cannot
       disagree with a saved view about what "overdue and unassigned" means, and
       a bearer token speaks as a *named service account per integration* — a
@@ -312,7 +324,15 @@ back would be worse than no nudge.
       shape at runtime for both that endpoint and `undo`, which had been
       trusting a type annotation since Phase 2 (D-134). `/settings/api` mints
       and revokes them, taking `manage` on the container a token is scoped to
-      rather than a workspace role (D-135). Forms do not exist yet. The engine reuses three
+      rather than a workspace role (D-135). **Forms are the third door and the
+      third time one question is answered**: `/settings/forms` opens one onto a
+      list and `/f/<id>` is the public page — the only screen here that renders
+      with no session at all. A submission writes as the form's own service
+      account, a `guest` granted `edit` on that container and nothing else, and
+      may fill the fields a manager declared and nothing else: an undeclared
+      key is refused rather than dropped, in a pure function with its own tests,
+      because this is the only path in the codebase where a request with no
+      identity causes a write (D-142, D-143). The engine reuses three
       vocabularies rather than inventing any: a trigger names its verb by
       calling the same function that *writes* the activity log, so a rename
       drags every rule along with it instead of quietly unhooking them;
