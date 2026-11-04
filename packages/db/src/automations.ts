@@ -714,6 +714,142 @@ export async function createAutomation(
   });
 }
 
+/**
+ * Rename a rule, and nothing else (D-140).
+ *
+ * **Separate from `updateAutomation` because it must work on a rule that no
+ * longer parses.** The screen shows an unreadable rule on purpose — the engine
+ * skips it, and a rule nobody can see is a rule nobody can fix — so the two
+ * things you can do to one are rename it and delete it. Routing a rename
+ * through the parser would mean the rules most in need of a label are the ones
+ * that cannot be given one.
+ *
+ * It is also the common case by a distance, and it cannot invalidate anything:
+ * a name is not read by the engine.
+ */
+export async function renameAutomation(
+  automationId: string,
+  name: string,
+  context: ConfigContext,
+): Promise<void> {
+  const next = requireName(name, "automation");
+
+  await inTransaction(context, async (client) => {
+    // Read first, then write: the old name is what makes the activity row worth
+    // having, and a subquery inside RETURNING that happens to see the
+    // pre-update snapshot is a trick rather than a statement of intent.
+    const existing = await client.query<{ workspace_id: string; name: string }>(
+      `SELECT workspace_id, name FROM automations WHERE id = $1`,
+      [automationId],
+    );
+    const before = existing.rows[0];
+    if (!before) throw new ConfigError("That automation no longer exists");
+
+    await client.query(
+      `UPDATE automations SET name = $2, updated_at = now() WHERE id = $1`,
+      [automationId, next],
+    );
+
+    await logConfigChange(client, {
+      workspaceId: before.workspace_id,
+      actorId: context.actorId,
+      objectKind: "automation",
+      objectId: automationId,
+      verb: "automation.renamed",
+      oldValue: { name: before.name },
+      newValue: { name: next },
+    });
+  });
+}
+
+/**
+ * Replace what a rule *does* (D-140).
+ *
+ * The same parse and the same `verbFor` as `createAutomation`, because a rule
+ * that could not have been written cannot be edited into existence either.
+ *
+ * **The container does not move.** Which container a rule lives on decides who
+ * may manage it, so changing it here would need two permission checks — on the
+ * one you are leaving and the one you are entering — and an edit form is the
+ * wrong place to hide a change of ownership. Moving a rule is deleting it and
+ * writing it again, deliberately.
+ *
+ * **`is_enabled` is not touched.** Editing a disabled rule leaves it disabled:
+ * fixing a rule and arming it are two decisions, and a save that quietly armed
+ * something would be the surprising half.
+ *
+ * **A run already queued by the old rule will execute the new one**, and that
+ * is the existing semantics rather than a new one: `executeRun` re-reads the
+ * rule when it acts, which is what makes a disabled rule's pending run skip.
+ * D-128 settled the same question for conditions — they are asked when the run
+ * acts, not when it was queued — and the actions are the other half of that
+ * answer. The alternative, snapshotting the rule onto the run, means a rule
+ * you just fixed keeps doing the broken thing for the length of its delay.
+ */
+export async function updateAutomation(
+  automationId: string,
+  input: {
+    name?: string;
+    trigger: unknown;
+    conditions?: unknown;
+    actions: unknown;
+    appliesTo?: string;
+    delaySeconds?: number;
+  },
+  context: ConfigContext,
+): Promise<void> {
+  let rule: AutomationRule;
+  try {
+    rule = parseAutomationRule({
+      trigger: input.trigger,
+      conditions: input.conditions,
+      actions: input.actions,
+      appliesTo: input.appliesTo,
+      delaySeconds: input.delaySeconds,
+    });
+  } catch (error) {
+    throw new ConfigError(error instanceof AutomationError ? error.message : String(error));
+  }
+
+  verbFor(rule.trigger);
+
+  await inTransaction(context, async (client) => {
+    const existing = await client.query<{ workspace_id: string; name: string }>(
+      `SELECT workspace_id, name FROM automations WHERE id = $1`,
+      [automationId],
+    );
+    const before = existing.rows[0];
+    if (!before) throw new ConfigError("That automation no longer exists");
+
+    const name = input.name === undefined ? before.name : requireName(input.name, "automation");
+
+    await client.query(
+      `UPDATE automations
+          SET name = $2, trigger = $3, conditions = $4, actions = $5, applies_to = $6,
+              delay_seconds = $7, updated_at = now()
+        WHERE id = $1`,
+      [
+        automationId,
+        name,
+        JSON.stringify(rule.trigger),
+        JSON.stringify(rule.conditions),
+        JSON.stringify(rule.actions),
+        rule.appliesTo,
+        rule.delaySeconds,
+      ],
+    );
+
+    await logConfigChange(client, {
+      workspaceId: before.workspace_id,
+      actorId: context.actorId,
+      objectKind: "automation",
+      objectId: automationId,
+      verb: "automation.updated",
+      newValue: { name },
+    });
+  });
+}
+
 export async function setAutomationEnabled(
   automationId: string,
   isEnabled: boolean,

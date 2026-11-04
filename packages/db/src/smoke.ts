@@ -126,9 +126,11 @@ import {
   loadAutomations,
   loadAutomationsForContainers,
   recentAutomationRuns,
+  renameAutomation,
   scanForAutomations,
   setAutomationEnabled,
   tickAutomations,
+  updateAutomation,
 } from "./automations";
 import {
   containerAccess,
@@ -4420,6 +4422,212 @@ async function main() {
       ? null
       : "a disabled rule could not be looked up by id",
   );
+
+  // --- editing a rule (D-140) -----------------------------------------------
+  // Two entry points, because they answer to different things: a name can be
+  // changed on a rule the parser cannot read, and what a rule *does* cannot.
+  console.log("\nediting a rule\n");
+
+  // `chaseRule` was broken on purpose above and is still unparseable, which is
+  // the case that decides whether rename needed to be its own entry point.
+  await renameAutomation(chaseRule, "Renamed while broken", { actorId: owner.id!, connection: pool });
+
+  report(
+    "a rule the parser cannot read can still be renamed",
+    (await one(`SELECT name FROM automations WHERE id = $1`, [chaseRule])).name ===
+      "Renamed while broken"
+      ? null
+      : "renaming a broken rule did not take",
+  );
+
+  report(
+    "and renaming leaves what it does alone, broken and all",
+    (await loadAutomationsForContainers([autoList.id!], pool)).find(
+      (row) => row.id === chaseRule,
+    )?.rule === null
+      ? null
+      : "a rename repaired or replaced the rule it was not asked about",
+  );
+
+  report(
+    "a rename still has to be a name",
+    await expectRejection(() =>
+      renameAutomation(chaseRule, "   ", { actorId: owner.id!, connection: pool }),
+    ),
+  );
+
+  const editable = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "Before the edit",
+      trigger: { kind: "taskCreated" },
+      actions: [{ kind: "comment", text: "the old text" }],
+      delaySeconds: 3600,
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+  await setAutomationEnabled(editable, false, { actorId: owner.id!, connection: pool });
+
+  await updateAutomation(
+    editable,
+    {
+      name: "After the edit",
+      trigger: { kind: "taskCreated" },
+      actions: [{ kind: "comment", text: "the new text" }],
+      delaySeconds: 60,
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  // `is_enabled` as text, because `one` hands back `Record<string, string>` and
+  // comparing that to a boolean is a type error rather than a check.
+  const edited = await one(
+    `SELECT name, actions, delay_seconds, is_enabled::text AS is_enabled, container_id
+       FROM automations WHERE id = $1`,
+    [editable],
+  );
+
+  report(
+    "editing replaces what a rule does",
+    JSON.stringify(edited.actions) === JSON.stringify([{ kind: "comment", text: "the new text" }]) &&
+      Number(edited.delay_seconds) === 60
+      ? null
+      : `stored ${JSON.stringify(edited.actions)} with delay ${String(edited.delay_seconds)}`,
+  );
+
+  report(
+    "and leaves it disabled if it was, because fixing and arming are two decisions",
+    edited.is_enabled === "false" ? null : "a save armed a rule nobody armed",
+  );
+
+  report(
+    "and does not move it to another container, which would change who may manage it",
+    edited.container_id === autoList.id ? null : "an edit moved the rule",
+  );
+
+  report(
+    "a rule cannot be edited into something the parser refuses",
+    await expectRejection(() =>
+      updateAutomation(
+        editable,
+        { trigger: { kind: "fieldChanged", field: "nonsense" }, actions: [{ kind: "archive" }] },
+        { actorId: owner.id!, connection: pool },
+      ),
+    ),
+  );
+
+  report(
+    "and the rule it would have broken is unchanged",
+    (await one(`SELECT name FROM automations WHERE id = $1`, [editable])).name === "After the edit"
+      ? null
+      : "a refused edit wrote something",
+  );
+
+  report(
+    "editing one that is gone says so rather than writing nothing quietly",
+    await expectRejection(() =>
+      updateAutomation(
+        randomUUID(),
+        { trigger: { kind: "taskCreated" }, actions: [{ kind: "archive" }] },
+        { actorId: owner.id!, connection: pool },
+      ),
+    ),
+  );
+
+  /**
+   * The semantics the edit inherits, stated as a check.
+   *
+   * `executeRun` re-reads the rule when it acts, which is what makes a
+   * disabled rule's pending run skip — and it means a run queued by the old
+   * rule performs the **new** one. D-128 settled the same question for
+   * conditions. The alternative, snapshotting the rule onto the run, means a
+   * rule you just fixed keeps doing the broken thing for the length of its
+   * delay.
+   */
+  await setAutomationEnabled(editable, true, { actorId: owner.id!, connection: pool });
+  await updateAutomation(
+    editable,
+    {
+      name: "Queued with the old text",
+      trigger: { kind: "taskCreated" },
+      actions: [{ kind: "comment", text: "queued under the old rule" }],
+      delaySeconds: 3600,
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  // Through `applyOperations`, not an INSERT: the scan reads the **activity
+  // log**, and a row written behind the operation layer triggers nothing at
+  // all (invariant 1). A raw insert here would have made the next check pass
+  // for the wrong reason — by queuing no run to begin with.
+  const autoSpaceId = (await one(`SELECT space_id FROM tasks WHERE id = $1`, [autoTask.id]))
+    .space_id as string;
+  const delayedTaskId = randomUUID();
+  await applyOperations(
+    [
+      {
+        kind: "createTask",
+        taskId: delayedTaskId,
+        listId: autoList.id!,
+        values: {
+          name: "A task the edit will catch",
+          statusId: autoTodo.id!,
+          spaceId: autoSpaceId,
+          position: "a0",
+        },
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+  await scanForAutomations(ws.id!, pool);
+
+  const queuedByEdit = await one(
+    `SELECT count(*) AS n FROM automation_runs
+      WHERE automation_id = $1 AND status = 'pending'`,
+    [editable],
+  );
+  report(
+    "a delayed rule queues a run rather than acting",
+    Number(queuedByEdit.n) === 1 ? null : `${String(queuedByEdit.n)} pending runs`,
+  );
+
+  // Edited *after* the run was queued, which is the whole point.
+  await updateAutomation(
+    editable,
+    {
+      name: "Edited after it was queued",
+      trigger: { kind: "taskCreated" },
+      actions: [{ kind: "comment", text: "written by the edited rule" }],
+      delaySeconds: 3600,
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  // Bring the delay forward rather than waiting an hour. The run keeps every
+  // other property it was queued with.
+  await pool.query(
+    `UPDATE automation_runs SET run_after = now() - interval '1 minute'
+      WHERE automation_id = $1 AND status = 'pending'`,
+    [editable],
+  );
+  await tickAutomations(ws.id!, pool);
+
+  const editedComment = await pool.query<{ body: string }>(
+    `SELECT body::text AS body FROM comments
+      WHERE object_kind = 'task' AND object_id = $1
+      ORDER BY created_at DESC LIMIT 1`,
+    [delayedTaskId],
+  );
+
+  report(
+    "a run queued by the old rule performs the edited one, the way conditions already did",
+    (editedComment.rows[0]?.body ?? "").includes("written by the edited rule")
+      ? null
+      : `the comment reads ${(editedComment.rows[0]?.body ?? "(none)").slice(0, 120)}`,
+  );
+
+  await pool.query(`DELETE FROM tasks WHERE id = $1`, [delayedTaskId]);
 
   const quota = await automationQuota(ws.id!, pool);
 

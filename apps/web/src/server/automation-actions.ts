@@ -4,8 +4,10 @@ import {
   createAutomation,
   deleteAutomation,
   loadAutomation,
+  renameAutomation,
   requireContainerAccess,
   setAutomationEnabled,
+  updateAutomation,
 } from "@arbor/db";
 import { revalidatePath } from "next/cache";
 
@@ -97,6 +99,53 @@ export async function createAutomationAction(input: {
       { actorId: actor.id },
     );
 
+    refresh();
+    return { ok: true };
+  } catch (error) {
+    return failed(error);
+  }
+}
+
+/**
+ * Two entry points rather than one (D-140).
+ *
+ * Renaming is the common case, it cannot invalidate anything, and it is the
+ * only edit that must work on a rule the parser can no longer read — which is
+ * exactly the rule somebody most needs to label before they fix it. Sending a
+ * rename through the rule parser would mean the broken ones cannot be touched.
+ */
+export async function renameAutomationAction(
+  automationId: string,
+  name: string,
+): Promise<AutomationResult> {
+  try {
+    const actor = await requireUser();
+    // The container is read off the rule rather than taken from the request,
+    // the same as every other action here: an id is not permission.
+    await managerOfRule(automationId);
+    await renameAutomation(automationId, name, { actorId: actor.id });
+    refresh();
+    return { ok: true };
+  } catch (error) {
+    return failed(error);
+  }
+}
+
+export async function updateAutomationAction(
+  automationId: string,
+  input: {
+    name?: string;
+    trigger: unknown;
+    conditions?: unknown;
+    actions: unknown;
+    appliesTo?: string;
+    delaySeconds?: number;
+  },
+): Promise<AutomationResult> {
+  try {
+    const actor = await requireUser();
+    await managerOfRule(automationId);
+    await updateAutomation(automationId, input, { actorId: actor.id });
     refresh();
     return { ok: true };
   } catch (error) {

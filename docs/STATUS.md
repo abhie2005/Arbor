@@ -279,7 +279,7 @@ out now, which is the staleness the calendar dates already had.
 | **Timeline (Gantt)** | Bars from start to due across a month of day columns. The renderer that made the compiler learn nested filter clauses, because "overlaps this window" is irreducibly mixed AND and OR. Read-only so far — no dragging, no dependencies. |
 | **Filters** | Conditions may nest, so a clause can say `(a OR b) AND (c OR d)`. The filter bar and the URL stay flat; nesting exists for renderer scope. |
 | **Dates** | A due date flagged as a calendar day is stored at midnight UTC and read in UTC, everywhere. Overdue means the day is over, not that the clock has passed midnight. |
-| **Automations** | A rule is a trigger, a `FilterGroup` of conditions and actions that compile to operations. Fires from the activity log, runs as a per-workspace service account, claimed with `SKIP LOCKED` (D-124, D-125, D-126). A delay is the rule's and its conditions are asked when it acts (D-128). `/settings/automations` writes one: the container tree scoped to what the viewer may `manage`, the filter bar's own menus for conditions, a one-sentence summary of what each rule does, its last run, and the month's quota. A rule can be disabled or deleted, not yet edited. The drain runs in the server process, started from `/api/health` and the root layout. |
+| **Automations** | A rule is a trigger, a `FilterGroup` of conditions and actions that compile to operations. Fires from the activity log, runs as a per-workspace service account, claimed with `SKIP LOCKED` (D-124, D-125, D-126). A delay is the rule's and its conditions are asked when it acts (D-128). `/settings/automations` writes one: the container tree scoped to what the viewer may `manage`, the filter bar's own menus for conditions, a one-sentence summary of what each rule does, its last run, and the month's quota. A rule can be disabled, renamed, edited or deleted — renaming through its own entry point, because a rule the parser cannot read still has a name (D-140). The drain runs in the server process, started from `/api/health` and the root layout. |
 | **Saved views** | The tab strip is the list of saved views. Create, rename, duplicate, set default, delete — validated by compiling the definition before it is written. Personal views are invisible to others. |
 | **Filter bar** | On all three renderers. Menus are built from the same declaration the compiler validates against, so an invalid filter cannot be expressed. Filter state lives in the URL and is shareable; a malformed link errors instead of showing everything. |
 | **Field types** | All 20 declared in one place: storage column, legal operators, config parser, value parser. |
@@ -306,7 +306,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 608 unit tests, 314 live-Postgres checks, 186 action checks, 30
+**Verified:** 608 unit tests, 325 live-Postgres checks, 194 action checks, 30
 API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse
@@ -389,9 +389,17 @@ Then, in the order the rest argues for:
    form, and the token is shown once because it is stored as a hash and nothing
    can print it again. Seven checks in `check:actions`, including that neither
    the token nor its hash reaches the page. **No browser pass** — see below.
-2. **A rule cannot be edited, only deleted and written again.** Renaming is the
-   common case and does not need the rule re-validated, so it is probably two
-   entry points rather than one.
+2. ~~**A rule cannot be edited, only deleted and written again.**~~ **Done**
+   (2026-11-03, D-140). Two entry points, and **a broken rule is what forces
+   the split**: the screen shows a rule the parser can no longer read on
+   purpose, renaming is the only edit that must work on one, and a rename
+   routed through the parser makes exactly those rules untouchable — verified
+   by trying it. `updateAutomation` re-parses like creation does, does not move
+   the rule between containers (that would change who may manage it), and does
+   not arm a disabled one. A run already queued performs the **edited** rule,
+   because `executeRun` re-reads it when it acts — D-128's answer for
+   conditions, applied to actions. The form is the same form, seeded from the
+   rule.
 3. **The form offers `to` and not `from`**, though `parseAutomationRule` takes
    both and `describeRule` already prints it.
 4. **Forms**, which are the last untouched piece of the phase. A public form
@@ -415,11 +423,21 @@ Then, in the order the rest argues for:
   - **`/settings/api`** (D-135) — **passes.** Minted on the first click,
     showed the token once, dropped it on dismissal, listed it, revoked it
     through the confirm step. Nothing in the console.
-  - **the second workspace** (D-130) — **fails, and not in the screen.** See
-    open bug 1.
-- **A second-workspace browser pass of any kind.** Meridian exists and no
-  screen has been opened as Quinn. The dev user switcher lists them (it is
-  unscoped on purpose, D-131), so it is one click away.
+  - **the second workspace** (D-130) — **failed, and not in the screen.** That
+    was open bug 1, now closed (D-137).
+- ~~**A second-workspace browser pass of any kind.**~~ **Driven 2026-11-02**,
+  and it is the only pass here that has ever driven **more than one identity in
+  one run** — which is what the three bugs required, since each of them lives
+  in the difference between two viewers. Seventeen checks across four: Quinn
+  landing in Meridian, Avery as the control still in Northwind, Sam switching
+  between the two with the choice surviving a reload, and the dev switcher
+  actually becoming somebody. It found the sidebar's phantom list, which no
+  assertion in the repo could have: they all ask whether the right things are
+  present, never whether a wrong one is. Written up in `docs/HISTORY.md`.
+- **The pass itself is still not a gate**, and that is still the open decision
+  CLAUDE.md records. It lives in a scratch directory because Playwright is
+  deliberately not a dependency of this repo; what survives a session is the
+  write-up, not the script.
 
 **Phase 9 is complete.** Its roadmap line was "CRDT editor, nested pages,
 backlinks" and all three exist: documents are permission-scoped and editable by
@@ -533,10 +551,9 @@ wrote the comment that was typed into it.
 
 **What does not exist yet, in the order it probably wants doing:**
 
-- **A rule cannot be edited, only deleted and written again.** `createAutomation`,
-  `setAutomationEnabled` and `deleteAutomation` are the whole service; there is
-  no `updateAutomation`. Renaming is the common case and does not need the rule
-  re-validated, which is probably two entry points rather than one.
+- ~~**A rule cannot be edited, only deleted and written again.**~~ **Done**
+  (D-140). `renameAutomation` and `updateAutomation`, split because a rule the
+  parser cannot read still has a name.
 - **The form offers `to` and not `from`.** `parseAutomationRule` takes both, so
   "when the status stops being Blocked" is expressible and nothing offers it.
   `describeRule` already says it when it is there.

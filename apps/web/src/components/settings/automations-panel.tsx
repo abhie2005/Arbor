@@ -34,7 +34,9 @@ import { Timestamp } from "@/components/timestamp";
 import {
   createAutomationAction,
   deleteAutomationAction,
+  renameAutomationAction,
   setAutomationEnabledAction,
+  updateAutomationAction,
 } from "@/server/automation-actions";
 
 /**
@@ -100,6 +102,13 @@ export function AutomationsPanel({
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  /**
+   * Two pieces of state rather than one `mode`, because they are two different
+   * edits (D-140): a name can be changed on a rule nobody can parse, and the
+   * rule itself cannot.
+   */
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
 
   function run(action: () => Promise<{ ok: true } | { ok: false; error: string }>) {
     setError(null);
@@ -110,6 +119,8 @@ export function AutomationsPanel({
         return;
       }
       setDeleting(null);
+      setRenaming(null);
+      setEditing(null);
       router.refresh();
     });
   }
@@ -176,7 +187,28 @@ export function AutomationsPanel({
                         />
                       </label>
 
-                      <span className="automation-name">{rule.name}</span>
+                      {renaming === rule.id ? (
+                        // A rename is its own entry point and works on a rule
+                        // the parser cannot read, which is the one most in
+                        // need of a label before somebody fixes it (D-140).
+                        <RenameRule
+                          name={rule.name}
+                          onSave={(next) => run(() => renameAutomationAction(rule.id, next))}
+                          onCancel={() => setRenaming(null)}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="automation-name"
+                          title="Rename"
+                          onClick={() => {
+                            setEditing(null);
+                            setRenaming(rule.id);
+                          }}
+                        >
+                          {rule.name}
+                        </button>
+                      )}
 
                       {rule.rule ? (
                         <span className="settings-badge quiet">
@@ -191,6 +223,27 @@ export function AutomationsPanel({
                       ) : null}
 
                       <RunBadge rule={rule} />
+
+                      {/* A rule that no longer parses has nothing to seed a
+                          form with, so there is no edit button on one — rename
+                          and delete are what it offers, which is the same
+                          reason the sentence below it is shown rather than
+                          hidden. */}
+                      {rule.rule ? (
+                        <button
+                          type="button"
+                          className="settings-icon"
+                          title="Edit"
+                          aria-label={`Edit ${rule.name}`}
+                          onClick={() => {
+                            setRenaming(null);
+                            setDeleting(null);
+                            setEditing(editing === rule.id ? null : rule.id);
+                          }}
+                        >
+                          ✎
+                        </button>
+                      ) : null}
 
                       <button
                         type="button"
@@ -222,6 +275,18 @@ export function AutomationsPanel({
                       <Timestamp at={rule.createdAt} /> by {rule.createdByName ?? "somebody since removed"}
                     </p>
 
+                    {editing === rule.id && rule.rule ? (
+                      <AutomationForm
+                        containerId={selected.id}
+                        fields={fields}
+                        values={values}
+                        names={names}
+                        initial={{ name: rule.name, rule: rule.rule }}
+                        onSave={(input) => run(() => updateAutomationAction(rule.id, input))}
+                        onCancel={() => setEditing(null)}
+                      />
+                    ) : null}
+
                     {deleting === rule.id ? (
                       <div className="settings-confirm">
                         <span>
@@ -250,7 +315,7 @@ export function AutomationsPanel({
               )}
             </div>
 
-            <NewAutomation
+            <AutomationForm
               key={selected.id}
               containerId={selected.id}
               fields={fields}
@@ -316,17 +381,31 @@ interface DraftAction {
   text: string;
 }
 
-function NewAutomation({
+/**
+ * One form for writing a rule and for changing one (D-140).
+ *
+ * Editing seeds the same eleven pieces of state from an existing rule rather
+ * than duplicating the form, because a second form is a second place for the
+ * menus to drift from the compiler's own declaration — which is the whole
+ * reason `filter-conditions.tsx` was extracted in D-129.
+ *
+ * `initial` is a *rule*, not a row: the form has no business knowing an id, so
+ * which action a save calls stays the parent's decision.
+ */
+function AutomationForm({
   containerId,
   fields,
   values,
   names,
+  initial,
   onSave,
+  onCancel,
 }: {
   containerId: string;
   fields: FilterableField[];
   values: FilterOptionValues;
   names: (input: ValueInput, value: unknown) => string;
+  initial?: { name: string; rule: AutomationRule };
   onSave: (input: {
     containerId: string;
     name: string;
@@ -336,18 +415,30 @@ function NewAutomation({
     appliesTo?: string;
     delaySeconds?: number;
   }) => void;
+  onCancel?: () => void;
 }) {
-  const [name, setName] = useState("");
-  const [triggerKind, setTriggerKind] = useState<AutomationTrigger["kind"]>("fieldChanged");
-  const [watched, setWatched] = useState<TaskField>("statusId");
-  const [narrowed, setNarrowed] = useState(true);
-  const [becomes, setBecomes] = useState<unknown>(() => firstValueFor("statusId", values));
-  const [relation, setRelation] = useState<RelationKind>("assignee");
-  const [target, setTarget] = useState<string>("");
-  const [conditions, setConditions] = useState<FilterGroup>({ op: "AND", conditions: [] });
-  const [actions, setActions] = useState<DraftAction[]>([() => draftAction(values)].map((f) => f()));
-  const [appliesTo, setAppliesTo] = useState<AppliesTo>("tasks");
-  const [delaySeconds, setDelaySeconds] = useState(0);
+  const seed = initial ? triggerParts(initial.rule.trigger, values) : null;
+
+  const [name, setName] = useState(initial?.name ?? "");
+  const [triggerKind, setTriggerKind] = useState<AutomationTrigger["kind"]>(
+    seed?.triggerKind ?? "fieldChanged",
+  );
+  const [watched, setWatched] = useState<TaskField>(seed?.watched ?? "statusId");
+  const [narrowed, setNarrowed] = useState(seed?.narrowed ?? true);
+  const [becomes, setBecomes] = useState<unknown>(
+    () => seed?.becomes ?? firstValueFor("statusId", values),
+  );
+  const [relation, setRelation] = useState<RelationKind>(seed?.relation ?? "assignee");
+  const [target, setTarget] = useState<string>(seed?.target ?? "");
+  const [conditions, setConditions] = useState<FilterGroup>(
+    initial?.rule.conditions ?? { op: "AND", conditions: [] },
+  );
+  const [actions, setActions] = useState<DraftAction[]>(() =>
+    initial ? draftsFrom(initial.rule.actions, values) : [draftAction(values)],
+  );
+  const [appliesTo, setAppliesTo] = useState<AppliesTo>(initial?.rule.appliesTo ?? "tasks");
+  const [delaySeconds, setDelaySeconds] = useState(initial?.rule.delaySeconds ?? 0);
+  const editing = initial !== undefined;
 
   /**
    * Back to an empty form after a save.
@@ -395,7 +486,7 @@ function NewAutomation({
 
   return (
     <section className="settings-section automation-new">
-      <h3 className="settings-heading">New rule</h3>
+      <h3 className="settings-heading">{editing ? "Edit rule" : "New rule"}</h3>
 
       <div className="settings-form">
         <input
@@ -583,11 +674,20 @@ function NewAutomation({
               appliesTo,
               delaySeconds,
             });
-            reset();
+            // Only when writing a new one. Emptying an edit form on save would
+            // blank the rule on screen for as long as the refresh takes, and
+            // the parent closes it anyway.
+            if (!editing) reset();
           }}
         >
-          Add rule
+          {editing ? "Save changes" : "Add rule"}
         </button>
+
+        {onCancel ? (
+          <button type="button" className="settings-quiet" onClick={onCancel}>
+            Cancel
+          </button>
+        ) : null}
       </div>
     </section>
   );
@@ -722,6 +822,119 @@ function toAction(draft: DraftAction): AutomationAction {
     default:
       return { kind: "archive" };
   }
+}
+
+/**
+ * The inverse of `toAction` (D-140).
+ *
+ * A draft carries every key any kind could need and `toAction` narrows it to
+ * the ones its kind actually uses, so coming back the other way means starting
+ * from the defaults and overlaying what this action happens to hold. Anything
+ * the stored action does not carry keeps its default, which is what makes
+ * switching an action's kind in the form behave the same whether the rule was
+ * just written or loaded.
+ */
+function draftsFrom(actions: AutomationAction[], values: FilterOptionValues): DraftAction[] {
+  if (actions.length === 0) return [draftAction(values)];
+
+  return actions.map((action) => {
+    const draft = { ...draftAction(values), kind: action.kind };
+
+    if (action.kind === "setField") {
+      return { ...draft, field: action.field, to: action.to };
+    }
+    if (action.kind === "addRelation" || action.kind === "removeRelation") {
+      return { ...draft, relation: action.relation, targetId: action.targetId };
+    }
+    if (action.kind === "comment") {
+      return { ...draft, text: typeof action.text === "string" ? action.text : "" };
+    }
+    return draft;
+  });
+}
+
+/**
+ * The inverse of `buildTrigger`.
+ *
+ * **`narrowed` is the presence of the key, not the truthiness of the value.**
+ * `buildTrigger` omits `to` rather than writing null precisely because
+ * `to: null` is the different rule "when the status becomes empty" — so
+ * reading it back has to ask the same question the same way, or editing a rule
+ * that watches for *empty* would silently widen it to "changes at all".
+ */
+function triggerParts(
+  trigger: AutomationTrigger,
+  values: FilterOptionValues,
+): {
+  triggerKind: AutomationTrigger["kind"];
+  watched: TaskField;
+  narrowed: boolean;
+  becomes: unknown;
+  relation: RelationKind;
+  target: string;
+} {
+  const base = {
+    triggerKind: trigger.kind,
+    watched: "statusId" as TaskField,
+    narrowed: true,
+    becomes: firstValueFor("statusId", values),
+    relation: "assignee" as RelationKind,
+    target: "",
+  };
+
+  if (trigger.kind === "fieldChanged") {
+    const narrowed = "to" in trigger;
+    return {
+      ...base,
+      watched: trigger.field,
+      narrowed,
+      becomes: narrowed ? trigger.to : firstValueFor(trigger.field, values),
+    };
+  }
+
+  if (trigger.kind === "relationAdded" || trigger.kind === "relationRemoved") {
+    return { ...base, relation: trigger.relation, target: trigger.targetId ?? "" };
+  }
+
+  return base;
+}
+
+/**
+ * Renaming, inline, in the row (D-140).
+ *
+ * Local state is correct here and is not the thing invariant 11 forbids: this
+ * is text somebody is typing, not a control displaying a server value. It is
+ * mounted only while renaming and unmounted on save, so there is no second
+ * copy of the name to go stale.
+ */
+function RenameRule({
+  name,
+  onSave,
+  onCancel,
+}: {
+  name: string;
+  onSave: (next: string) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(name);
+
+  return (
+    <input
+      className="settings-input automation-rename"
+      autoFocus
+      value={draft}
+      aria-label={`Rename ${name}`}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && draft.trim()) onSave(draft.trim());
+        if (event.key === "Escape") onCancel();
+      }}
+      // Clicking elsewhere is a cancel rather than a save: a name half-typed
+      // and abandoned should not become the rule's name because a menu stole
+      // the focus.
+      onBlur={onCancel}
+    />
+  );
 }
 
 function buildTrigger({

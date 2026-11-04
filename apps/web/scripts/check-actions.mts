@@ -123,6 +123,15 @@ async function call(name: string, args: unknown) {
   return callOn(PAGE, id, args);
 }
 
+/**
+ * React separates adjacent text nodes with `<!-- -->` in server-rendered HTML,
+ * so "acting as {viewer.name}" never matches as the sentence it reads as.
+ * Stripping the markers is what makes an assertion about rendered *words*
+ * possible at all from here — Playwright's innerText does it for free, and
+ * this is the HTTP gate's version of the same thing.
+ */
+const words = (html: string) => html.replace(/<!--.*?-->/g, "");
+
 /** The action's return value arrives inside the RSC flight stream. */
 function returned(text: string): { ok: boolean; error?: string } | null {
   if (/"ok":true/.test(text)) return { ok: true };
@@ -2583,6 +2592,113 @@ report(
     : "the rule was missing from the page, or its sentence was",
 );
 
+// --- editing a rule (D-140) -------------------------------------------------
+// Two entry points, and the same permission as writing one. The boundary is
+// what these are for: an id is not permission, and the container is read off
+// the rule rather than taken from the request.
+const samsRename = await callOn(
+  AUTO_URL,
+  AUTO_ACTIONS.renameAutomationAction!,
+  [ruleRow.id, "Sam renames somebody's robot"],
+  SAM,
+);
+report(
+  "a member cannot rename a rule on a list they only edit",
+  /permission|no longer exists/i.test(samsRename.text) &&
+    (await one(`SELECT name FROM automations WHERE id = $1`, [ruleRow.id])).name ===
+      "Archive what is finished"
+    ? null
+    : `response ${samsRename.text.slice(-200)}`,
+);
+
+await callOn(AUTO_URL, AUTO_ACTIONS.renameAutomationAction!, [ruleRow.id, "Archive the finished"]);
+report(
+  "whoever manages the container can, and only the name moves",
+  (await one(`SELECT name, actions::text AS actions FROM automations WHERE id = $1`, [ruleRow.id]))
+    .name === "Archive the finished"
+    ? null
+    : "the rename did not land",
+);
+
+const emptyName = await callOn(AUTO_URL, AUTO_ACTIONS.renameAutomationAction!, [ruleRow.id, "   "]);
+report(
+  "a rename still has to be a name, and says so rather than 500ing",
+  returned(emptyName.text)?.ok === false &&
+    (await one(`SELECT name FROM automations WHERE id = $1`, [ruleRow.id])).name ===
+      "Archive the finished"
+    ? null
+    : `returned ${emptyName.text.slice(0, 160)}`,
+);
+
+const samsEdit = await callOn(
+  AUTO_URL,
+  AUTO_ACTIONS.updateAutomationAction!,
+  [ruleRow.id, { trigger: { kind: "taskCreated" }, actions: [{ kind: "archive" }] }],
+  SAM,
+);
+report(
+  "nor edit what it does",
+  /permission|no longer exists/i.test(samsEdit.text) &&
+    /statusId/.test(
+      (await one(`SELECT trigger::text AS trigger FROM automations WHERE id = $1`, [ruleRow.id]))
+        .trigger,
+    )
+    ? null
+    : `response ${samsEdit.text.slice(-200)}`,
+);
+
+const badEdit = await callOn(AUTO_URL, AUTO_ACTIONS.updateAutomationAction!, [
+  ruleRow.id,
+  { trigger: { kind: "fieldChanged", field: "nonsense" }, actions: [{ kind: "archive" }] },
+]);
+report(
+  "an edit the parser refuses comes back as the parser's words, not a 500",
+  returned(badEdit.text)?.ok === false &&
+    /trigger|nonsense/i.test(returned(badEdit.text)?.error ?? "")
+    ? null
+    : `returned ${badEdit.text.slice(0, 200)}`,
+);
+
+const managersEdit = await callOn(AUTO_URL, AUTO_ACTIONS.updateAutomationAction!, [
+  ruleRow.id,
+  {
+    name: "Archive the finished",
+    trigger: { kind: "taskCreated" },
+    actions: [{ kind: "comment", text: "edited by check:actions" }],
+    delaySeconds: 0,
+  },
+]);
+const afterEdit = await one(
+  `SELECT trigger::text AS trigger, actions::text AS actions, delay_seconds, is_enabled
+     FROM automations WHERE id = $1`,
+  [ruleRow.id],
+);
+report(
+  "the manager's edit lands, replacing the trigger, the actions and the delay",
+  returned(managersEdit.text)?.ok !== false &&
+    /taskCreated/.test(afterEdit.trigger) &&
+    /edited by check:actions/.test(afterEdit.actions) &&
+    Number(afterEdit.delay_seconds) === 0
+    ? null
+    : `stored ${afterEdit.trigger} / ${afterEdit.actions}`,
+);
+
+report(
+  "and leaves it disabled, because this rule was disabled before the edit",
+  afterEdit.is_enabled === false ? null : "the edit armed a rule nobody armed",
+);
+
+const editPage = await (
+  await fetch(`${AUTO_URL}?container=${sprintListId}`, { headers: { Cookie: COOKIE } })
+).text();
+report(
+  "the screen offers the edit, and the new sentence is the one it prints",
+  /Edit Archive the finished/.test(words(editPage)) &&
+    /When a task is created/.test(editPage)
+    ? null
+    : "no edit control, or the sentence did not follow the rule",
+);
+
 const samsDelete = await callOn(AUTO_URL, AUTO_ACTIONS.deleteAutomationAction!, [ruleRow.id], SAM);
 report(
   "and deleting one takes the same permission as writing it",
@@ -2990,15 +3106,6 @@ report(
 // looked exactly like a switch that worked. Both halves are here — the rule
 // that made it inert is still the rule, and the write side is what changed.
 console.log("\nthe dev switcher, under a real session\n");
-
-/**
- * React separates adjacent text nodes with `<!-- -->` in server-rendered HTML,
- * so "acting as {viewer.name}" never matches as the sentence it reads as.
- * Stripping the markers is what makes an assertion about rendered *words*
- * possible at all from here — Playwright's innerText does it for free, and
- * this is the HTTP gate's version of the same thing.
- */
-const words = (html: string) => html.replace(/<!--.*?-->/g, "");
 
 const quinnId = (await one(`SELECT id FROM users WHERE email = 'quinn@example.com'`)).id;
 const rileyId = (await one(`SELECT id FROM users WHERE email = 'riley@example.com'`)).id;

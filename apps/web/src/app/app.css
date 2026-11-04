@@ -4671,10 +4671,29 @@ select.filter-add option {
   cursor: pointer;
 }
 
+/* A button, because it renames (D-140) — dressed as the text it replaces, so
+   the row reads as a name rather than as a control until it is hovered. */
 .automation-name {
   font-size: var(--text-body);
   color: var(--text);
   margin-right: auto;
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  text-align: left;
+  cursor: text;
+}
+
+.automation-name:hover {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.automation-rename {
+  margin-right: auto;
+  max-width: 260px;
 }
 
 .automation-sentence {

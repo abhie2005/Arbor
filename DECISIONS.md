@@ -5597,3 +5597,68 @@ paragraph described the leftover; this removes it.
 and the dev switcher shows every user — multiply into a dropdown that is 80%
 robots, and the fix belongs in the thing that creates them rather than in
 either decision.
+
+### D-140
+**A rule can be edited, through two entry points rather than one** · 2026-11-03 · active
+
+`createAutomation`, `setAutomationEnabled` and `deleteAutomation` were the whole
+service, so changing a rule meant deleting it and writing it again — losing its
+runs, its id and its history to fix a typo in its name.
+
+**The decision is the split, and a broken rule is what forces it.** The screen
+deliberately shows a rule the parser can no longer read (D-129): the engine
+skips it, and a rule nobody can see is a rule nobody can fix. Renaming is the
+common case, it cannot invalidate anything, and it is the *only* edit that must
+work on such a rule — so routing a rename through the rule parser would mean the
+rules most in need of a label are the ones that cannot be given one. That is not
+a style preference: `renameAutomation` delegating to `updateAutomation` was
+tried, and the smoke check for renaming an unparseable rule fails with
+`AutomationError: Not a trigger: nonsense` — the broken rule becomes untouchable.
+
+`updateAutomation` runs the same `parseAutomationRule` and the same `verbFor` as
+creation, because a rule that could not have been written must not be editable
+into existence either.
+
+**Three things it deliberately does not do:**
+
+- **It does not move the rule.** Which container a rule lives on decides who may
+  manage it, so changing it would need two permission checks — the container
+  being left and the one being entered — and an edit form is the wrong place to
+  hide a change of ownership. Moving a rule is deleting it and writing it again.
+- **It does not touch `is_enabled`.** Fixing a rule and arming it are two
+  decisions, and a save that quietly armed something is the surprising half.
+- **It does not snapshot the rule onto queued runs.** `executeRun` re-reads the
+  rule when it acts — which is what makes a disabled rule's pending run skip —
+  so a run queued by the old rule performs the **new** one. D-128 settled this
+  for conditions; the actions are the other half of the same answer. The
+  alternative means a rule you just fixed keeps doing the broken thing for the
+  length of its delay. Checked end to end: a rule with an hour's delay queues a
+  run, the rule is edited, the delay is brought forward, and the comment the run
+  writes is the edited text.
+
+**The form is the same form.** `NewAutomation` became `AutomationForm` and seeds
+its eleven pieces of state from an existing rule rather than being duplicated —
+a second form is a second place for the menus to drift from the compiler's own
+declaration, which is what D-129 extracted `filter-conditions.tsx` to prevent.
+That needed inverses of `buildTrigger` and `toAction`, and the subtle one is
+`narrowed`: it is the **presence of the `to` key**, not the truthiness of its
+value, because `buildTrigger` omits the key rather than writing null —
+`to: null` is the different rule "when the status becomes empty". Reading it
+back any other way would silently widen that rule to "changes at all" the first
+time somebody opened it.
+
+**Eleven checks in `db:smoke` (325), nine in `check:actions` (194), nine driven
+in a browser.** The browser ones cost four false starts, all the same mistake in
+different clothes — acting on a screen that is about to be replaced:
+
+- A row located by `hasText` **stops matching its own rule** the moment renaming
+  begins, because the name moves into an `<input value>`, which is not text
+  content. Every later step then waits forever on a row that is plainly there.
+- Reading the sentence straight after the form closes reads the *pre-edit* DOM:
+  `setEditing(null)` runs when the action returns, and `router.refresh()` has
+  not landed yet. Wait for the thing being asserted, never for the thing that
+  triggers it.
+
+*In one sentence:* the entry points are two because a rule that cannot be parsed
+still has a name, and everything else here follows from the engine re-reading a
+rule at the moment it acts.
