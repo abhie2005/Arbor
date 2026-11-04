@@ -31,6 +31,7 @@ import { grantAccess, revokeAccess } from "./access";
 import { pool } from "./client";
 import { type ConfigContext, ConfigError, inTransaction, logConfigChange, requireName } from "./config";
 import { applyOperations } from "./mutations";
+import { resolveStatusSetFor } from "./statuses";
 
 type Connection = Pool | PoolClient;
 
@@ -330,6 +331,23 @@ export async function submitForm(
   const place = space.rows[0];
   if (!place?.space_id) throw new SubmissionRefused("That form no longer exists");
 
+  /**
+   * The state a submission arrives in.
+   *
+   * `statusId` is not a field a form may ask for (D-142) — where a task lands
+   * and what state it arrives in are the list manager's decisions, not a
+   * stranger's — but "not asked" must not mean "not set". A task with a null
+   * status renders in **no section at all** on the list screen, because the
+   * renderer draws a group per status: the submission arrives, and nobody ever
+   * sees it. Found by opening the page rather than by any check here.
+   *
+   * The list's own set, resolved through inheritance (D-014), and its first
+   * status — which is what "the start of this list's workflow" means, and what
+   * every other way of creating a task already gives you.
+   */
+  const resolved = await resolveStatusSetFor(form.workspaceId, form.containerId, connection);
+  const statusId = resolved.set.statuses[0]?.id ?? null;
+
   const taskId = randomUUID();
 
   /**
@@ -353,6 +371,7 @@ export async function submitForm(
         listId: form.containerId,
         values: {
           ...carried,
+          statusId,
           spaceId: place.space_id,
           folderId: place.folder_id,
           position: "a0",

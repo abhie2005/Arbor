@@ -9,6 +9,7 @@ const SECTIONS = [
   { href: "/settings/types", label: "Task types", icon: "◈" },
   { href: "/settings/sharing", label: "Sharing", icon: "◌" },
   { href: "/settings/automations", label: "Automations", icon: "⟳" },
+  { href: "/settings/forms", label: "Forms", icon: "⊞" },
   { href: "/settings/api", label: "API tokens", icon: "⚿" },
 ];
 

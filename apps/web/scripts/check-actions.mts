@@ -2780,6 +2780,181 @@ report(
 
 await db.query(`DELETE FROM automations WHERE workspace_id = $1`, [workspaceId]);
 
+// --- forms, which have two audiences (D-142) --------------------------------
+// Everything that makes a form is `manage` on its list, like an automation or
+// a token. Submitting one is the only action in this codebase that
+// authenticates nobody — so the checks that matter are the boundary on the
+// first half and the *absence* of one on the second.
+console.log("\nforms → made by a manager, filled in by nobody\n");
+
+await warm("/settings/forms");
+const FORM_URL = `http://localhost:${PORT}/settings/forms`;
+const FORM_ACTIONS = actionIds("app/settings/forms/page");
+
+const samsForm = await callOn(
+  FORM_URL,
+  FORM_ACTIONS.createFormAction!,
+  [
+    {
+      containerId: sprintListId,
+      name: "Sam opens a door",
+      fields: [{ field: "name", label: "What?" }],
+    },
+  ],
+  SAM,
+);
+report(
+  "a member who may edit a list cannot open a form onto it",
+  returned(samsForm.text)?.ok === false &&
+    Number((await one(`SELECT count(*) AS n FROM forms WHERE name = $1`, ["Sam opens a door"])).n) ===
+      0
+    ? null
+    : `response ${samsForm.text.slice(-200)}`,
+);
+
+const madeForm = await callOn(FORM_URL, FORM_ACTIONS.createFormAction!, [
+  {
+    containerId: sprintListId,
+    name: "Report a problem",
+    intro: "Tell us what broke.",
+    fields: [
+      { field: "name", label: "What happened?" },
+      { field: "priority", label: "How bad?" },
+    ],
+  },
+]);
+report(
+  "whoever manages it can, and the form is written",
+  returned(madeForm.text)?.ok !== false ? null : `returned ${madeForm.text.slice(0, 200)}`,
+);
+
+const formRow = await one(
+  `SELECT f.id, f.principal_id, u.kind, m.role
+     FROM forms f
+     JOIN users u ON u.id = f.principal_id
+     LEFT JOIN memberships m ON m.user_id = f.principal_id
+    WHERE f.name = 'Report a problem'`,
+);
+report(
+  "with a service account of its own, as a guest",
+  formRow && formRow.kind === "service" && formRow.role === "guest"
+    ? null
+    : `principal is ${JSON.stringify(formRow)}`,
+);
+
+/**
+ * The public half. **No cookie at all** — not a stale one, not a dev one.
+ * Every other action here is called with a session; this one must work
+ * without, and that is the only thing about it a check can be.
+ *
+ * The page is warmed first because `actionIds` reads a bundle Next compiles on
+ * demand, and nothing else in this script ever asks for `/f/<id>` — the
+ * failure reads as "has the route moved?", which is alarming and means only
+ * that nobody had opened it yet.
+ */
+await warm(`/f/${formRow.id}`);
+const PUBLIC_ACTIONS = actionIds("app/f/[id]/page");
+
+const sentByNobody = await callOn(
+  `http://localhost:${PORT}/f/${formRow.id}`,
+  PUBLIC_ACTIONS.submitFormAction!,
+  [formRow.id, { name: "The lift is stuck", priority: "2" }],
+  "",
+);
+report(
+  "a submission with no session at all is accepted",
+  returned(sentByNobody.text)?.ok !== false
+    ? null
+    : `returned ${sentByNobody.text.slice(0, 200)}`,
+);
+
+const madeTask = await one(
+  `SELECT t.id, t.created_by, t.status_id, t.priority FROM tasks t WHERE t.name = $1`,
+  ["The lift is stuck"],
+);
+report(
+  "and becomes a task written by the form, not by nobody and not by a person",
+  madeTask && madeTask.created_by === formRow.principal_id && madeTask.status_id !== null
+    ? null
+    : `task reads ${JSON.stringify(madeTask)}`,
+);
+
+/**
+ * The bound, over HTTP. `statusId` is a real column that a real task has, and
+ * the only thing stopping an anonymous writer setting it is the form's own
+ * declaration — so this is the check that would matter most if it were ever
+ * deleted.
+ */
+const injected = await callOn(
+  `http://localhost:${PORT}/f/${formRow.id}`,
+  PUBLIC_ACTIONS.submitFormAction!,
+  [formRow.id, { name: "Sneaky", statusId: doneStatus.id }],
+  "",
+);
+report(
+  "a submission cannot set a field the form did not ask for",
+  returned(injected.text)?.ok === false &&
+    Number((await one(`SELECT count(*) AS n FROM tasks WHERE name = 'Sneaky'`)).n) === 0
+    ? null
+    : `response ${injected.text.slice(0, 200)}`,
+);
+
+const strangerSees = words(
+  await (await fetch(`http://localhost:${PORT}/f/${formRow.id}`)).text(),
+);
+report(
+  "the public page renders with no session and names nothing behind it",
+  /What happened\?/.test(strangerSees) &&
+    !/Northwind/.test(strangerSees) &&
+    !/Sprint 24/.test(strangerSees)
+    ? null
+    : "the public page leaked the workspace, or did not render",
+);
+
+const samsClose = await callOn(
+  FORM_URL,
+  FORM_ACTIONS.setFormOpenAction!,
+  [formRow.id, false],
+  SAM,
+);
+report(
+  "a member cannot close somebody else's form either",
+  returned(samsClose.text)?.ok === false &&
+    (await one(`SELECT is_open::text AS is_open FROM forms WHERE id = $1`, [formRow.id]))
+      .is_open === "true"
+    ? null
+    : `response ${samsClose.text.slice(-200)}`,
+);
+
+await callOn(FORM_URL, FORM_ACTIONS.setFormOpenAction!, [formRow.id, false]);
+const closed = await callOn(
+  `http://localhost:${PORT}/f/${formRow.id}`,
+  PUBLIC_ACTIONS.submitFormAction!,
+  [formRow.id, { name: "After hours" }],
+  "",
+);
+report(
+  "and a closed form takes nothing, whoever asks",
+  returned(closed.text)?.ok === false &&
+    Number((await one(`SELECT count(*) AS n FROM tasks WHERE name = 'After hours'`)).n) === 0
+    ? null
+    : `response ${closed.text.slice(0, 200)}`,
+);
+
+await callOn(FORM_URL, FORM_ACTIONS.deleteFormAction!, [formRow.id]);
+report(
+  "the manager's delete lands, and the principal keeps its name on what it wrote",
+  Number((await one(`SELECT count(*) AS n FROM forms WHERE id = $1`, [formRow.id])).n) === 0 &&
+    Number(
+      (await one(`SELECT count(*) AS n FROM users WHERE id = $1`, [formRow.principal_id])).n,
+    ) === 1
+    ? null
+    : "the delete took the wrong things with it",
+);
+
+await db.query(`DELETE FROM tasks WHERE id = $1`, [madeTask.id]);
+await db.query(`DELETE FROM users WHERE id = $1`, [formRow.principal_id]);
+
 // --- the tokens screen (D-135) ---------------------------------------------
 // The endpoints have existed since D-133; until this screen the only token
 // anybody could hold was the one the seed prints. `check:api` drives the API

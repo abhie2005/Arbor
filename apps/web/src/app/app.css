@@ -4780,3 +4780,108 @@ select.filter-add option {
   font-size: var(--text-meta);
   color: var(--text-2);
 }
+
+/* --- forms (D-142) -------------------------------------------------------- */
+
+/* The public page. Deliberately unlike every other screen here: no sidebar,
+   no chrome, nothing naming the workspace behind the form. A stranger is
+   shown the form and nothing about the organisation. */
+.public-form {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: var(--space-6) var(--space-4);
+  background: var(--bg);
+}
+
+.public-card {
+  width: 100%;
+  max-width: 560px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card, 8px);
+  padding: var(--space-6);
+}
+
+.public-card h1 {
+  margin: 0 0 var(--space-2);
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+
+.public-intro {
+  margin: 0 0 var(--space-5);
+  color: var(--text-2);
+  font-size: var(--text-body);
+  line-height: 1.5;
+}
+
+.public-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.public-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.public-label {
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+
+.public-fields textarea.settings-input {
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.public-done {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  align-items: flex-start;
+}
+
+/* The builder's field list: a checkbox, the field, its label, and whether it
+   is required — one row each, so the form being described is readable down
+   the left edge. */
+.form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: var(--space-3) 0;
+}
+
+.form-field-row {
+  display: grid;
+  grid-template-columns: auto 110px 1fr auto;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.form-field-row[data-fixed="true"] {
+  opacity: 0.85;
+}
+
+.form-field-name {
+  font-size: var(--text-body);
+  color: var(--text);
+}
+
+.form-field-required {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-meta);
+  color: var(--text-2);
+}
+
+/* The link is the product, so it is selectable text rather than a button that
+   copies it somewhere the person cannot see. */
+.form-link {
+  user-select: all;
+}

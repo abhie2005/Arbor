@@ -303,10 +303,11 @@ out now, which is the staleness the calendar dates already had.
 | **Dashboards** | `/dashboards` — a grid of cards, each a filter plus a way of drawing it. A card's `kind` *is* which compiler entry point it calls (D-104): a stat is `compileAggregate`, a chart is `compileGroupCounts`. Counted as the **viewer** (D-105), which is the opposite of a goal and for a reason. Scoped to a container, with personal dashboards following the saved view rule. Charts are HTML bars measured against the largest slice; no charting library. |
 | **Documents** | `/docs` — a page tree scoped by the same `access_index` join everything else uses, and an editor. The tree is a real walk at any depth (D-119): collapse hides descendants, a drop onto a row makes a page its first child and a drop in the gap below one makes it the next sibling, both as one `afterId`, and the `+` on a row makes a subpage. `[[` links a page or a task — a second embed kind the editor's offset arithmetic absorbed without a change — and `doc_links` answers the reverse, shown as "Linked from" on a page and "Referenced by" on a task, scoped to pages the *viewer* can read (D-120). A document's body is a Yjs CRDT holding the *same block tree* comments and descriptions use (ADR 6, D-110), so a mention is a reference rather than the characters "@Name", and `search_text` beside it is a projection recomputed on every write. The editor is a **contenteditable per paragraph** (D-117) with the change applied as a diff (D-112), so two people typing in one paragraph merge instead of clobbering. A mention is one `EMBED_CHAR` in the string the editor works in, which makes a DOM offset, a caret and a CRDT position the same number — so a paragraph naming somebody is edited rather than shown, `@` offers the workspace's members, and the caret is a Yjs relative position that survives both ⌘Z and somebody else's insert. Updates POST as base64 and arrive as a nudge on the existing stream; the editor answers by pulling the difference rather than re-rendering. Creating, renaming, moving and archiving are configuration writes with an activity row and no ⌘Z (D-111). |
 | **Search** | `/search` — the screen that finally reads `docs.search_text`. Two halves, each through the permission path it already had: tasks are `compileViewQuery` with scope `everything` and `filters.search` set (which had existed since the beginning and been set by nothing), pages are `searchDocs` sharing `listDocs`' reachability clause. Matching is `ILIKE`, the same rule the compiler has always used, so one box cannot have two ideas of what matches (D-113); trigram GIN indexes make that affordable. A GET with the query in the URL, so a search is a sendable link — no action, no debounce. Snippets are anchored on the match and the term is marked. |
+| **Forms** | `/settings/forms` makes a door into one list, and `/f/<id>` is that door — the only screen here that renders with no session at all. A submission writes as the form's own service account, a `guest` granted `edit` on that container and nothing else (D-142), through `applyOperations` like every other write, so the task it makes *is* the record of it and carries the activity row. What a stranger may fill is bounded by the declaration a manager wrote, in a pure function with its own tests; an undeclared field is refused, not dropped. Submissions arrive in the first status of the list's own set, which a browser pass found was null (D-143). |
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 608 unit tests, 325 live-Postgres checks, 198 action checks, 30
+**Verified:** 622 unit tests, 345 live-Postgres checks, 208 action checks, 30
 API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse
@@ -407,10 +408,18 @@ Then, in the order the rest argues for:
    null, in both directions. An inverse that reads truthiness instead of
    presence reopens a "stops being" rule as "changes at all" and saves it that
    way; the browser check for it fails against exactly that.
-4. **Forms**, which are the last untouched piece of the phase. A public form
-   submits without a session, so it is the same question this chunk answered —
-   what a request that is not a session acts as — with "and anonymously" added
-   to it.
+4. ~~**Forms**, the last untouched piece of the phase.~~ **Done** (2026-11-03,
+   D-142 and D-143). A form is a door into one list that needs no session, and
+   the question was the same one twice answered: a submission writes as a
+   **service account of its own** — a `guest` with a grant on that one
+   container — so no permission code path learns a new principal kind. The
+   declaration is a **whitelist**: a submission fills the fields a manager
+   declared and nothing else, and an undeclared key is refused rather than
+   dropped. That bound is a pure function in `packages/core/src/forms.ts` with
+   14 unit tests, because this is the only path in the codebase where a request
+   with no identity causes a write. `/f/<id>` is the first screen here that
+   renders for nobody: no shell, no `requireWorkspace()`, and one refusal for
+   missing, closed and broken alike.
 
 **Two things owed on what just landed**, neither blocking:
 
@@ -580,8 +589,8 @@ wrote the comment that was typed into it.
   workspace that reaches it gets `refused_quota` rows and no warning anywhere.
 - **No relative dates in actions.** "Due in 3 days" is the obvious next action
   kind; `to` is currently a literal value.
-- **Forms and the public API.** Untouched. The API needs tokens belonging to a
-  service account, which is where D-126's synthetic-email wart gets revisited.
+- ~~**Forms and the public API.**~~ Both done — the API in D-133 to D-135, and
+  forms in D-142 and D-143.
 - **`webhooks` and `templates` are still unread**, as they have been since
   Phase 1.
 

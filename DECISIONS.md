@@ -5774,3 +5774,55 @@ stranger learns it is not taking submissions rather than that it is broken.
 *In one sentence:* every hard question here had already been answered somewhere
 else in the repo, and the only new one — what an unauthenticated writer may
 write — is answered by a pure function that can be tested without a database.
+
+### D-143
+**The two screens a form needs, one of which has no session** · 2026-11-03 · active
+
+D-142 built the thing; this is the pair of screens that make it reachable —
+`/settings/forms` to open a door, and `/f/<id>` to walk through one.
+
+**`/f/<id>` is the first page in this codebase that renders for nobody.** Every
+other screen calls `getCurrentUser()` and redirects to `/login` without one;
+this one never asks who is looking, because the answer is "nobody" and that is
+the feature. Two things follow, and both are easy to get wrong:
+
+- **Nothing on it may come from `requireWorkspace()`.** That resolves a
+  workspace from the viewer's memberships (D-137) and there is no viewer. The
+  form carries its own workspace — the link names the form, the form names the
+  list — which is the only thing that could be right.
+- **It is outside `AppShell` entirely.** No sidebar, no inbox badge, no live
+  stream, no workspace name. A stranger filling in a form is shown the form and
+  nothing about the organisation behind it, and a check asserts the page names
+  neither the workspace nor the list.
+
+**One refusal for every reason** (invariant 6): missing, closed and
+unparseable all say "this form is not taking submissions". A form id in a URL
+is the sort of thing people try, and "this one exists but is closed" is more
+than somebody outside the workspace should learn from a link.
+
+`submitFormAction` is the one action that does not authenticate, which is a
+documented exception to invariant 4 rather than an oversight. What stands in
+for authorization is narrower than a permission check and is not held by the
+caller at all: a manager wrote the form, the form names the list and the
+fields, the write happens as the form's own `guest` principal, and
+`parseSubmission` refuses anything undeclared. The caller holds nothing.
+
+**The browser found the bug that no check could have.** A submission arrived
+with `status_id` null — `statusId` is deliberately not a field a form may ask
+for, and "not asked" had quietly become "not set". The list renderer draws a
+group per status, so the task was **in the list and in no section of it**: it
+arrived, and nobody would ever have seen it. A submission now takes the first
+status of the list's own resolved set (D-014), which is what every other way of
+making a task already gives you. The `db:smoke` check for it was written after
+the screen showed it, which is the right order and not the comfortable one.
+
+**Eleven checks in `check:actions` (208) and ten in a browser**, and the shape
+of both is the same: the manager half is an ordinary `manage` boundary, and the
+public half is driven **with no cookie at all** — a fresh browser context in
+one, an empty `Cookie` header in the other. The one that would matter most if
+it were ever deleted is the injection: `statusId` posted straight at the action
+by a caller with no session, refused, with no task written.
+
+*In one sentence:* the interesting half of this feature is everything the page
+deliberately does not do — no shell, no workspace resolution, no session, and
+no explanation of why it is closed.

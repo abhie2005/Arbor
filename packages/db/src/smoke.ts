@@ -5140,7 +5140,7 @@ async function main() {
 
   const submitted = await one(
     `SELECT t.name, t.priority, t.due_at, t.due_has_time::text AS due_has_time,
-            t.home_list_id, t.created_by
+            t.home_list_id, t.created_by, t.status_id
        FROM tasks t WHERE t.id = $1`,
     [first.taskId],
   );
@@ -5152,6 +5152,22 @@ async function main() {
       submitted.home_list_id === sprintList.id
       ? null
       : `task reads ${JSON.stringify(submitted)}`,
+  );
+
+  /**
+   * Not asked is not the same as not set.
+   *
+   * `statusId` is deliberately not a field a form may ask for, and the first
+   * version therefore left it null — which renders in **no section at all** on
+   * the list screen, because the renderer draws a group per status. The
+   * submission arrived and nobody could see it. Found by opening the page.
+   */
+  report(
+    "a submission arrives in the first status of the list's own set",
+    submitted.status_id ===
+      (await resolveStatusSetFor(ws.id!, sprintList.id!, pool)).set.statuses[0]?.id
+      ? null
+      : `arrived with status ${String(submitted.status_id)}`,
   );
 
   report(
