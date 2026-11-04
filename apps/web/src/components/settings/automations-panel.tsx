@@ -424,10 +424,17 @@ function AutomationForm({
     seed?.triggerKind ?? "fieldChanged",
   );
   const [watched, setWatched] = useState<TaskField>(seed?.watched ?? "statusId");
-  const [narrowed, setNarrowed] = useState(seed?.narrowed ?? true);
+  /**
+   * Four shapes, not two (D-141). The engine has always matched on `from` as
+   * well as `to` and `describeRule` has always printed it; only the form was
+   * missing it, so "when the status stops being Blocked" was expressible
+   * everywhere except where somebody would write it.
+   */
+  const [narrowing, setNarrowing] = useState<Narrowing>(seed?.narrowing ?? "to");
   const [becomes, setBecomes] = useState<unknown>(
     () => seed?.becomes ?? firstValueFor("statusId", values),
   );
+  const [was, setWas] = useState<unknown>(() => seed?.was ?? firstValueFor("statusId", values));
   const [relation, setRelation] = useState<RelationKind>(seed?.relation ?? "assignee");
   const [target, setTarget] = useState<string>(seed?.target ?? "");
   const [conditions, setConditions] = useState<FilterGroup>(
@@ -452,8 +459,9 @@ function AutomationForm({
     setName("");
     setTriggerKind("fieldChanged");
     setWatched("statusId");
-    setNarrowed(true);
+    setNarrowing("to");
     setBecomes(firstValueFor("statusId", values));
+    setWas(firstValueFor("statusId", values));
     setRelation("assignee");
     setTarget("");
     setConditions({ op: "AND", conditions: [] });
@@ -465,7 +473,7 @@ function AutomationForm({
   const watchedField = AUTOMATABLE_FIELDS.find((candidate) => candidate.field === watched)!;
   const needs = AUTOMATION_TRIGGERS.find((candidate) => candidate.kind === triggerKind)!.needs;
 
-  const trigger = buildTrigger({ triggerKind, watched, narrowed, becomes, relation, target });
+  const trigger = buildTrigger({ triggerKind, watched, narrowing, becomes, was, relation, target });
   const built: AutomationRule = {
     trigger,
     conditions,
@@ -534,8 +542,10 @@ function AutomationForm({
                 const next = event.target.value as TaskField;
                 setWatched(next);
                 // The value belongs to the field. Carrying it across would
-                // build a rule that stores a status id in a date.
+                // build a rule that stores a status id in a date. Both ends of
+                // the narrowing, not only the one currently showing.
                 setBecomes(firstValueFor(next, values));
+                setWas(firstValueFor(next, values));
               }}
             >
               {AUTOMATABLE_FIELDS.map((option) => (
@@ -547,14 +557,29 @@ function AutomationForm({
 
             <select
               aria-label="Narrowing"
-              value={narrowed ? "to" : "any"}
-              onChange={(event) => setNarrowed(event.target.value === "to")}
+              value={narrowing}
+              onChange={(event) => setNarrowing(event.target.value as Narrowing)}
             >
               <option value="to">becomes</option>
+              <option value="from">stops being</option>
+              <option value="both">changes from</option>
               <option value="any">changes at all</option>
             </select>
 
-            {narrowed ? (
+            {narrowing === "from" || narrowing === "both" ? (
+              <ValueControl
+                input={watchedField.input}
+                value={was}
+                values={values}
+                onChange={setWas}
+              />
+            ) : null}
+
+            {/* The word only belongs between two values. "becomes X" and
+                "stops being X" already read as sentences. */}
+            {narrowing === "both" ? <span className="automation-word">to</span> : null}
+
+            {narrowing === "to" || narrowing === "both" ? (
               <ValueControl
                 input={watchedField.input}
                 value={becomes}
@@ -868,27 +893,32 @@ function triggerParts(
 ): {
   triggerKind: AutomationTrigger["kind"];
   watched: TaskField;
-  narrowed: boolean;
+  narrowing: Narrowing;
   becomes: unknown;
+  was: unknown;
   relation: RelationKind;
   target: string;
 } {
   const base = {
     triggerKind: trigger.kind,
     watched: "statusId" as TaskField,
-    narrowed: true,
+    narrowing: "to" as Narrowing,
     becomes: firstValueFor("statusId", values),
+    was: firstValueFor("statusId", values),
     relation: "assignee" as RelationKind,
     target: "",
   };
 
   if (trigger.kind === "fieldChanged") {
-    const narrowed = "to" in trigger;
+    const hasTo = "to" in trigger;
+    const hasFrom = "from" in trigger;
+    const fallback = firstValueFor(trigger.field, values);
     return {
       ...base,
       watched: trigger.field,
-      narrowed,
-      becomes: narrowed ? trigger.to : firstValueFor(trigger.field, values),
+      narrowing: hasFrom ? (hasTo ? "both" : "from") : hasTo ? "to" : "any",
+      becomes: hasTo ? trigger.to : fallback,
+      was: hasFrom ? trigger.from : fallback,
     };
   }
 
@@ -937,28 +967,39 @@ function RenameRule({
   );
 }
 
+/** Which ends of a field change the rule pins down (D-141). */
+type Narrowing = "to" | "from" | "both" | "any";
+
 function buildTrigger({
   triggerKind,
   watched,
-  narrowed,
+  narrowing,
   becomes,
+  was,
   relation,
   target,
 }: {
   triggerKind: AutomationTrigger["kind"];
   watched: TaskField;
-  narrowed: boolean;
+  narrowing: Narrowing;
   becomes: unknown;
+  was: unknown;
   relation: RelationKind;
   target: string;
 }): AutomationTrigger {
   if (triggerKind === "fieldChanged") {
-    // `to` is omitted rather than set to null when the rule is not narrowed:
-    // the parser tests for the key's presence, and `to: null` is the rule "when
-    // the status becomes empty", which is a different rule.
-    return narrowed
-      ? { kind: "fieldChanged", field: watched, to: becomes }
-      : { kind: "fieldChanged", field: watched };
+    // A key is **omitted** rather than set to null when that end is not
+    // narrowed: the parser and the matcher both test for the key's presence,
+    // and `to: null` is the rule "when the status becomes empty", which is a
+    // different rule. That is why this builds the object up rather than
+    // spreading both values and letting undefined sort it out.
+    const trigger: Extract<AutomationTrigger, { kind: "fieldChanged" }> = {
+      kind: "fieldChanged",
+      field: watched,
+    };
+    if (narrowing === "from" || narrowing === "both") trigger.from = was;
+    if (narrowing === "to" || narrowing === "both") trigger.to = becomes;
+    return trigger;
   }
 
   if (triggerKind === "relationAdded" || triggerKind === "relationRemoved") {

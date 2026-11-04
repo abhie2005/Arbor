@@ -306,7 +306,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 608 unit tests, 325 live-Postgres checks, 194 action checks, 30
+**Verified:** 608 unit tests, 325 live-Postgres checks, 198 action checks, 30
 API checks, 11 search checks, four packages typechecking clean, and the interactions above
 driven in Chrome — most recently `[[` resolving to a page and then to a task
 inside one sentence, the two edges landing in `doc_links`, and the reverse
@@ -400,8 +400,13 @@ Then, in the order the rest argues for:
    because `executeRun` re-reads it when it acts — D-128's answer for
    conditions, applied to actions. The form is the same form, seeded from the
    rule.
-3. **The form offers `to` and not `from`**, though `parseAutomationRule` takes
-   both and `describeRule` already prints it.
+3. ~~**The form offers `to` and not `from`.**~~ **Done** (2026-11-03, D-141).
+   One control, four shapes — becomes, stops being, changes from … to …, and
+   changes at all — because that is what the engine already matched. The care
+   is in the key: "not narrowed" is the **absence** of `to`/`from`, never a
+   null, in both directions. An inverse that reads truthiness instead of
+   presence reopens a "stops being" rule as "changes at all" and saves it that
+   way; the browser check for it fails against exactly that.
 4. **Forms**, which are the last untouched piece of the phase. A public form
    submits without a session, so it is the same question this chunk answered —
    what a request that is not a session acts as — with "and anonymously" added
@@ -554,9 +559,9 @@ wrote the comment that was typed into it.
 - ~~**A rule cannot be edited, only deleted and written again.**~~ **Done**
   (D-140). `renameAutomation` and `updateAutomation`, split because a rule the
   parser cannot read still has a name.
-- **The form offers `to` and not `from`.** `parseAutomationRule` takes both, so
-  "when the status stops being Blocked" is expressible and nothing offers it.
-  `describeRule` already says it when it is there.
+- ~~**The form offers `to` and not `from`.**~~ **Done** (D-141). Four shapes in
+  one menu, and a narrowing is a key that is present rather than a value that
+  is null.
 - **`parentTaskId` and a duration control are the two menu gaps.** Both are
   deliberate (D-129): a task picker does not exist, and a milliseconds box is
   labelled as one rather than pretending to be hours. A `duration` `ValueInput`

@@ -5662,3 +5662,44 @@ different clothes — acting on a screen that is about to be replaced:
 *In one sentence:* the entry points are two because a rule that cannot be parsed
 still has a name, and everything else here follows from the engine re-reading a
 rule at the moment it acts.
+
+### D-141
+**The form offers the other end of a field change** · 2026-11-03 · active
+
+`parseAutomationRule` has always taken `from` as well as `to`, `matches` has
+always tested it, and `describeRule` has always printed "stops being …" — and
+nothing could write one. "When the status stops being Blocked" was expressible
+everywhere except where somebody would express it, which is the gap D-129 left
+and `docs/STATUS.md` had carried since.
+
+One control, four shapes, because that is what the engine already matched:
+**becomes** (`to`), **stops being** (`from`), **changes from … to …** (both),
+and **changes at all** (neither).
+
+**A key is omitted, never set to null** — the thing this change could most
+easily have got wrong in both directions. The parser and the matcher both test
+for the key's *presence*, and `to: null` is the rule "when the status becomes
+empty", which is a genuinely different rule. So `buildTrigger` assembles the
+object conditionally rather than spreading both values and letting `undefined`
+sort it out, and **`triggerParts` reads the presence of the key rather than the
+truthiness of its value**. Getting the inverse wrong is the worse half: a
+from-only rule reopened in the edit form would come back as "changes at all"
+and be saved that way, silently widening a rule nobody meant to change. The
+browser check for that fails against an inverse that forgets `from` — it
+reports the form reopening on `any`, which is the silent widening, caught.
+
+The value belongs to the field, so switching the watched field resets **both**
+ends rather than only the one on screen; carrying a status id into a date field
+is the bug the original single-valued version already guarded against, and
+there are two of them now.
+
+**Four in `check:actions` (198) and seven driven in a browser.** The HTTP ones
+assert the stored trigger carries the key rather than a null, and that the
+screen prints each narrowing as the sentence it is rather than collapsing them
+to "changes". The browser ones drive the control itself — the menu offering
+exactly the four shapes, the preview changing with each, the word "to" appearing
+only between two values, and the round trip through save and reopen.
+
+*In one sentence:* the engine, the matcher and the sentence all knew about
+`from`; this is the menu catching up, and the only hard part is that "not
+narrowed" has to stay the absence of a key rather than a null.

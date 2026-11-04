@@ -2592,6 +2592,68 @@ report(
     : "the rule was missing from the page, or its sentence was",
 );
 
+// --- the other end of a field change (D-141) --------------------------------
+// `from` has been matched by the engine and printed by `describeRule` since
+// the beginning, and offered by the form by nothing — so "when the status
+// stops being Blocked" was expressible everywhere except where somebody would
+// write it. These post the two shapes the form could not previously build.
+const stopsBeing = await callOn(AUTO_URL, AUTO_ACTIONS.createAutomationAction!, [
+  {
+    containerId: sprintListId,
+    name: "When it stops being blocked",
+    trigger: { kind: "fieldChanged", field: "statusId", from: doneStatus.id },
+    actions: [{ kind: "archive" }],
+  },
+]);
+report(
+  "a rule narrowed on the old value is accepted",
+  returned(stopsBeing.text)?.ok !== false ? null : `returned ${stopsBeing.text.slice(0, 160)}`,
+);
+
+const bothEnds = await callOn(AUTO_URL, AUTO_ACTIONS.createAutomationAction!, [
+  {
+    containerId: sprintListId,
+    name: "When it goes from one to the other",
+    trigger: { kind: "fieldChanged", field: "statusId", from: doneStatus.id, to: doneStatus.id },
+    actions: [{ kind: "archive" }],
+  },
+]);
+report(
+  "and so is one narrowed on both ends",
+  returned(bothEnds.text)?.ok !== false ? null : `returned ${bothEnds.text.slice(0, 160)}`,
+);
+
+const narrowedPage = words(
+  await (await fetch(`${AUTO_URL}?container=${sprintListId}`, { headers: { Cookie: COOKIE } })).text(),
+);
+report(
+  "and the screen prints each as the sentence it is, not as 'changes'",
+  /stops being Done/.test(narrowedPage) && /changes from Done to Done/.test(narrowedPage)
+    ? null
+    : "the sentences did not distinguish the narrowings",
+);
+
+report(
+  "the stored trigger carries the key rather than a null, which is a different rule",
+  /"from"/.test(
+    (await one(`SELECT trigger::text AS trigger FROM automations WHERE name = $1`, [
+      "When it stops being blocked",
+    ])).trigger,
+  ) &&
+    !/"to"/.test(
+      (await one(`SELECT trigger::text AS trigger FROM automations WHERE name = $1`, [
+        "When it stops being blocked",
+      ])).trigger,
+    )
+    ? null
+    : "a narrowing was stored with a null key",
+);
+
+await db.query(`DELETE FROM automations WHERE name IN ($1, $2)`, [
+  "When it stops being blocked",
+  "When it goes from one to the other",
+]);
+
 // --- editing a rule (D-140) -------------------------------------------------
 // Two entry points, and the same permission as writing one. The boundary is
 // what these are for: an id is not permission, and the container is read off
