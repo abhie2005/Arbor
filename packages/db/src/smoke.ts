@@ -11,6 +11,7 @@
  */
 import {
   DEFAULT_VIEW_DEFINITION,
+  MAX_RUN_ATTEMPTS,
   compileViewQuery,
   docStateFrom,
   invert,
@@ -117,6 +118,7 @@ import {
 } from "./documents";
 import {
   MONTHLY_RUN_QUOTA,
+  STRANDED_AFTER_SECONDS,
   automationQuota,
   claimDueRuns,
   createAutomation,
@@ -126,6 +128,7 @@ import {
   loadAutomations,
   loadAutomationsForContainers,
   recentAutomationRuns,
+  reapStrandedRuns,
   renameAutomation,
   scanForAutomations,
   setAutomationEnabled,
@@ -4637,6 +4640,213 @@ async function main() {
   );
 
   await pool.query(`DELETE FROM tasks WHERE id = $1`, [delayedTaskId]);
+
+  // --- a run that failed, and a run nobody finished (D-145) ------------------
+  // `attempts` was incremented by the claim and read by nothing: a failed run
+  // stayed failed forever. The reason this was deferred twice — "retrying a
+  // half-applied batch needs a rule about which actions already happened" — is
+  // not reachable, because `executeRun` writes task data exactly once through
+  // `applyOperations` and that is one transaction. A run that reached its catch
+  // applied nothing.
+  //
+  // These go through `claimDueRuns` and `reapStrandedRuns` rather than
+  // asserting on SQL, because the claim's WHERE is the thing that changed.
+
+  // A real failure first, so the scheduling half is not tested against a row
+  // this file wrote by hand. The action names an assignee who does not exist,
+  // which the parser cannot know and the FK on `task_assignees` certainly can.
+  const failingTask = (
+    await pool.query<{ id: string }>(
+      `INSERT INTO tasks (workspace_id, home_list_id, space_id, folder_id, key, name, status_id,
+                          created_by, position)
+       SELECT $1, $2, space_id, folder_id, 'RETRY-1', 'A task a doomed rule acts on', $3, $4, 'zzzz'
+         FROM tasks WHERE workspace_id = $1 LIMIT 1
+       RETURNING id`,
+      [ws.id, autoList.id, autoTodo.id, owner.id],
+    )
+  ).rows[0]!;
+
+  const doomed = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "A rule whose action cannot work",
+      trigger: { kind: "fieldChanged", field: "statusId" },
+      actions: [{ kind: "addRelation", relation: "assignee", targetId: randomUUID() }],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  // Through `applyOperations`, not a raw UPDATE. A rule fires from the activity
+  // log, and a raw UPDATE writes no activity row — so the first draft of this
+  // check changed the status, fired nothing, and reported "the last run is
+  // missing", which reads as a broken engine rather than as a fixture that did
+  // not trigger anything. The same trap the section above records for a
+  // no-op change.
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: failingTask.id,
+        field: "statusId",
+        from: autoTodo.id!,
+        to: inReview.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await tickAutomations(ws.id!, pool);
+
+  const failedRun = await one(
+    `SELECT status, attempts, run_after > now() AS backed_off, error
+       FROM automation_runs WHERE automation_id = $1 ORDER BY started_at DESC LIMIT 1`,
+    [doomed],
+  );
+
+  report(
+    "a rule whose action cannot work is recorded failed rather than lost",
+    failedRun?.status === "failed" ? null : `the last run is ${failedRun?.status ?? "missing"}`,
+  );
+
+  report(
+    "a failure schedules its own next attempt instead of being retried at once",
+    String(failedRun?.backed_off) === "true" && Number(failedRun?.attempts) === 1
+      ? null
+      : `attempts=${failedRun?.attempts}, backed off=${failedRun?.backed_off}`,
+  );
+
+  report(
+    "and it is not claimable until that pause has passed",
+    (await claimDueRuns(pool)).every((run) => run.automationId !== doomed)
+      ? null
+      : "the backoff was ignored and the run was claimed immediately",
+  );
+
+  // Now the claim's own rule, with the clock moved rather than waited out.
+  await pool.query(
+    `UPDATE automation_runs SET run_after = now() - interval '1 minute' WHERE automation_id = $1`,
+    [doomed],
+  );
+
+  report(
+    "once the pause is over, a failed run with an attempt left is claimed again",
+    (await claimDueRuns(pool)).some((run) => run.automationId === doomed)
+      ? null
+      : "a failed run inside its attempt limit was never picked up — this is the whole gap",
+  );
+
+  // The claim just incremented attempts to 2. At the limit it must stop, which
+  // is the guard that keeps one broken rule from filling the queue forever.
+  await pool.query(
+    `UPDATE automation_runs SET status = 'failed', attempts = $2, run_after = now() - interval '1 minute'
+      WHERE automation_id = $1`,
+    [doomed, MAX_RUN_ATTEMPTS],
+  );
+
+  report(
+    "a failed run that has spent its attempts is left alone",
+    (await claimDueRuns(pool)).every((run) => run.automationId !== doomed)
+      ? null
+      : `a run with ${MAX_RUN_ATTEMPTS} attempts was claimed again`,
+  );
+
+  // --- the stranded case, which is why retrying is safe at all ---------------
+  // A process that dies between applying the batch and recording the outcome
+  // leaves `status = 'running'` forever. Which of the two things happened is
+  // answerable, because every operation writes an activity row carrying
+  // `automation_run_id` inside the same transaction as the task write.
+
+  const strandedWith = randomUUID();
+  const strandedWithout = randomUUID();
+  const anyActivity = await one(
+    `SELECT id FROM activity WHERE workspace_id = $1 ORDER BY id DESC LIMIT 1`,
+    [ws.id],
+  );
+
+  for (const [id, key] of [
+    [strandedWith, "stranded-committed"],
+    [strandedWithout, "stranded-nothing"],
+  ] as const) {
+    await pool.query(
+      `INSERT INTO automation_runs
+         (id, workspace_id, automation_id, triggered_by_activity_id, idempotency_key,
+          status, claimed_at, attempts, run_after)
+       VALUES ($1, $2, $3, $4, $5, 'running', now() - make_interval(secs => $6::int), 1, now())`,
+      [id, ws.id, doomed, anyActivity.id, `${key}-${id}`, STRANDED_AFTER_SECONDS * 2],
+    );
+  }
+
+  // Only the first one left a trace, which is the entire difference.
+  await pool.query(`UPDATE activity SET automation_run_id = $1 WHERE id = $2`, [
+    strandedWith,
+    anyActivity.id,
+  ]);
+
+  // A third row, claimed a moment ago, as the control: a loaded machine must
+  // not be mistaken for a dead one.
+  const strandedFresh = randomUUID();
+  await pool.query(
+    `INSERT INTO automation_runs
+       (id, workspace_id, automation_id, triggered_by_activity_id, idempotency_key,
+        status, claimed_at, attempts, run_after)
+     VALUES ($1, $2, $3, $4, $5, 'running', now(), 1, now())`,
+    [strandedFresh, ws.id, doomed, anyActivity.id, `stranded-fresh-${strandedFresh}`],
+  );
+
+  await reapStrandedRuns(pool);
+
+  report(
+    "a stranded run that left activity behind is recorded as the success it was",
+    (await one(`SELECT status FROM automation_runs WHERE id = $1`, [strandedWith]))?.status ===
+      "success"
+      ? null
+      : "a committed batch was not credited — retrying it would do the work twice",
+  );
+
+  report(
+    "a stranded run that left nothing behind is released to be tried again",
+    (await one(`SELECT status, run_after <= now() AS due FROM automation_runs WHERE id = $1`, [
+      strandedWithout,
+    ]))?.status === "failed"
+      ? null
+      : "a run that applied nothing was not released",
+  );
+
+  report(
+    "a run claimed a moment ago is not touched, so a slow machine is not a dead one",
+    (await one(`SELECT status FROM automation_runs WHERE id = $1`, [strandedFresh]))?.status ===
+      "running"
+      ? null
+      : "the reaper took a run that was still being worked on",
+  );
+
+  // Deliberately not an assertion on `reaped`'s counts. A dev server in another
+  // process drains automations on a loop, so it may have reaped these rows
+  // first and left this call nothing to report — which would make the check
+  // fail for a reason that has nothing to do with the reaper being right. The
+  // three checks above assert the *outcome*, which is true whoever got there
+  // first. What is worth asserting about a second call is that it is a no-op:
+  // a reaper that keeps "finding" settled rows would re-finish them forever.
+  const secondPass = await reapStrandedRuns(pool);
+  report(
+    "reaping twice changes nothing the second time",
+    secondPass.completed === 0 && secondPass.releasedToRetry === 0
+      ? null
+      : `a second pass claimed to settle ${secondPass.completed} + ${secondPass.releasedToRetry} more`,
+  );
+
+  report(
+    "a settled run keeps the outcome the first pass gave it",
+    (await one(`SELECT status FROM automation_runs WHERE id = $1`, [strandedWith]))?.status ===
+      "success"
+      ? null
+      : "the second pass moved a run it had already finished",
+  );
+
+  await pool.query(`UPDATE activity SET automation_run_id = NULL WHERE id = $1`, [anyActivity.id]);
+  await pool.query(`DELETE FROM automation_runs WHERE automation_id = $1`, [doomed]);
+  await pool.query(`DELETE FROM tasks WHERE id = $1`, [failingTask.id]);
 
   const quota = await automationQuota(ws.id!, pool);
 

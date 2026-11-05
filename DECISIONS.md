@@ -5958,3 +5958,105 @@ reports green for the wrong reason.
 *In one sentence:* the pass that found six bugs is now a command rather than a
 memory, and the only genuinely new decision in it is that a browser gate may
 depend on the browser you already have instead of downloading one.
+
+### D-145
+**A failed run is tried again, and a run nobody finished is settled by what it left behind** · 2026-11-05 · active
+
+Two items off the gaps list, and the reason they are one entry is that the
+second is what makes the first safe.
+
+**The gaps list was wrong about one of them and stale about another**, which is
+worth recording because `docs/STATUS.md` had already guessed as much — "each has
+been deferred at least twice, which is usually a sign the list is the wrong
+shape". Audited before building:
+
+- *"Quota is counted and never surfaced"* — **already done**, by D-129. The
+  automations screen prints `used of quota` with a warn state at 80% and the
+  refused count beside it. The list had simply never been updated.
+- *"A run that fails is never retried"* — **true**, and the stated reason for
+  deferring it was not: "retrying a half-applied batch needs a rule about which
+  actions already happened, and operations are applied in one transaction so
+  today it is all or nothing". That last clause refutes the first. `executeRun`
+  writes task data exactly once, through `applyOperations`, and that is one
+  transaction — so a run that reached its `catch` applied **nothing**. There is
+  no half-applied batch to reason about.
+
+**The real hazard was the opposite one, and nothing had named it.** The danger
+is not a partial apply; it is a *complete* apply that failed to be recorded.
+`executeRun` applies its operations and then records the outcome in a second
+statement, so a process that dies in between leaves `status = 'running'`
+forever: the rule fired, the task changed, and both the queue and the screen say
+it never happened. Nothing reaped those rows. The claim's own comment implied
+nothing had to — "the lock is held by the transaction, so a replica that dies
+mid-claim releases its rows … instead of leaving them stranded until a reaper
+that nobody wrote comes to find them" — which is true of the claim and not of
+the execution it hands off to. That comment is corrected; this is the reaper.
+
+**It is settled by evidence, which is the decision here.** Every operation
+writes an `activity` row carrying `automation_run_id`, inside the same
+transaction as the task write (invariant 1 — and all twelve operation bodies end
+in `logActivity`, checked rather than assumed, because the whole argument rests
+on it). So the log answers the only question that matters about an abandoned
+run:
+
+| `activity` rows for this run | what happened | what is recorded |
+|---|---|---|
+| exist | the batch committed | `success`, late — never retried, or the work happens twice |
+| none | it rolled back, or there was nothing to apply | `failed`, and the ordinary retry path takes it |
+
+Rejected: **a lease column with a heartbeat**, which is a second clock to
+maintain and still cannot distinguish a committed batch from a rolled-back one.
+Rejected: **trusting `attempts`**, which counts tries and says nothing about
+what they did. The activity row can answer it and is already written, which is
+the same reasoning that made the queue a table rather than a service (D-125) —
+the answer is already in Postgres.
+
+**The retry policy is pure and in core**, the D-139 pattern: the guards are the
+decision, so they go where they can be tested without a database.
+`retryAfterSeconds(attempts)` is 30s, then 120s, then `null`.
+`MAX_RUN_ATTEMPTS` is 3, and the reasoning is what it is *not* for — a rule
+whose actions are wrong fails identically every time, so this exists for
+failures about the *moment*: a deadlock, a connection dropped mid-commit, a
+snapshot read while somebody deleted the task. Three attempts is enough for
+those and few enough that a broken rule stops being retried before anybody
+notices it was.
+
+**`attempts` is the count already made**, because the claim increments before
+handing the run over — so a first failure arrives as 1. That off-by-one is the
+other reason this is a named function rather than an interval inside the claim's
+SQL.
+
+**No migration.** `automation_runs.status` is `text`, not an enum, and the
+terminal state is `attempts >= MAX_RUN_ATTEMPTS` rather than a new status — so
+the claim's `WHERE` is the single place that decides what is still due. A
+`failed_permanent` status would have put the same decision in two places and
+needed a hand-written migration (`db:generate` does not run on this machine).
+
+**The screen stopped printing two different facts the same way.** A failed run
+showed as "failed" with the attempt count hidden in a `title`; it now reads
+"failed, trying again" against "failed, gave up after 3", and the timestamp
+switches to `run_after` for the first — the next attempt is the useful time,
+not the last one. It asks `mayRetry` rather than comparing against a number
+typed into the component, so the sentence cannot drift from the behaviour.
+
+**Ten checks in `db:smoke` (355) and six unit tests (628)**, and three reverts
+were watched to fail: the claim's retry clause (the failed run "was never picked
+up"), the reaper (a committed batch "not credited", an empty one "not
+released"), and the backoff in `settle` (a failure claimable immediately).
+
+Two things the checks themselves taught, both of which are traps this repo has
+recorded before in other forms:
+
+- **A fixture has to trigger through `applyOperations`.** The first draft set a
+  status with a raw `UPDATE`, which writes no activity row — and a rule fires
+  from the log. It reported "the last run is missing", which reads as a broken
+  engine rather than as a fixture that triggered nothing.
+- **A check must not assert on what a concurrent drain might have done first.**
+  A dev server in another process drains automations on a loop, so asserting
+  `reaped.completed >= 1` fails for a reason unrelated to the reaper being
+  right. The checks assert the *outcome*, which is true whoever got there first,
+  plus that a second pass is a no-op — which is the better property anyway.
+
+*In one sentence:* retrying was never blocked by the thing the gaps list said
+blocked it, and the thing that actually made it unsafe — a committed batch with
+no record — was already answerable from the activity log.

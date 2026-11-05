@@ -9,7 +9,9 @@ import {
   compileViewQuery,
   idempotencyKeyFor,
   matches,
+  MAX_RUN_ATTEMPTS,
   parseAutomationRule,
+  retryAfterSeconds,
   runVerdict,
   verbFor,
 } from "@arbor/core";
@@ -391,15 +393,37 @@ export interface ClaimedRun {
   automationId: string;
   taskId: string;
   depth: number;
+  /**
+   * Attempts *including* this one — the claim increments before handing the run
+   * over, so a first attempt arrives as 1. `settle` needs it to decide whether a
+   * failure gets another go (D-145), and taking it from the claim's own
+   * `RETURNING` rather than re-reading the row keeps the two from disagreeing.
+   */
+  attempts: number;
 }
 
 /**
  * Takes due work, leaving anything another process already holds.
  *
  * `SKIP LOCKED` rather than a lease column with a timestamp: the lock is held
- * by the transaction, so a replica that dies mid-claim releases its rows when
- * its connection drops, instead of leaving them stranded until a reaper that
- * nobody wrote comes to find them.
+ * by the transaction, so a replica that dies *mid-claim* releases its rows when
+ * its connection drops.
+ *
+ * **That argument covers the claim and not the execution**, which is worth
+ * saying because this comment used to imply otherwise. The lock lives for the
+ * length of this one statement; `executeRun` runs afterwards with nothing held
+ * but `status = 'running'`. A process that dies in there does strand its row,
+ * and `reapStrandedRuns` is the reaper this comment once said nobody had
+ * written.
+ *
+ * **Due work is `pending` or a `failed` run with an attempt left** (D-145).
+ * Retrying a failure is only safe because `executeRun` writes task data exactly
+ * once, through `applyOperations`, which is one transaction — so a run that
+ * reached its `catch` applied nothing at all. "A half-applied batch" was the
+ * stated reason this was deferred twice and it is not reachable: the real risk
+ * was never a partial apply but a *complete* one that failed to be recorded,
+ * which is the stranded case above and is settled by evidence rather than by
+ * a retry.
  */
 export async function claimDueRuns(
   connection: Connection = pool(),
@@ -411,10 +435,12 @@ export async function claimDueRuns(
     automation_id: string;
     object_id: string;
     depth: number;
+    attempts: number;
   }>(
     `WITH due AS (
        SELECT r.id FROM automation_runs r
-       WHERE r.status = 'pending' AND r.run_after <= now()
+       WHERE (r.status = 'pending' OR (r.status = 'failed' AND r.attempts < $2))
+         AND r.run_after <= now()
        ORDER BY r.run_after
        FOR UPDATE SKIP LOCKED
        LIMIT $1
@@ -423,8 +449,8 @@ export async function claimDueRuns(
         SET status = 'running', claimed_at = now(), attempts = r.attempts + 1
        FROM due, activity a
       WHERE r.id = due.id AND a.id = r.triggered_by_activity_id
-      RETURNING r.id, r.workspace_id, r.automation_id, a.object_id, r.depth`,
-    [limit],
+      RETURNING r.id, r.workspace_id, r.automation_id, a.object_id, r.depth, r.attempts`,
+    [limit, MAX_RUN_ATTEMPTS],
   );
 
   return result.rows.map((row) => ({
@@ -433,6 +459,7 @@ export async function claimDueRuns(
     automationId: row.automation_id,
     taskId: row.object_id,
     depth: row.depth,
+    attempts: row.attempts,
   }));
 }
 
@@ -548,10 +575,29 @@ export async function executeRun(
   run: ClaimedRun,
   connection: Connection = pool(),
 ): Promise<RunOutcome> {
+  /**
+   * Record how this run ended, and — if it failed — when to try again.
+   *
+   * **`run_after` is moved only on a failure**, because it is the one outcome
+   * the claim will look at a second time. A success or a skip is terminal and
+   * leaving its `run_after` where it was keeps the row readable as the moment
+   * the run was *due*, which is what the screen prints.
+   *
+   * A failure with no attempt left keeps `run_after` too: the claim's
+   * `attempts < MAX_RUN_ATTEMPTS` is what stops it, and moving the column as
+   * well would hide, in a timestamp, a decision that belongs in one place.
+   */
   const settle = async (status: RunOutcome, error?: string) => {
+    const again = status === "failed" ? retryAfterSeconds(run.attempts) : null;
+
     await connection.query(
-      `UPDATE automation_runs SET status = $2, error = $3, finished_at = now() WHERE id = $1`,
-      [run.id, status, error ?? null],
+      `UPDATE automation_runs
+          SET status = $2, error = $3, finished_at = now(),
+              run_after = CASE WHEN $4::int IS NULL
+                               THEN run_after
+                               ELSE now() + make_interval(secs => $4::int) END
+        WHERE id = $1`,
+      [run.id, status, error ?? null, again],
     );
     return status;
   };
@@ -586,6 +632,82 @@ export async function executeRun(
 }
 
 /**
+ * How long a `running` row may stay that way before it is presumed abandoned.
+ *
+ * Two minutes. `executeRun` is a handful of queries and one transaction, so a
+ * run still `running` after this did not take a long time — the process holding
+ * it stopped existing. Long enough that a loaded machine is never mistaken for
+ * a dead one (the drain ticks far more often than this), short enough that a
+ * rule which appears not to have fired is explained within the span of somebody
+ * noticing.
+ */
+export const STRANDED_AFTER_SECONDS = 120;
+
+/**
+ * Settle the runs a dead process left behind, by what they left in the log.
+ *
+ * **The problem this exists for is a one-statement window.** `executeRun`
+ * applies its operations and *then* records the outcome, in two separate
+ * statements. A process that dies in between leaves `status = 'running'`
+ * forever: the rule did fire, the task did change, and both the queue and the
+ * screen say it never happened. Nothing reaped those rows, and the claim's own
+ * comment used to suggest nothing needed to.
+ *
+ * **It is settled by evidence rather than by a guess**, which is the whole
+ * decision here. Every operation writes an `activity` row carrying
+ * `automation_run_id`, inside the same transaction as the task write (invariant
+ * 1, and all twelve operation bodies end in `logActivity` — checked, not
+ * assumed). So the log answers the only question that matters:
+ *
+ * - **rows exist** → the batch committed. The work is done and must never be
+ *   repeated, so the run is recorded `success` late rather than retried.
+ * - **no rows** → the transaction rolled back, or there was nothing to apply.
+ *   Either way nothing happened, so it is marked `failed` and the ordinary
+ *   retry path (D-145) picks it up if it has an attempt left.
+ *
+ * Rejected: a lease column with a heartbeat, which is a second clock to keep
+ * and still cannot tell a committed batch from a rolled-back one — the activity
+ * row can, and it is already written. Rejected too: trusting `attempts` alone,
+ * which counts tries and says nothing about what they did.
+ *
+ * `error` says which branch was taken, because "succeeded, recorded late" and
+ * "succeeded" are different facts about the system even though they are the
+ * same fact about the task.
+ */
+export async function reapStrandedRuns(
+  connection: Connection = pool(),
+  staleAfterSeconds: number = STRANDED_AFTER_SECONDS,
+): Promise<{ completed: number; releasedToRetry: number }> {
+  const completed = await connection.query(
+    `UPDATE automation_runs r
+        SET status = 'success',
+            finished_at = now(),
+            error = 'Recorded late: the process that ran this stopped before it could say so'
+      WHERE r.status = 'running'
+        AND r.claimed_at < now() - make_interval(secs => $1::int)
+        AND EXISTS (SELECT 1 FROM activity a WHERE a.automation_run_id = r.id)`,
+    [staleAfterSeconds],
+  );
+
+  const released = await connection.query(
+    `UPDATE automation_runs r
+        SET status = 'failed',
+            finished_at = now(),
+            error = 'Abandoned: the process that claimed this stopped, and it had applied nothing',
+            run_after = now()
+      WHERE r.status = 'running'
+        AND r.claimed_at < now() - make_interval(secs => $1::int)
+        AND NOT EXISTS (SELECT 1 FROM activity a WHERE a.automation_run_id = r.id)`,
+    [staleAfterSeconds],
+  );
+
+  return {
+    completed: completed.rowCount ?? 0,
+    releasedToRetry: released.rowCount ?? 0,
+  };
+}
+
+/**
  * One turn of the whole engine, for a workspace.
  *
  * Exported because it is what a loop calls and what a test calls, and those
@@ -596,6 +718,9 @@ export async function tickAutomations(
   connection: Connection = pool(),
 ): Promise<{ enqueued: number; executed: number; outcomes: RunOutcome[] }> {
   const { enqueued } = await scanForAutomations(workspaceId, connection);
+  // Before the claim, so a row a dead process left behind is either closed or
+  // made claimable in the same tick rather than the next one.
+  await reapStrandedRuns(connection);
   const claimed = await claimDueRuns(connection);
 
   const outcomes: RunOutcome[] = [];
@@ -629,6 +754,11 @@ export async function drainAutomations(
   for (const row of workspaces.rows) {
     enqueued += (await scanForAutomations(row.workspace_id, connection)).enqueued;
   }
+
+  // Once per tick rather than per workspace: a stranded row is a question about
+  // the queue, and the queue does not care whose work it is — the same argument
+  // the claim itself makes.
+  await reapStrandedRuns(connection);
 
   const claimed = await claimDueRuns(connection);
   for (const run of claimed) {

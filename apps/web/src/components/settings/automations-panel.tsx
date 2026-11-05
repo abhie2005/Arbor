@@ -18,6 +18,7 @@ import {
   RELATION_LABELS,
   describeDelay,
   describeRule,
+  mayRetry,
   relationInput,
 } from "@arbor/core";
 import { useRouter } from "next/navigation";
@@ -348,15 +349,38 @@ function RunBadge({ rule }: { rule: AutomationRow }) {
   if (!rule.lastRun) return <span className="settings-badge quiet">never run</span>;
 
   const run = rule.lastRun;
-  const label = RUN_LABELS[run.status] ?? run.status;
   const tone = run.status === "failed" ? "warn" : run.status === "success" ? "" : "quiet";
+
+  /**
+   * A failure that will be tried again is a different fact from one that will
+   * not, and the badge used to print both as "failed" with the attempt count
+   * hidden in a `title` (D-145). "failed, trying again" is the one somebody can
+   * wait out; "failed, gave up after 3" is the one that needs them.
+   *
+   * It reads `attempts` against the same `MAX_RUN_ATTEMPTS` the claim does
+   * rather than a number typed in here, so the sentence cannot drift from the
+   * behaviour it describes.
+   */
+  const label =
+    run.status === "failed"
+      ? mayRetry(run.attempts)
+        ? "failed, trying again"
+        : `failed, gave up after ${run.attempts}`
+      : (RUN_LABELS[run.status] ?? run.status);
 
   return (
     <span
       className={`settings-badge ${tone}`.trim()}
       title={run.error ?? (run.attempts > 1 ? `${run.attempts} attempts` : undefined) ?? undefined}
     >
-      {label} <Timestamp at={run.status === "pending" ? run.runAfter : run.startedAt} />
+      {label}{" "}
+      <Timestamp
+        at={
+          run.status === "pending" || (run.status === "failed" && mayRetry(run.attempts))
+            ? run.runAfter
+            : run.startedAt
+        }
+      />
     </span>
   );
 }

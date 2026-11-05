@@ -388,6 +388,48 @@ export const MAX_DELAY_SECONDS = 30 * 24 * 60 * 60;
  */
 export const MAX_DEPTH = 3;
 
+/**
+ * How many times a run may be attempted before it is left alone.
+ *
+ * Three, and the reasoning is what it is *not* for. A rule whose actions are
+ * wrong fails identically every time — a retry cannot fix an action the parser
+ * accepted and the executor refuses — so this exists for the failures that are
+ * about the *moment*: a deadlock with a concurrent write, a connection dropped
+ * mid-commit, a snapshot read while somebody was deleting the task. Those clear
+ * on their own; a bad rule does not. Three is enough for the first kind and few
+ * enough that the second kind stops being retried before anybody notices it was
+ * being retried at all.
+ */
+export const MAX_RUN_ATTEMPTS = 3;
+
+/**
+ * When to try a failed run again, or `null` to stop trying.
+ *
+ * **`attempts` is the number already made**, which the claim increments before
+ * the attempt happens, so the first failure arrives here as 1. Backoff is 30s
+ * then 120s and then nothing — geometric rather than constant because the
+ * failures worth retrying are contention, and retrying contention immediately
+ * is how one failure becomes a queue of them.
+ *
+ * In core rather than as an interval inside the claim's SQL because it is the
+ * part somebody will want to argue about, and an argument belongs where it can
+ * be checked without a database — the D-139 pattern, where the guards are the
+ * decision so they live somewhere testable.
+ */
+export function retryAfterSeconds(
+  attempts: number,
+  maxAttempts: number = MAX_RUN_ATTEMPTS,
+): number | null {
+  if (attempts < 1) return null;
+  if (attempts >= maxAttempts) return null;
+  return 30 * 4 ** (attempts - 1);
+}
+
+/** Whether a failed run has an attempt left in it. */
+export function mayRetry(attempts: number, maxAttempts: number = MAX_RUN_ATTEMPTS): boolean {
+  return retryAfterSeconds(attempts, maxAttempts) !== null;
+}
+
 export type RunVerdict = "run" | "skipped_self" | "refused_depth" | "refused_quota";
 
 /**

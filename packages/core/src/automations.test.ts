@@ -11,6 +11,7 @@ import {
   DELAY_CHOICES,
   MAX_DELAY_SECONDS,
   MAX_DEPTH,
+  MAX_RUN_ATTEMPTS,
   describeDelay,
   describeRule,
   relationInput,
@@ -18,7 +19,9 @@ import {
   depthOf,
   idempotencyKeyFor,
   matches,
+  mayRetry,
   parseAutomationRule,
+  retryAfterSeconds,
   runVerdict,
   verbFor,
 } from "./automations";
@@ -279,6 +282,52 @@ describe("the guards", () => {
   it("counts depth from the run that caused it", () => {
     expect(depthOf(event())).toBe(0);
     expect(depthOf(event({ causedBy: { automationId: "a2", depth: 0 } }))).toBe(1);
+  });
+});
+
+describe("retrying a run that failed", () => {
+  // `attempts` is the count already made, because the claim increments before
+  // handing the run over. So a first failure arrives as 1, and the off-by-one
+  // here is the whole reason this is a named function rather than an interval
+  // in the claim's SQL.
+  it("gives a first failure another go, after a pause", () => {
+    expect(retryAfterSeconds(1)).toBe(30);
+    expect(mayRetry(1)).toBe(true);
+  });
+
+  it("waits longer the second time, because contention retried at once is worse", () => {
+    const first = retryAfterSeconds(1)!;
+    const second = retryAfterSeconds(2)!;
+    expect(second).toBeGreaterThan(first);
+    expect(second).toBe(120);
+  });
+
+  // The guard that matters: a rule whose actions are simply wrong fails the
+  // same way every time, and retrying it forever is how a queue fills up with
+  // one broken rule.
+  it("stops at the attempt limit", () => {
+    expect(retryAfterSeconds(MAX_RUN_ATTEMPTS)).toBeNull();
+    expect(mayRetry(MAX_RUN_ATTEMPTS)).toBe(false);
+    expect(mayRetry(MAX_RUN_ATTEMPTS + 1)).toBe(false);
+  });
+
+  it("has an attempt left at every count below the limit, and none at or above it", () => {
+    for (let attempts = 1; attempts < MAX_RUN_ATTEMPTS; attempts += 1) {
+      expect(mayRetry(attempts)).toBe(true);
+    }
+    expect(mayRetry(MAX_RUN_ATTEMPTS)).toBe(false);
+  });
+
+  // Zero means the claim never ran, so there is no attempt to retry — a
+  // different thing from having run out of them, and both answer null.
+  it("refuses to schedule a retry for a run that was never attempted", () => {
+    expect(retryAfterSeconds(0)).toBeNull();
+    expect(retryAfterSeconds(-1)).toBeNull();
+  });
+
+  it("takes the limit as an argument, so a caller can be stricter", () => {
+    expect(mayRetry(1, 1)).toBe(false);
+    expect(mayRetry(1, 2)).toBe(true);
   });
 });
 
