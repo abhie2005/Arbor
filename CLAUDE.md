@@ -210,6 +210,8 @@ two applies, because the registry must exist before an image can be pushed.
 | An operation off the wire, validated (D-134) | `parseOperations` in `packages/core/src/mutations.ts` |
 | Bearer auth for the API, and its one refusal shape | `apps/web/src/server/api-auth.ts` |
 | The Chrome gate: four identities, two zones, one absence (D-144) | `apps/web/scripts/check-browser.mts` |
+| Retry policy, and the attempt limit's reasoning (pure, D-145) | `retryAfterSeconds` in `packages/core/src/automations.ts` |
+| Settling a run a dead process abandoned (D-145) | `reapStrandedRuns` in `packages/db/src/automations.ts` |
 
 ## Conventions
 
@@ -408,6 +410,18 @@ two applies, because the registry must exist before an image can be pushed.
   migration, a batch being one nudge, a rollup agreeing with a list — because
   the other process is writing tasks underneath. The failures look like real
   regressions and move around between runs. One at a time.
+  **And `check:search` needs a `db:seed` after `db:smoke`**, which is a
+  different problem from the one above: not concurrency but what the smoke run
+  *leaves behind*. It rewrites grants and containers as fixtures, and
+  `check:search` asserts on the seeded workspace — so four of its eleven checks
+  fail on the docs half, reporting "the page containing the phrase was not
+  rendered" and accusing permission scoping. `npm run db:seed && npm run
+  check:search` is green on the same code. Suspect the order before the change.
+- **The drain writes while you are checking it.** A dev server runs the
+  automation loop (D-125), so a check about `automation_runs` may find the work
+  already done by another process. `db:smoke` asserts outcomes rather than
+  counts for this reason (D-145); if a run of it has to be exact, stop the dev
+  container first.
 - **A dev-server 503 on `/api/live` or an `?_rsc=` request** is Next compiling,
   not a bug in the stream. It resolves on the next attempt; check twice before
   chasing it.

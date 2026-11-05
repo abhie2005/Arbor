@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-11-04 (the browser pass is a gate). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-11-05 (a failed run is retried). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **Phases 1–10 are done, and the decision that followed them is made.** The
 browser pass is a gate — `npm run check:browser`, thirty checks driving four
@@ -318,7 +318,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 622 unit tests, 345 live-Postgres checks, 208 action checks, 30
+**Verified:** 628 unit tests, 355 live-Postgres checks, 208 action checks, 30
 API checks, 11 search checks, **30 browser checks**, four packages typechecking
 clean, and the interactions above driven in Chrome — most recently `[[`
 resolving to a page and then to a task inside one sentence, the two edges
@@ -372,19 +372,29 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 **Phase 10 is closed, nothing is half-built, and the decision that followed it
 is made.** Every numbered item below is struck through, both bug lists are
-empty, and the gates are green: 622 unit tests, 345 live-Postgres checks, 208
+empty, and the gates are green: 628 unit tests, 355 live-Postgres checks, 208
 action checks, 30 API checks, 11 search checks, 30 browser checks, and four
 packages typechecking.
 
 **The third candidate below is done** (D-144). Two remain, and they are
 genuinely a choice rather than an order:
 
-1. **The things the roadmap never promised but the gaps list keeps naming** —
-   a rule that fails is never retried, quota is counted and barely surfaced,
-   the filter bar still shows a text box for a container filter, derived field
-   types are declared and compute nothing. Each is small and each has been
-   deferred at least twice, which is usually a sign the list is the wrong
-   shape.
+1. **The things the roadmap never promised but the gaps list keeps naming.**
+   **Half of this is now done and the list was indeed the wrong shape** (D-145):
+   a failed run is retried and an abandoned one is settled by what it left
+   behind, and "quota is counted and never surfaced" turned out to have been
+   built in D-129 and never struck off. **Audit the rest before building any of
+   it** — that is the lesson, and it cost nothing to learn. What is left:
+
+   - **the filter bar still shows a text box for a List, Space or Folder
+     filter.** `optionsFor` understands `container`, but only a screen that has
+     filtered containers by permission may supply them; fixing it properly means
+     `loadFilterOptions` taking a viewer, which is five callers.
+   - **derived field types compute nothing.** `formula`, `rollup` and
+     `automatic_progress` are declared and filterable. This is the one that is
+     not small, and the open question is still whether it needs a worker.
+   - **no relative dates in actions**, and the two menu gaps (`parentTaskId`,
+     a duration control) that D-129 deferred on purpose.
 2. **Deploying it again.** The Terraform path has been applied against a real
    account once and destroyed; nothing has run against it since Phase 10 added
    three ways in. A second apply is the only thing that tells you whether the
@@ -635,13 +645,28 @@ wrote the comment that was typed into it.
   containers by permission may supply them — the automations screen does, the
   view pages do not. Fixing it properly means `loadFilterOptions` taking a
   viewer, which is five callers.
-- **A run that fails is not retried.** `attempts` is incremented by the claim
-  and nothing reads it: a `failed` run stays failed. Deliberate for now —
-  retrying a half-applied batch needs a rule about which actions already
-  happened, and operations are applied in one transaction so today it is all or
-  nothing.
-- **Quota is counted and never surfaced.** `MONTHLY_RUN_QUOTA` is 1000 and a
-  workspace that reaches it gets `refused_quota` rows and no warning anywhere.
+- ~~**A run that fails is not retried.**~~ **Done** (2026-11-05, D-145), and
+  **the reason this entry gave for deferring it was self-refuting**: "retrying a
+  half-applied batch needs a rule about which actions already happened, and
+  operations are applied in one transaction so today it is all or nothing" —
+  that last clause says there is no half-applied batch. `executeRun` writes task
+  data exactly once, through `applyOperations`, so a run that reached its
+  `catch` applied nothing and is safe to try again. Three attempts, 30s then
+  120s, the policy pure and in core.
+
+  **The real hazard was the opposite one and this list never named it**: not a
+  partial apply but a *complete* one that was never recorded, because the
+  outcome is written in a second statement. A process dying in between left
+  `status = 'running'` forever — the rule fired, the task changed, and the
+  screen said it never happened. `reapStrandedRuns` settles those by evidence:
+  an `activity` row carrying `automation_run_id` means the batch committed, so
+  the run is credited late rather than repeated; no row means nothing happened,
+  so it is released to the retry path.
+- ~~**Quota is counted and never surfaced.**~~ **This was already false.**
+  D-129 built the readout — the automations screen prints `used of quota` with a
+  warn state at 80% and the refused count beside it — and this list was never
+  updated. Found by reading the screen before building anything, which is the
+  argument for auditing a list that has deferred the same items twice.
 - **No relative dates in actions.** "Due in 3 days" is the obvious next action
   kind; `to` is currently a literal value.
 - ~~**Forms and the public API.**~~ Both done — the API in D-133 to D-135, and

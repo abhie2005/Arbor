@@ -57,8 +57,8 @@ password and an API token scoped to the demo space.
 Verify the stack end to end:
 
 ```bash
-npm test               # 622 unit tests, no database needed
-npm run db:smoke       # 345 checks against real Postgres: compiled queries,
+npm test               # 628 unit tests, no database needed
+npm run db:smoke       # 355 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, the activity log, the
                        # automation engine, and API tokens end to end
 npm run check:actions  # 208 checks that POST what a button click posts, then
