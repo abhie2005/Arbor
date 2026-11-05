@@ -5826,3 +5826,135 @@ by a caller with no session, refused, with no task written.
 *In one sentence:* the interesting half of this feature is everything the page
 deliberately does not do — no shell, no workspace resolution, no session, and
 no explanation of why it is closed.
+
+### D-144
+**The browser pass becomes a gate, and the browser is the one already installed** · 2026-11-04 · active
+
+`docs/STATUS.md` named three candidates for what follows Phase 10 and said this
+one had the best evidence behind it. The evidence is a count: **browser passes
+have found six bugs across two sessions**, every one of them invisible to the
+622 unit tests, 345 database checks, 208 action checks and 30 API checks that
+were green at the time — and the pass itself was a script in `/tmp` that died
+with the session. What survived was the write-up in `docs/HISTORY.md`, which
+tells you what was found and does not let you find it again.
+
+So `npm run check:browser` is that pass, kept. Thirty checks in five sections.
+
+**Three shapes of defect live here and nowhere else**, which is the argument for
+a sixth gate rather than more of the five that exist:
+
+1. **A hydration mismatch is a console message and nothing else.** The server's
+   HTML is right, the hydrated DOM is right, and React threw the tree away in
+   between (D-121, D-132). There is no HTTP response that is wrong.
+2. **Every other gate names the workspace it means.** `db:smoke` passes an id,
+   `check:api` holds a token that carries one, `check:actions` looks one up by
+   slug the way the app used to. The only reader that has to *infer* which
+   workspace it is in is a screen — which is how `requireWorkspace()` stayed
+   hard-coded to `northwind` for five phases (D-137).
+3. **Nothing asked what a screen should *not* say.** The phantom `Backlog` row
+   was wrong by being an extra, and every assertion in the repo — including the
+   ones written that same hour about that sidebar — asks whether the right
+   things are present.
+
+**It drives four identities in one run**, which is the property that matters and
+the one no other gate has. All three of the D-137/D-138/D-139 bugs lived in the
+*difference between two viewers*: Quinn in Meridian, Avery as the control still
+in Northwind, Sam who is in both and switches, and a fresh browser with no
+cookie at all signing in with a password. A fix for Quinn that breaks Avery
+passes a single-identity suite perfectly.
+
+**The dependency is `playwright-core`, and the browser is the system Chrome.**
+This is the decision the file is really about, because "Playwright is
+deliberately not a dependency of this repo" was the standing position and this
+overturns it.
+
+- **Rejected: keeping it in a scratch directory.** That is the status quo, and
+  the status quo is not a gate. A check that cannot be run by the next person
+  is a paragraph.
+- **Rejected: `playwright`.** The original reason for keeping it out — that
+  installing it downloads a browser — **stopped being true at 1.39**, and that
+  is worth recording because it was the whole argument: 1.64.1 publishes with no
+  `scripts` and no `hasInstallScript`, which was checked against the registry
+  rather than assumed. What it still carries is the downloader and the
+  expectation of an `npx playwright install` step, which puts ~130MB behind
+  cloning this repo for a gate most contributors will not run.
+- **Rejected: a soft import that skips when the package is absent.** A gate that
+  reports green because its dependency is missing is worse than no gate.
+- **Taken: `playwright-core` plus `channel: "chrome"`.** No install script, no
+  browsers in the tree, so `npm ci` is byte-for-byte unchanged on a laptop and
+  in the Dockerfile's `deps` stage alike — which matters because that stage's
+  `node_modules` is copied whole into the migrator image. And the thing being
+  driven is the browser the product is actually used in. `ARBOR_CHROME` points
+  it at any other Chromium-family binary; with no browser at all it fails
+  loudly, naming the variable.
+
+The cost accepted is ~13.6MB of `node_modules` and a gate whose browser the repo
+does not pin, so a Chrome upgrade could in principle move a result. That is the
+right trade for a gate about what a browser does.
+
+**The fixture is pinned, because the seed's is not.** ENG-421's due date is
+`now + 72h` (D-130), which inherits the hour the seed ran at — so whether UTC
+and Pacific disagree about its day depends on when somebody last ran `db:seed`,
+and a zone assertion that holds every afternoon and fails every morning is worse
+than no assertion. The gate writes 05:30 UTC three days out instead: 21:30 or
+22:30 the *previous* day in Pacific, in either half of the year. It stays an
+instant ahead of the clock, which is the seed's own meaning for that row, and it
+is taken from `SELECT now()` because Postgres's clock is not this machine's.
+
+**The assertions are on the marker, not on a difference.** `DueDate` renders an
+instant pinned to UTC and *saying* `UTC` before hydration, and the viewer's own
+day after it. So the gate asserts the server sent `Sat 7 UTC` and the hydrated
+cell reads `Fri 6` — and a calendar-day row is the control that must *not* move,
+without which a renderer that formatted everything in the viewer's zone would
+pass both halves.
+
+**Three things the gate taught about itself, each found by running it:**
+
+- **A cold `next dev` 404s a chunk.** The first red run had nine zone
+  assertions green and `nothing in the console` failing on
+  `Failed to load resource: 404` — which was Next compiling `/board`, the
+  `?_rsc=` trap `CLAUDE.md` already records. So `warmUp()` requests every route
+  once and throws away what it said; a 404 on a warm server is a real one.
+- **A failing check must not end the report.** Reverting D-137 to prove the gate
+  catches it produced three correct failures and then an exception, because a
+  page reading "No demo workspace yet" has no `aside.sidebar` to read — which
+  aborted the process and hid the twenty-seven checks after it. A gate is most
+  useful on the run where something is broken, which is precisely the run where
+  a locator finds nothing. Sections are wrapped; a missing element is the empty
+  string and fails its own check by name.
+- **A wait that expires is sometimes the answer, not an error.** Reverting
+  D-138 made the dev-switcher check fail — correctly, but as
+  `page.waitForFunction: Timeout 30000ms exceeded`, which describes the gate
+  rather than the bug. Both switcher waits are `.catch(() => {})` now and the
+  assertion after them speaks instead: *the switcher changed its own value and
+  nothing else — that is the D-138 shape exactly*. A gate's failure message is
+  most of its value, and "not moving" is precisely what these two checks exist
+  to notice.
+- **It must fail rather than hang.** With no `connectionTimeoutMillis`, a
+  stalled connection to Postgres is an infinite wait with **no output at all**,
+  because the fixture write happens before the first `console.log` — so a
+  database problem presents as a browser gate hanging in the browser. Connection
+  and lock timeouts, and a refusal that names Colima's port forward, which is
+  what it actually was.
+
+**What it deliberately does not cover.** It is not a second `check:actions`:
+that gate owns the action seam and needs a dev build for `actionIds()`, while
+this one clicks what a person clicks and therefore runs against a dev server,
+the container image or a deployed URL like `check:search` and `check:api` do.
+The dev user switcher only renders when `devAuthEnabled()`, so against a
+production build that one check prints `skip` with the reason rather than
+passing — a gate that silently drops a check when the environment changes
+reports green for the wrong reason.
+
+**Verified by reverting each fix it claims to cover**, which is the repo's rule:
+
+| Reverted | What the gate did |
+|---|---|
+| `DueDate`'s explicit zone (D-132) | 7 failures, including `pageerror Hydration failed because the server rendered text didn't match the client` — D-121's signature, in the only place it reports itself |
+| `currentWorkspace`'s membership join (D-137) | Quinn's three checks fail on "No demo workspace yet", the original bug's exact shape |
+| the phantom `Backlog` row | the one absence check fails, and nothing else does |
+| `switchUser`'s `signOut` (D-138) | the dev switcher check fails: the control changes its own value and the workspace does not move |
+
+*In one sentence:* the pass that found six bugs is now a command rather than a
+memory, and the only genuinely new decision in it is that a browser gate may
+depend on the browser you already have instead of downloading one.
