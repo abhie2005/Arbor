@@ -1,10 +1,18 @@
 # Status — resume here
 
-Last updated 2026-11-03 (Phase 10 closed). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-11-04 (the browser pass is a gate). Repo: https://github.com/abhie2005/Arbor (`main`).
 
-**Phases 1–10 are done.** Phase 10's roadmap line was "automations, forms,
-public API" and all three exist, each with the screens that make it reachable
-by a person rather than by a smoke test:
+**Phases 1–10 are done, and the decision that followed them is made.** The
+browser pass is a gate — `npm run check:browser`, thirty checks driving four
+identities against a server in a different zone (D-144). It had found six bugs
+across two sessions and kept dying with the session; it is a command now.
+**Read that entry before touching it**, because the dependency choice is the
+interesting part: `playwright-core` and the Chrome already on the machine, so
+`npm ci` never downloads a browser.
+
+Phase 10's roadmap line was "automations, forms, public API" and all three
+exist, each with the screens that make it reachable by a person rather than by
+a smoke test:
 
 - **Automations** — a rule is written, armed, renamed, edited, disabled and
   deleted from `/settings/automations`, with the filter bar's own menus for its
@@ -311,10 +319,19 @@ out now, which is the staleness the calendar dates already had.
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
 **Verified:** 622 unit tests, 345 live-Postgres checks, 208 action checks, 30
-API checks, 11 search checks, four packages typechecking clean, and the interactions above
-driven in Chrome — most recently `[[` resolving to a page and then to a task
-inside one sentence, the two edges landing in `doc_links`, and the reverse
-showing as "Linked from" on the page and "Referenced by" on the task.
+API checks, 11 search checks, **30 browser checks**, four packages typechecking
+clean, and the interactions above driven in Chrome — most recently `[[`
+resolving to a page and then to a task inside one sentence, the two edges
+landing in `doc_links`, and the reverse showing as "Linked from" on the page and
+"Referenced by" on the task.
+
+The browser checks are the newest and the only ones that drive **more than one
+identity in a run** (D-144): Quinn in Meridian, Avery as the control in
+Northwind, Sam switching between the two, and a cookie-less browser signing in
+with a password. Each of the four fixes they cover was reverted and watched to
+fail — the zone one reports as `Hydration failed because the server rendered
+text didn't match the client`, which is the message D-121 was always going to
+produce and no other gate can hear.
 
 **`check:actions` finished on this machine for the first time** (2026-10-21):
 all 162 checks, in the dev container on Docker Desktop rather than on the host
@@ -353,13 +370,14 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 ## Where to pick up
 
-**Phase 10 is closed, and nothing is half-built.** Every numbered item below is
-struck through, both bug lists are empty, and the gates are green: 622 unit
-tests, 345 live-Postgres checks, 208 action checks, 30 API checks, 11 search
-checks, four packages typechecking, and the screens driven in a browser.
+**Phase 10 is closed, nothing is half-built, and the decision that followed it
+is made.** Every numbered item below is struck through, both bug lists are
+empty, and the gates are green: 622 unit tests, 345 live-Postgres checks, 208
+action checks, 30 API checks, 11 search checks, 30 browser checks, and four
+packages typechecking.
 
-**What is actually next is a decision, not a task**, and there are three
-candidates:
+**The third candidate below is done** (D-144). Two remain, and they are
+genuinely a choice rather than an order:
 
 1. **The things the roadmap never promised but the gaps list keeps naming** —
    a rule that fails is never retried, quota is counted and barely surfaced,
@@ -371,11 +389,19 @@ candidates:
    account once and destroyed; nothing has run against it since Phase 10 added
    three ways in. A second apply is the only thing that tells you whether the
    app still reads three environment variables.
-3. **Making the browser pass a real gate.** It has now found six bugs across
-   two sessions — the phantom sidebar row, the null status on a submission —
-   and it is still a script in a scratch directory that dies with the session.
-   CLAUDE.md records this as an open decision; it is the one with the best
-   evidence behind it.
+3. ~~**Making the browser pass a real gate.**~~ **Done** (2026-11-04, D-144).
+   `npm run check:browser` — thirty checks, four identities, a Pacific browser
+   against a UTC server, and the one assertion in the repo that asks what a
+   screen should *not* say. The dependency is `playwright-core` driving the
+   Chrome already installed, which is what made it affordable: `npm ci` is
+   unchanged, in the Dockerfile's `deps` stage as much as on a laptop. All four
+   fixes it covers were reverted and watched to fail, and two of the three
+   things it taught about itself came out of doing that — a failing check used
+   to abort the report, and a cold `next dev` 404s a chunk.
+
+   **What it does not do is replace looking at a new screen.** It re-drives the
+   old ones so a regression cannot pass quietly; the first look at anything new
+   is still a person's.
 
 The history below is the state before that, and still accurate.
 

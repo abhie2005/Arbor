@@ -22,6 +22,7 @@ npm test                                  # unit, no database
 npm run db:seed && npm run db:smoke       # against real Postgres
 PORT=3100 npm run check:actions           # POSTs what a click posts; needs the dev server
 npm run check:api -- 3100                 # the public API over HTTP; any server will do
+npm run check:browser -- 3100             # drives Chrome as four people; any server will do
 npm run typecheck
 ```
 
@@ -208,6 +209,7 @@ two applies, because the registry must exist before an image can be pushed.
 | The public API's write half | `apps/web/src/app/api/v1/operations/route.ts` |
 | An operation off the wire, validated (D-134) | `parseOperations` in `packages/core/src/mutations.ts` |
 | Bearer auth for the API, and its one refusal shape | `apps/web/src/server/api-auth.ts` |
+| The Chrome gate: four identities, two zones, one absence (D-144) | `apps/web/scripts/check-browser.mts` |
 
 ## Conventions
 
@@ -216,30 +218,58 @@ two applies, because the registry must exist before an image can be pushed.
   to be explained out loud.
 - **Commit and push each verified chunk**, on `main`. Do not batch.
 - **Gates before any commit**: `npm test`, `db:smoke`, `check:actions`,
-  `check:search`, `check:api`, `typecheck` — plus driving it in Chrome for
-  anything with a UI.
-  `check:search` is the one that runs against the **container image** as happily
-  as a dev server (D-115), which is what to reach for when `next dev` will not
-  start on this machine.
+  `check:search`, `check:api`, `check:browser`, `typecheck`.
+  **`check:browser` is the Chrome pass, and it is a command now rather than
+  something to remember** (D-144). Thirty checks driving four identities. Three
+  things are visible to it and to nothing else: a hydration mismatch, which is a
+  console message and no part of any response; which workspace a *screen*
+  infers, where every other gate is told; and a row a screen shows that should
+  not be there at all. It does not replace *looking* at a new screen — it
+  replaces re-driving the old ones.
+  `check:search`, `check:api` and `check:browser` all run against the
+  **container image** as happily as a dev server (D-115), which is what to reach
+  for when `next dev` will not start on this machine. `check:actions` is the one
+  that cannot — see below.
 - A new check should **fail if the fix is reverted**. Verify that it does.
 - Infrastructure stays on AWS/GCP or self-hosted Docker. No Vercel, no hosted
   database vendors, no auth SaaS.
 
 ## Environment gotchas that cost real time
 
-- **A browser pass without the extension.** When Claude's Chrome extension is
-  not connected (`list_connected_browsers` returns `[]`), drive a headless
-  Chromium instead — it catches the thing that matters most here, which is
-  console output, because a hydration mismatch is a warning and nothing else.
-  Install it in a **scratch directory**, never into this repo: `npm i playwright
-  && npx playwright install chromium` in `/tmp/...`, then point scripts at
-  `http://localhost:3300`. The pass of 2026-10-27 is written up in
-  `docs/HISTORY.md`; it verified D-132 and D-135 and found three bugs. Set
-  `timezoneId` on the context (`America/Los_Angeles` against a UTC server) or
-  the zone half of any date assertion proves nothing. Whether this becomes a
-  real gate in `package.json` is an open decision, not a thing to assume.
+- **A browser pass is `npm run check:browser`** (D-144). It no longer needs
+  Claude's Chrome extension, a scratch directory or a Playwright install: the
+  dependency is `playwright-core` and the browser is **the Google Chrome already
+  on this machine**, via `channel: "chrome"`. `ARBOR_CHROME=/path/to/binary`
+  overrides it. Do not install `playwright` into this repo to "fix" a browser
+  problem — that reintroduces the 130MB download the core package exists to
+  avoid.
+  **The server must not be in the browser's zone or half of it proves nothing.**
+  The container image is alpine and therefore UTC, which is what you want; a
+  host dev server needs `TZ=UTC` in front of it. The browser is pinned to
+  `America/Los_Angeles` inside the script.
+  It writes one fixture — ENG-421's due date, to an instant whose UTC and
+  Pacific days always differ — because the seed's own timed row inherits the
+  hour `db:seed` ran at.
+  **`warmUp()` is load-bearing, not politeness**: a chunk requested while a
+  route is still compiling 404s, and from inside a browser that reads as a
+  missing asset rather than as a server still building. So every route is
+  requested once and whatever it said is discarded, and the console assertions
+  come after. Do not move them above it. Against a cold container the run takes
+  a couple of minutes, nearly all of it that first pass.
 - **The first click after a navigation is swallowed** while the dev server
   hydrates. It looks exactly like a broken handler. Click twice, or wait.
+- **A read of this repo can fail with `ETIMEDOUT`, and it is not the network.**
+  `~/Desktop` is iCloud-synced, so a file that has been evicted is fetched on
+  read — and under load that fetch times out. It surfaces as nonsense:
+  `readFileSync` of `node_modules/tsx/dist/preflight.cjs` failing with
+  `errno: -60, syscall: 'read'`, `git checkout` reporting
+  `read error while indexing packages/db/src/client.ts`, or an
+  `ERR_INVALID_PACKAGE_CONFIG` for a `package.json` that is perfectly valid.
+  Nothing is corrupt and there is nothing to repair — the same reads succeed
+  minutes later. **Check `uptime` before believing any of it**: this was found
+  at load average 26 with another application holding a core at 95%, and
+  everything above cleared on its own once the machine was idle. A gate that
+  appears to hang is this, far more often than it is the gate.
 - **Synthetic drags do not trigger HTML5 drag-and-drop.** `left_click_drag`
   fails on the board *and* the calendar — that is the tool, not the app. Verify
   drag by dispatching real `DragEvent`s and checking Postgres.

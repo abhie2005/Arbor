@@ -57,11 +57,11 @@ password and an API token scoped to the demo space.
 Verify the stack end to end:
 
 ```bash
-npm test               # 603 unit tests, no database needed
-npm run db:smoke       # 300 checks against real Postgres: compiled queries,
+npm test               # 622 unit tests, no database needed
+npm run db:smoke       # 345 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, the activity log, the
                        # automation engine, and API tokens end to end
-npm run check:actions  # 173 checks that POST what a button click posts, then
+npm run check:actions  # 208 checks that POST what a button click posts, then
                        # assert against Postgres — needs a dev server running
 npm run check:api      # 30 checks over HTTP against /api/v1 — reads, writes,
                        # every way a token can be refused, and posting an
@@ -69,6 +69,8 @@ npm run check:api      # 30 checks over HTTP against /api/v1 — reads, writes,
 npm run check:search   # 11 GETs against /search, asserting what the screen
                        # renders — runs against a dev server, the container
                        # image, or a deployed URL
+npm run check:browser  # 30 checks in a real Chrome, as four different people
+                       # against a server in another time zone
 ```
 
 They run at different depths on purpose. Unit tests cover logic with no
@@ -79,6 +81,15 @@ longest have lived; `check:api` and `check:search` cover the two surfaces with
 no server action at all, so none of `check:actions`' machinery applies to
 either (D-115) — and unlike the others those two run against a deployed
 environment, because all they need is a URL and the seeded workspace.
+
+`check:browser` is the only one that opens the app (D-144). It drives the
+Chrome already installed rather than downloading one, and it exists for the
+three things a response body cannot show: a hydration mismatch, which is a
+console message and nothing else; which workspace a *screen* infers, where
+every other gate is told; and whether a screen says something it should not —
+the one assertion here about an absence rather than a presence. It drives four
+identities in a single run, because the bugs it was built from all lived in the
+difference between two viewers.
 
 ---
 
