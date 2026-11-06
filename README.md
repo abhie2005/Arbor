@@ -69,7 +69,7 @@ npm run check:api      # 30 checks over HTTP against /api/v1 — reads, writes,
 npm run check:search   # 11 GETs against /search, asserting what the screen
                        # renders — runs against a dev server, the container
                        # image, or a deployed URL
-npm run check:browser  # 30 checks in a real Chrome, as four different people
+npm run check:browser  # 39 checks in a real Chrome, as four different people
                        # against a server in another time zone
 ```
 

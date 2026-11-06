@@ -211,6 +211,7 @@ two applies, because the registry must exist before an image can be pushed.
 | Bearer auth for the API, and its one refusal shape | `apps/web/src/server/api-auth.ts` |
 | The Chrome gate: four identities, two zones, one absence (D-144) | `apps/web/scripts/check-browser.mts` |
 | Retry policy, and the attempt limit's reasoning (pure, D-145) | `retryAfterSeconds` in `packages/core/src/automations.ts` |
+| Filter menus, and the only permission-scoped set in them (D-146) | `loadFilterOptions` in `apps/web/src/server/views.ts` |
 | Settling a run a dead process abandoned (D-145) | `reapStrandedRuns` in `packages/db/src/automations.ts` |
 
 ## Conventions
@@ -272,6 +273,22 @@ two applies, because the registry must exist before an image can be pushed.
   at load average 26 with another application holding a core at 95%, and
   everything above cleared on its own once the machine was idle. A gate that
   appears to hang is this, far more often than it is the gate.
+  **The workaround is to stop reading the repo from the host.** The dev image
+  holds a *copy* of the source and `node_modules` on Docker Desktop's own
+  filesystem, so a throwaway container runs a gate at full speed while iCloud
+  sorts itself out — and because it is not the dev server, no automation drain
+  writes underneath it:
+
+  ```bash
+  DOCKER_HOST="" docker run --rm -w /repo/packages/db \
+    -e DATABASE_URL="postgres://arbor:arbor@host.docker.internal:5432/arbor" \
+    arbor-dev:local node /repo/node_modules/.bin/tsx src/smoke.ts
+  ```
+
+  A host `db:smoke` that had printed nothing for ten minutes, with **no
+  connection in `pg_stat_activity` at all** — so it was still loading modules,
+  not waiting on a lock — finished all 355 checks this way. Rebuild the image
+  first if the source has changed since.
 - **Synthetic drags do not trigger HTML5 drag-and-drop.** `left_click_drag`
   fails on the board *and* the calendar — that is the tool, not the app. Verify
   drag by dispatching real `DragEvent`s and checking Postgres.

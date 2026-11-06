@@ -1,6 +1,6 @@
 # Status — resume here
 
-Last updated 2026-11-05 (a failed run is retried). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-11-06 (a container filter is a menu). Repo: https://github.com/abhie2005/Arbor (`main`).
 
 **Phases 1–10 are done, and the decision that followed them is made.** The
 browser pass is a gate — `npm run check:browser`, thirty checks driving four
@@ -319,7 +319,7 @@ out now, which is the staleness the calendar dates already had.
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
 **Verified:** 628 unit tests, 355 live-Postgres checks, 208 action checks, 30
-API checks, 11 search checks, **30 browser checks**, four packages typechecking
+API checks, 11 search checks, **39 browser checks**, four packages typechecking
 clean, and the interactions above driven in Chrome — most recently `[[`
 resolving to a page and then to a task inside one sentence, the two edges
 landing in `doc_links`, and the reverse showing as "Linked from" on the page and
@@ -373,7 +373,7 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 **Phase 10 is closed, nothing is half-built, and the decision that followed it
 is made.** Every numbered item below is struck through, both bug lists are
 empty, and the gates are green: 628 unit tests, 355 live-Postgres checks, 208
-action checks, 30 API checks, 11 search checks, 30 browser checks, and four
+action checks, 30 API checks, 11 search checks, 39 browser checks, and four
 packages typechecking.
 
 **The third candidate below is done** (D-144). Two remain, and they are
@@ -386,10 +386,14 @@ genuinely a choice rather than an order:
    built in D-129 and never struck off. **Audit the rest before building any of
    it** — that is the lesson, and it cost nothing to learn. What is left:
 
-   - **the filter bar still shows a text box for a List, Space or Folder
-     filter.** `optionsFor` understands `container`, but only a screen that has
-     filtered containers by permission may supply them; fixing it properly means
-     `loadFilterOptions` taking a viewer, which is five callers.
+   - ~~**the filter bar still shows a text box for a List, Space or Folder
+     filter.**~~ **Done** (2026-11-06, D-146). It was six callers, not five,
+     and a viewer alone would not have fixed it: `list`, `space` and `folder`
+     all declared `input: "container"`, so one flat set would have offered a
+     space to a filter that only matches lists. The input is split, the set is
+     scoped to `view` (a filter is a read, unlike the four settings screens
+     that ask for `manage`), and the automations screen keeps its own
+     `manage`-scoped list for its "move to list" action.
    - **derived field types compute nothing.** `formula`, `rollup` and
      `automatic_progress` are declared and filterable. This is the one that is
      not small, and the open question is still whether it needs a worker.
