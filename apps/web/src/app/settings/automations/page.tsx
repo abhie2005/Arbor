@@ -83,7 +83,7 @@ export default async function AutomationsPage({
 
   const [summaries, options, quota] = await Promise.all([
     selected ? loadAutomationsForContainers([selected.id]) : Promise.resolve([]),
-    loadFilterOptions(workspace.id),
+    loadFilterOptions(workspace.id, viewer.id),
     automationQuota(workspace.id),
   ]);
 
@@ -139,13 +139,24 @@ export default async function AutomationsPage({
             users: options.users,
             tags: options.tags,
             taskTypes: options.taskTypes,
-            // The lists this viewer manages, for a "move to list" action. Not
-            // every container in the workspace: that read is the one D-123 was
-            // about, and a rule can only move a task somewhere its author may
-            // act anyway.
-            containers: containers
-              .filter((node) => node.kind === "list")
-              .map((node) => ({ id: node.id, name: node.name })),
+            // The lists this viewer **manages**, for a "move to list" action.
+            // Not every container in the workspace: that read is the one D-123
+            // was about, and a rule can only move a task somewhere its author
+            // may act anyway.
+            //
+            // **Deliberately not `options.containers`**, which `loadFilterOptions`
+            // now supplies scoped to `view` (D-146). Spreading that here would
+            // quietly widen this action's target menu from manage to view, which
+            // is a permission regression wearing the clothes of a refactor —
+            // `values` is built key by key precisely so that cannot happen.
+            // Only `list` is named, so a condition on a space or folder falls
+            // back to the text box rather than to a menu this screen has not
+            // scoped.
+            containers: {
+              list: containers
+                .filter((node) => node.kind === "list")
+                .map((node) => ({ id: node.id, name: node.name })),
+            },
           }}
           quota={quota}
         />

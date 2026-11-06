@@ -24,10 +24,12 @@ import {
 import {
   executeCompiled,
   listViews,
+  loadContainerTree,
   loadFieldCatalog,
   loadFieldNames,
   peopleIn,
   pool,
+  reachableContainers,
   resolveStatusSetFor,
 } from "@arbor/db";
 
@@ -433,6 +435,21 @@ export interface FilterOptions {
   users: { id: string; name: string }[];
   tags: { id: string; name: string }[];
   taskTypes: { id: string; name: string }[];
+  /**
+   * The containers this viewer may see, by kind (D-146).
+   *
+   * **The only permission-scoped set in here**, which is why this function
+   * needed a viewer at all. Everything else — statuses, people, tags, types —
+   * is workspace-wide, so naming all of it leaks nothing; naming every
+   * container is precisely the leak D-123 was.
+   *
+   * `view` rather than `manage`, because a filter is a read. A lead who can see
+   * a space but not configure it should still be able to filter by it, and the
+   * compiler is going to scope the results through `access_index` regardless —
+   * so offering more than this would produce menu choices that return nothing,
+   * and offering less would hide lists whose tasks are already on screen.
+   */
+  containers: Partial<Record<"list" | "space" | "folder", { id: string; name: string }[]>>;
 }
 
 /**
@@ -445,10 +462,14 @@ export interface FilterOptions {
  * pass because a filter bar with five round trips feels broken even when it is
  * correct.
  */
-export async function loadFilterOptions(workspaceId: string): Promise<FilterOptions> {
+export async function loadFilterOptions(
+  workspaceId: string,
+  viewerId: string,
+): Promise<FilterOptions> {
   const connection = pool();
 
-  const [catalog, fieldRows, statuses, users, tags, taskTypes] = await Promise.all([
+  const [catalog, fieldRows, statuses, users, tags, taskTypes, tree, reachable] =
+    await Promise.all([
     loadFieldCatalog(workspaceId, connection),
     connection.query<{ id: string; name: string; archived_at: Date | null }>(
       `SELECT id, name, archived_at FROM fields WHERE workspace_id = $1 ORDER BY position`,
@@ -473,6 +494,12 @@ export async function loadFilterOptions(workspaceId: string): Promise<FilterOpti
       `SELECT id, name FROM task_types WHERE workspace_id = $1 ORDER BY name`,
       [workspaceId],
     ),
+    // The tree for names and kinds, the index for which of them this viewer may
+    // see. Two reads rather than one join because `loadContainerTree` is the
+    // one place that knows how a tree is shaped, and the sharing, forms, API and
+    // automations screens all pair it with `reachableContainers` the same way.
+    loadContainerTree(workspaceId, connection),
+    reachableContainers(workspaceId, viewerId, "view", connection),
   ]);
 
   const archived = new Set(
@@ -502,7 +529,48 @@ export async function loadFilterOptions(workspaceId: string): Promise<FilterOpti
     users,
     tags: tags.rows,
     taskTypes: taskTypes.rows,
+    containers: containersByKind(tree, reachable),
   };
+}
+
+/**
+ * The reachable containers, split by kind and sorted by name.
+ *
+ * Sorted by name rather than by tree order on purpose: these are three flat
+ * menus, and a menu ordered by a hierarchy the menu does not draw reads as
+ * unordered. The sharing and automations screens *do* draw the hierarchy, which
+ * is why they indent by `ancestorsOf` instead.
+ *
+ * **A kind with nothing in it is omitted rather than empty**, which the return
+ * type says out loud. An absent kind means "no menu, show the text box" to the
+ * filter bar, while an empty array would mean "a menu with no choices" — and a
+ * viewer who can reach no folders at all should see the box, not a dead select.
+ * It is reachable: a workspace need not have folders, and a guest on one list
+ * reaches no space.
+ */
+function containersByKind(
+  tree: Map<string, { kind: string; name: string }>,
+  reachable: Map<string, unknown>,
+): Partial<Record<"list" | "space" | "folder", { id: string; name: string }[]>> {
+  const byKind: Record<"list" | "space" | "folder", { id: string; name: string }[]> = {
+    list: [],
+    space: [],
+    folder: [],
+  };
+
+  for (const [id, node] of tree) {
+    if (!reachable.has(id)) continue;
+    if (node.kind !== "list" && node.kind !== "space" && node.kind !== "folder") continue;
+    byKind[node.kind].push({ id, name: node.name });
+  }
+
+  const present: Partial<Record<"list" | "space" | "folder", { id: string; name: string }[]>> = {};
+  for (const kind of ["list", "space", "folder"] as const) {
+    if (byKind[kind].length === 0) continue;
+    present[kind] = byKind[kind].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  return present;
 }
 
 

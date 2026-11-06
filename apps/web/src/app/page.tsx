@@ -54,7 +54,7 @@ export default async function Page({
           // rows would misrepresent the list.
           override: { filters: { showSubtasks: 3 } as never },
         }),
-        loadFilterOptions(workspace.id),
+        loadFilterOptions(workspace.id, viewer.id),
       ]);
     }
   } catch (e) {

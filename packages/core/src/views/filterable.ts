@@ -32,7 +32,16 @@ export type ValueInput =
   | "user"
   | "tag"
   | "taskType"
-  | "container"
+  /**
+   * Three inputs rather than one `container`, because the legal values are
+   * three different sets (D-146). A "List is" filter offered a *space* would be
+   * a menu whose every choice the compiler rejects, which is the one thing the
+   * input type exists to prevent (D-054). The kind is the picker's identity, so
+   * it belongs in the name.
+   */
+  | "list"
+  | "space"
+  | "folder"
   | "task"
   | "none";
 
@@ -97,9 +106,9 @@ export const BUILTIN_FILTERABLE: Partial<Record<BuiltinField, BuiltinMeta>> = {
   createdBy: { label: "Created by", input: "user", ops: SET_OPS },
   points: { label: "Points", input: "number", ops: ORDERED_OPS },
   timeEstimate: { label: "Estimate", input: "number", ops: ORDERED_OPS },
-  list: { label: "List", input: "container", ops: SET_OPS },
-  space: { label: "Space", input: "container", ops: SET_OPS },
-  folder: { label: "Folder", input: "container", ops: SET_OPS },
+  list: { label: "List", input: "list", ops: SET_OPS },
+  space: { label: "Space", input: "space", ops: SET_OPS },
+  folder: { label: "Folder", input: "folder", ops: SET_OPS },
   parent: { label: "Parent task", input: "task", ops: SET_OPS },
 };
 

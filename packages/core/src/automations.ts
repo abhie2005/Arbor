@@ -674,7 +674,10 @@ export const AUTOMATABLE_FIELDS: readonly AutomatableField[] = [
   { field: "points", label: "Points", input: "number" },
   { field: "timeEstimateMs", label: "Estimate (ms)", input: "number" },
   { field: "taskTypeId", label: "Task type", input: "taskType" },
-  { field: "homeListId", label: "List", input: "container" },
+  // `list` rather than a generic container (D-146): this action moves a task to
+  // a list, and a menu that offered a space would compile to an operation the
+  // executor refuses.
+  { field: "homeListId", label: "List", input: "list" },
 ];
 
 /** The control a relation's target needs: a person for two of them, a tag for one. */

@@ -88,7 +88,7 @@ export default async function CalendarPage({
           required: [{ field, op: "between", value: [range.from, range.to] }],
           limit: 500,
         }),
-        loadFilterOptions(workspace.id),
+        loadFilterOptions(workspace.id, viewer.id),
       ]);
     }
   } catch (e) {

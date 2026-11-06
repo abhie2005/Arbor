@@ -98,7 +98,7 @@ export default async function GanttPage({
           ],
           limit: 500,
         }),
-        loadFilterOptions(workspace.id),
+        loadFilterOptions(workspace.id, viewer.id),
       ]);
     }
   } catch (e) {

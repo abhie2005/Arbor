@@ -288,11 +288,22 @@ async function asViewer(token: string | null): Promise<{
   issues: string[];
 }> {
   const context = await browser.newContext({ timezoneId: VIEWER_ZONE });
-  // Shorter than Playwright's 30s default. Nothing here is slow once the route
-  // is compiled, and `warmUp` has compiled all of them — so a locator that is
-  // still waiting at ten seconds is not slow, it is absent, and on a red run
-  // there may be several of them.
+  /**
+   * Two timeouts, because the two waits mean different things.
+   *
+   * A **locator** that is still waiting at ten seconds is not slow, it is
+   * absent — the route is compiled by then (`warmUp`), so failing fast is right
+   * and on a red run there may be several of them.
+   *
+   * A **navigation** is the opposite: against a cold container the first
+   * request to a route compiles it, which takes far longer than any assertion
+   * should be allowed to. Setting one timeout for both is a bug this file
+   * shipped with for a day — `setDefaultTimeout(10_000)` capped `page.goto` as
+   * well, so `warmUp` died on the very first navigation it exists to absorb,
+   * and the gate failed before printing a single check.
+   */
   context.setDefaultTimeout(10_000);
+  context.setDefaultNavigationTimeout(120_000);
   if (token) {
     await context.addCookies([
       { name: "arbor_session", value: token, url: BASE, httpOnly: true, sameSite: "Lax" },
@@ -551,7 +562,21 @@ await section("the workspace switcher", async () => {
 console.log("\nthe dev switcher — inert under a real session until D-138");
 
 await section("the dev switcher", async () => {
-  const { context, issues } = await asViewer(sessions.avery);
+  /**
+   * Its own session, not `sessions.avery`.
+   *
+   * Switching ends the session it was standing on (D-138) — that is the fix
+   * this section verifies — so driving it with a token other sections share
+   * invalidates theirs. It cost a red run: the container-filter section below
+   * reused `sessions.avery`, got redirected to `/login`, and reported an empty
+   * filter menu, which reads as a permission bug in the code under test rather
+   * than as a dead cookie from four sections earlier.
+   *
+   * `signOut` deletes one row by token hash rather than every session for the
+   * user, so a second sign-in for the same person is genuinely independent.
+   */
+  const ownSession = (await signIn("avery@example.com", PASSWORD)).token;
+  const { context, issues } = await asViewer(ownSession);
   const page = await context.newPage();
   await page.goto(`${BASE}/`, { waitUntil: "networkidle" });
 
@@ -593,7 +618,79 @@ await section("the dev switcher", async () => {
   await context.close();
 });
 
-// --- 5. a person with a password --------------------------------------------
+// --- 5. the filter bar's container menus -------------------------------------
+
+console.log("\nthe container filter — a menu now, and scoped to the viewer");
+
+await section("the container filter", async () => {
+  // The seed is exactly the fixture this needs: `Hiring` is a list that only
+  // Avery and Riley reach, and `Founders` is a private space the same two see.
+  // So the same URL is a different menu for two people, which is the only way
+  // to tell a scoped menu from a menu that happens to be short.
+  const sprint = await one(`SELECT id FROM containers WHERE name = 'Sprint 24'`);
+  const engineering = await one(`SELECT id FROM containers WHERE name = 'Engineering'`);
+
+  const link = (field: string, id: string) =>
+    `/?f=${encodeURIComponent(JSON.stringify({ c: [[field, "eq", id]] }))}`;
+
+  for (const [who, token, mayReachHiring] of [
+    ["Sam", sessions.sam, false],
+    ["Avery", sessions.avery, true],
+  ] as const) {
+    const { context, issues } = await asViewer(token);
+    const page = await context.newPage();
+
+    await page.goto(`${BASE}${link("list", sprint.id)}`, { waitUntil: "networkidle" });
+    const control = page.locator('[aria-label="Value"]').first();
+    const tag = await control.evaluate((node) => node.tagName).catch(() => "MISSING");
+
+    if (who === "Sam") {
+      report(
+        "a List filter draws a menu rather than the text box it used to",
+        tag === "SELECT"
+          ? null
+          : `the value control is <${tag.toLowerCase()}> — a text box here is the gap itself`,
+      );
+    }
+
+    const lists = await control.locator("option").allInnerTexts();
+    report(
+      `${who} is offered the lists they can reach`,
+      lists.includes("Sprint 24") && lists.includes("Backlog")
+        ? null
+        : `the menu holds ${JSON.stringify(lists)}`,
+    );
+
+    // The half no other gate asks: not whether the right things are present,
+    // but whether a wrong one is. Listing every container was D-123.
+    report(
+      mayReachHiring
+        ? `${who} may reach Hiring, so it is offered — the control for the check below`
+        : `${who} may not reach Hiring, so it is not offered`,
+      lists.includes("Hiring") === mayReachHiring
+        ? null
+        : mayReachHiring
+          ? "a list this viewer can reach is missing, so the absence below proves nothing"
+          : "a list this viewer cannot reach is in the menu — that is the D-123 leak",
+    );
+
+    // A space filter is the same question one level up, and `Founders` is
+    // private rather than merely unshared.
+    await page.goto(`${BASE}${link("space", engineering.id)}`, { waitUntil: "networkidle" });
+    const spaces = await page.locator('[aria-label="Value"]').first().locator("option").allInnerTexts();
+    report(
+      `${who}: a Space filter is a menu, and ${mayReachHiring ? "names" : "does not name"} the private space`,
+      spaces.includes("Engineering") && spaces.includes("Founders") === mayReachHiring
+        ? null
+        : `the menu holds ${JSON.stringify(spaces)}`,
+    );
+
+    report(`nothing in the console for ${who}'s filter menus`, noisy(issues));
+    await context.close();
+  }
+});
+
+// --- 6. a person with a password --------------------------------------------
 
 console.log("\nsigning in — the door everybody else in this file walked past");
 

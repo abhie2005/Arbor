@@ -55,7 +55,7 @@ export default async function TablePage({
             filters: { showSubtasks: 1 } as never,
           },
         }),
-        loadFilterOptions(workspace.id),
+        loadFilterOptions(workspace.id, viewer.id),
       ]);
     }
   } catch (e) {

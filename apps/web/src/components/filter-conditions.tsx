@@ -36,16 +36,23 @@ export interface FilterOptionValues {
   tags: { id: string; name: string }[];
   taskTypes: { id: string; name: string }[];
   /**
-   * Optional, and the one set that is permission-scoped.
+   * Containers, by kind, and the only sets here that are permission-scoped.
    *
    * Statuses, people and tags are workspace-wide, so loading them for a filter
    * bar names nothing private. Containers are not: listing every one of them is
    * exactly the leak D-123 was. A screen that supplies these has to have
-   * filtered them already — the automations screen passes what the viewer
-   * manages — and a screen that cannot say falls back to the text box the
-   * filter bar has always shown for a list filter.
+   * filtered them already — the view pages pass what the viewer may **view**
+   * and the automations screen passes the lists it may **manage** (D-146).
+   *
+   * **Keyed by kind, and each key optional**, which is two decisions. Keyed,
+   * because `list`, `space` and `folder` are three different legal sets and a
+   * flat array would offer a space to a filter that only matches lists.
+   * Optional per kind, because an *empty* array is still a menu — a select with
+   * no choices — whereas an absent one falls back to the text box the filter bar
+   * has always shown. A screen that has only scoped lists should say exactly
+   * that and no more.
    */
-  containers?: { id: string; name: string }[];
+  containers?: Partial<Record<"list" | "space" | "folder", { id: string; name: string }[]>>;
 }
 
 /**
@@ -329,9 +336,13 @@ export function optionsFor(
       return values.tags;
     case "taskType":
       return values.taskTypes;
-    // Only when the screen filtered them. See `containers` above.
-    case "container":
-      return values.containers ?? null;
+    // Only when the screen filtered that kind. See `containers` above — an
+    // absent kind is a text box, which is honest, while an empty array would be
+    // an empty menu, which is not.
+    case "list":
+    case "space":
+    case "folder":
+      return values.containers?.[input] ?? null;
     default:
       return null;
   }

@@ -6060,3 +6060,100 @@ recorded before in other forms:
 *In one sentence:* retrying was never blocked by the thing the gaps list said
 blocked it, and the thing that actually made it unsafe — a committed batch with
 no record — was already answerable from the activity log.
+
+### D-146
+**A container filter is three menus, not one text box** · 2026-11-06 · active
+
+The last small thing on the gaps list, and like D-145 it was not quite the thing
+the list described. The entry said `optionsFor` understands `container` but only
+a screen that has filtered containers by permission may supply them, so fixing
+it means `loadFilterOptions` taking a viewer — "which is five callers". Both
+halves needed correcting: it is **six** callers, and a viewer alone would not
+have fixed it.
+
+**`list`, `space` and `folder` all declared `input: "container"`**, so one flat
+set of containers would have answered all three. A "List is" filter offered a
+*space* is a menu whose every choice the compiler rejects — which is the one
+thing `ValueInput` exists to prevent (D-054: the menu and the validation are the
+same knowledge). So the input is split: `"container"` becomes `"list"`,
+`"space"` and `"folder"`, because the kind **is** the picker's identity and the
+legal values are three different sets.
+
+That split also corrected a fourth declaration nobody was looking at: the
+automation action `{ field: "homeListId", label: "List", input: "container" }`
+moves a task to a **list**, and had been describing itself as accepting any
+container.
+
+**`view`, not `manage`** — the permission a filter needs, and the reason it is a
+decision rather than a default. The four settings screens that pair
+`loadContainerTree` with `reachableContainers` all ask for `manage`, because
+each of them *writes* something to the container it names. A filter reads. A
+lead who can see a space but not configure it should still be able to filter by
+it, and the compiler scopes the rows through `access_index` regardless — so
+offering more than `view` produces menu choices that return nothing, and
+offering less hides lists whose tasks are already on screen.
+
+**The automations screen keeps its own narrower set, and the shape of `values`
+is what protects it.** That screen's container menu feeds a "move to list"
+action, which is a write and stays `manage`-scoped. It builds its `values`
+object key by key rather than spreading `options`, so `loadFilterOptions`
+growing a `containers` field could not quietly widen a write menu from manage to
+view — a permission regression wearing the clothes of a refactor. The comment
+there now says so explicitly, because the next person to tidy that file into a
+spread would introduce exactly that.
+
+**An absent kind is a text box; an empty one would be a dead menu.** So
+`containersByKind` *omits* a kind it found nothing for rather than returning
+`[]`, and the type says `Partial<Record<…>>` out loud. This is reachable rather
+than theoretical: a workspace need not have folders, and a guest on one list
+reaches no space. The automations screen names only `list` for the same reason —
+a condition on a space there falls back to the box, because that screen has not
+scoped spaces and should not pretend it has.
+
+The three menus are sorted by **name**, not tree order. The sharing, forms, API
+and automations screens draw the hierarchy and indent by `ancestorsOf`; these
+are three flat selects, and a flat menu ordered by a hierarchy it does not draw
+reads as unordered.
+
+**Nine checks in `check:browser` (39), driving two viewers over the same URL** —
+which is the only way to tell a scoped menu from a menu that happens to be
+short. The seed is already the fixture: `Hiring` is a list only Avery and Riley
+reach and `Founders` is a private space the same two see, so Sam and Avery
+loading `/?f=[["list","eq",…]]` get different menus. Each check has a positive
+half and a negative one, because a page that rendered no options at all would
+satisfy "the unreachable list is absent" and nothing else.
+
+Checked in the browser rather than in `check:actions` on purpose: the filter bar
+is a client component, so its options ride the flight payload rather than the
+markup — the same reason the goal owner picker has no action check. What is
+being claimed here is an *affordance* ("this is a menu now, not a text box"),
+and that is a question about a rendered control.
+
+**Two reverts were watched to fail**: dropping the permission filter puts
+`Hiring` in Sam's menu, which is the D-123 leak restored; and supplying no
+containers at all turns the value control back into `<input type="text">`, which
+is the gap this entry closes.
+
+**And it found a bug in the gate rather than in the app**, which is worth
+recording because the failure pointed at the wrong place. The new section
+reported an empty menu for Avery — reading exactly like a permission bug in the
+code under test — and the cause was four sections earlier: the dev-switcher
+section drives `switchUser`, which **ends the session it was standing on**
+(D-138, verified by that very section), and it was standing on the token the
+later section shared. `signOut` deletes one row by token hash rather than every
+session for a user, so the fix is a second sign-in for the same person; the
+sections are independent again, and the comment explains why that is not
+redundancy.
+
+**And a second one, from the day-old gate's own timeouts.** `check:browser` sets
+a short default so an absent locator fails fast — but Playwright's default
+covers navigation too, so `page.goto` inherited ten seconds, and against a cold
+container the first request to a route compiles it. `warmUp` died on the very
+first navigation it exists to absorb and the gate failed before printing a
+single check. The two waits mean different things and now say so separately:
+locators fail fast because they are about *presence*, navigations get two
+minutes because they are about *compilation*.
+
+*In one sentence:* the text box was a symptom of three fields sharing one input
+type, and the fix was to stop pretending that a list, a space and a folder are
+the same kind of choice.
