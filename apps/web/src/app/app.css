@@ -4770,6 +4770,13 @@ select.filter-add option {
   gap: var(--space-2);
   padding-left: calc(34px + var(--space-2));
 }
+/* A number of days is a quantity, not a field (D-147). At the inherited width
+   it is as wide as the date picker it replaces and wraps onto its own line,
+   where it reads as a second thing being set rather than as part of the
+   sentence beside it. */
+.automation-action input[type="number"] {
+  width: 5rem;
+}
 
 /* The sentence the rule will read as in the list, before it is saved. */
 .automation-preview {

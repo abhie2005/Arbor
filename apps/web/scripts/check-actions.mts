@@ -2778,6 +2778,71 @@ report(
     : "the rule outlived its delete",
 );
 
+// A relative date is the one action value that is not a scalar (D-147), which
+// makes it this file's business rather than the unit tests': it goes out as a
+// nested object inside an array inside a server action argument, into jsonb,
+// and has to come back parsing as the same arithmetic. The refusals beside it
+// are the other half — they used to be 500s from inside a run three days later,
+// and they are now a message in front of whoever wrote the rule.
+const datedRule = await callOn(AUTO_URL, AUTO_ACTIONS.createAutomationAction!, [
+  {
+    containerId: sprintListId,
+    name: "Due in three days",
+    trigger: { kind: "taskCreated" },
+    actions: [{ kind: "setField", field: "dueAt", to: { kind: "relativeDate", days: 3 } }],
+  },
+]);
+
+const datedRow = await one(
+  `SELECT id, actions::text AS actions FROM automations WHERE name = 'Due in three days'`,
+);
+report(
+  "a relative date survives the trip as arithmetic, with the anchor filled in",
+  datedRow &&
+    JSON.parse(datedRow.actions)[0].to.kind === "relativeDate" &&
+    JSON.parse(datedRow.actions)[0].to.days === 3 &&
+    JSON.parse(datedRow.actions)[0].to.from === "now"
+    ? null
+    : `stored ${String(datedRow?.actions)} — response was ${datedRule.text.slice(-300)}`,
+);
+
+const datedPage = await (
+  await fetch(`${AUTO_URL}?container=${sprintListId}`, { headers: { Cookie: COOKIE } })
+).text();
+report(
+  "and the screen says what it will do, in days rather than in a uuid",
+  /set Due date to 3 days from now/.test(words(datedPage))
+    ? null
+    : "the sentence did not describe the arithmetic",
+);
+
+const wrongField = await callOn(AUTO_URL, AUTO_ACTIONS.createAutomationAction!, [
+  {
+    containerId: sprintListId,
+    name: "Three days of status",
+    trigger: { kind: "taskCreated" },
+    actions: [{ kind: "setField", field: "statusId", to: { kind: "relativeDate", days: 3 } }],
+  },
+]);
+const notAnObject = await callOn(AUTO_URL, AUTO_ACTIONS.createAutomationAction!, [
+  {
+    containerId: sprintListId,
+    name: "An object where a status goes",
+    trigger: { kind: "taskCreated" },
+    actions: [{ kind: "setField", field: "statusId", to: { id: doneStatus.id } }],
+  },
+]);
+report(
+  "a relative date on a field that holds no date, and an object where a value goes, are both refused at the door",
+  /relative date cannot be set/i.test(wrongField.text) &&
+    /not a value for/i.test(notAnObject.text) &&
+    Number(
+      (await one(`SELECT count(*) AS n FROM automations WHERE workspace_id = $1`, [workspaceId])).n,
+    ) === 1
+    ? null
+    : `refusals were ${wrongField.text.slice(-160)} / ${notAnObject.text.slice(-160)}`,
+);
+
 await db.query(`DELETE FROM automations WHERE workspace_id = $1`, [workspaceId]);
 
 // --- forms, which have two audiences (D-142) --------------------------------

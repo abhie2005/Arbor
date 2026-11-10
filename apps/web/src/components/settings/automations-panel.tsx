@@ -8,6 +8,7 @@ import {
   type FilterGroup,
   type FilterableField,
   type RelationKind,
+  type RelativeDate,
   type TaskField,
   type ValueInput,
   APPLIES_TO_LABELS,
@@ -18,6 +19,7 @@ import {
   RELATION_LABELS,
   describeDelay,
   describeRule,
+  isRelativeDate,
   mayRetry,
   relationInput,
 } from "@arbor/core";
@@ -789,12 +791,16 @@ function ActionRow({
             ))}
           </select>
           <span className="automation-word">to</span>
-          <ValueControl
-            input={field.input}
-            value={action.to}
-            values={values}
-            onChange={(to) => onChange({ ...action, to })}
-          />
+          {field.input === "date" ? (
+            <DateValue value={action.to} values={values} onChange={(to) => onChange({ ...action, to })} />
+          ) : (
+            <ValueControl
+              input={field.input}
+              value={action.to}
+              values={values}
+              onChange={(to) => onChange({ ...action, to })}
+            />
+          )}
         </>
       ) : null}
 
@@ -843,6 +849,78 @@ function ActionRow({
         </button>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * A date to set: a day, or arithmetic to do when the rule runs (D-147).
+ *
+ * **Two controls rather than one**, because the question changes shape. "On the
+ * 20th" needs a date; "in three days" needs a number, and a date picker cannot
+ * express it at all — which is why the gap existed. The menu is what makes the
+ * difference visible: a rule that dates a task from today and one that moves
+ * the date it has are different rules, and the form has to look different for
+ * them before the preview sentence does.
+ *
+ * Switching anchors keeps the days somebody already typed, and switching to a
+ * day falls back to the same default a fresh condition gets — so the control
+ * never loses an answer that is still meaningful, and never keeps one that is
+ * not.
+ */
+function DateValue({
+  value,
+  values,
+  onChange,
+}: {
+  value: unknown;
+  values: FilterOptionValues;
+  onChange: (value: unknown) => void;
+}) {
+  const relative = isRelativeDate(value) ? value : null;
+  const mode = relative ? relative.from : "on";
+
+  return (
+    <>
+      <select
+        aria-label="When"
+        value={mode}
+        onChange={(event) => {
+          // Narrowed by asking rather than cast: the two anchors are the ones
+          // the compiler knows how to count from, and a `<select>` value is a
+          // string as far as the DOM is concerned.
+          const next = event.target.value;
+          if (next === "now" || next === "current") {
+            const days = relative ? relative.days : 3;
+            onChange({ kind: "relativeDate", days, from: next } satisfies RelativeDate);
+            return;
+          }
+          onChange(defaultValueFor("date", undefined, values));
+        }}
+      >
+        <option value="on">a date</option>
+        <option value="now">days from now</option>
+        <option value="current">days from its date</option>
+      </select>
+
+      {relative ? (
+        <input
+          type="number"
+          aria-label="Days"
+          value={relative.days}
+          onChange={(event) =>
+            onChange({
+              ...relative,
+              // Whole days, because the parser takes whole days — a form that
+              // can post 1.5 is a refusal somebody has to read instead of a
+              // control that cannot be wrong.
+              days: Math.trunc(Number(event.target.value) || 0),
+            } satisfies RelativeDate)
+          }
+        />
+      ) : (
+        <ValueControl input="date" value={value} values={values} onChange={onChange} />
+      )}
+    </>
   );
 }
 

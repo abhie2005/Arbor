@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   type AutomationEvent,
   type AutomationRule,
+  type Operation,
   type TaskSnapshot,
   AutomationError,
   compileActions,
@@ -616,7 +617,11 @@ export async function executeRun(
       return await settle("skipped_conditions");
     }
 
-    const ops = compileActions(rule.rule.actions, task, randomUUID);
+    // **`new Date()` here, and not a line earlier.** A relative date is counted
+    // from the moment the rule acts, which for a delayed rule is days after the
+    // moment it fired. Passing the clock in rather than reading it inside the
+    // compiler is what keeps that a decision this line makes (D-147).
+    const ops = compileActions(rule.rule.actions, task, randomUUID, new Date());
     if (ops.length === 0) return await settle("success");
 
     await applyOperations(ops, {
@@ -625,9 +630,44 @@ export async function executeRun(
       cause: { automationId: rule.id, runId: run.id },
     });
 
+    await markDatesAsDays(ops, connection);
+
     return await settle("success");
   } catch (error) {
     return await settle("failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
+ * A date a rule wrote is a calendar day, so the task is marked as carrying no
+ * time.
+ *
+ * **The flag is not an operation and must not become one.** It is a property of
+ * the value rather than a value of its own — undo restores the value — which is
+ * why `setTaskDate` writes it alongside `applyOperations` instead of through it
+ * (D-067). This is the same write, from the other caller that can put a day
+ * into the column.
+ *
+ * Without it the feature lands on the wrong day in front of somebody: a rule
+ * sets a due date to midnight UTC, the task's `due_has_time` is still true from
+ * whenever a person last typed an hour into it, and every reader then formats a
+ * UTC midnight in their own zone — which for anybody west of Greenwich is the
+ * day before. Invariant 9 is the rule being obeyed here; the flag is how it is
+ * obeyed.
+ *
+ * The cost is that an automation cannot write a timed date, and `compileActions`
+ * is where that is true rather than here — it rounds a relative date to a UTC
+ * day. A rule that wants "two hours before the meeting" needs the duration
+ * control the form does not have yet, and will need this to learn the
+ * difference.
+ */
+async function markDatesAsDays(ops: readonly Operation[], connection: Connection): Promise<void> {
+  for (const op of ops) {
+    if (op.kind !== "setField") continue;
+    if (op.field !== "dueAt" && op.field !== "startAt") continue;
+
+    const flag = op.field === "dueAt" ? "due_has_time" : "start_has_time";
+    await connection.query(`UPDATE tasks SET ${flag} = false WHERE id = $1`, [op.taskId]);
   }
 }
 

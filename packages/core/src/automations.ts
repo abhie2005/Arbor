@@ -33,6 +33,7 @@
  * account it acts as, the quota query — is in `packages/db`.
  */
 
+import { addUtcDays, startOfUtcDay } from "./dates";
 import { type Operation, type TaskField, activityVerb } from "./mutations";
 import { type RichDoc, parseRichText } from "./richtext";
 import type { ValueInput } from "./views/filterable";
@@ -75,6 +76,74 @@ export type AutomationAction =
   | { kind: "removeRelation"; relation: RelationKind; targetId: string }
   | { kind: "comment"; text: string }
   | { kind: "archive" };
+
+/**
+ * A date an action works out when it runs, rather than one somebody typed.
+ *
+ * "Set the due date to three days from now" cannot be stored as a value,
+ * because the value does not exist until the rule acts — and a rule is written
+ * once and then runs for a year, so the date the form happened to be open on is
+ * the one answer that is certainly wrong. The action stores the *arithmetic*
+ * and `compileActions` does it.
+ *
+ * **The anchor is a choice, and both answers are real rules.** `now` is "three
+ * days from when this runs", which is what a rule on task creation wants.
+ * `current` is "three days later than it already is", which is what a rule that
+ * pushes a blocked task out wants — and that one has nothing to count from when
+ * the field is empty, so it writes nothing rather than inventing a date from
+ * today. `compileActions` is where that is enforced.
+ *
+ * **It is not a delay.** `delaySeconds` is how long a rule waits before acting;
+ * this is what it writes once it does. A rule may carry both, and then the days
+ * are counted from the moment it acts rather than from the moment it fired —
+ * because that is when `compileActions` runs. Those are different dates for any
+ * rule that waits, and the acting one is the one somebody means.
+ */
+export interface RelativeDate {
+  kind: "relativeDate";
+  /** Whole days from the anchor. Negative is before it. */
+  days: number;
+  /** The moment the rule acts, or the value the field already holds. */
+  from: "now" | "current";
+}
+
+/**
+ * Ten years, which matches nothing in particular — a ceiling rather than a
+ * rule, the way `MAX_DELAY_SECONDS` is. What it refuses is a typo with six
+ * digits in it, which would otherwise be stored and then compile to a date
+ * outside what the column can hold.
+ */
+export const MAX_RELATIVE_DAYS = 3650;
+
+/**
+ * Is this value a relative date?
+ *
+ * A tag check rather than a validation: everything stored went through
+ * `parseActions`, which is where the days and the anchor are checked, so
+ * checking them again on every read would be two places to keep in step. A
+ * value that reached the column some other way is the same problem as a trigger
+ * the parser can no longer read, and it has the same answer (D-140).
+ */
+export function isRelativeDate(value: unknown): value is RelativeDate {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as { kind?: unknown }).kind === "relativeDate"
+  );
+}
+
+/**
+ * Does this field hold a date?
+ *
+ * Read off `AUTOMATABLE_FIELDS` rather than listed a second time here, so the
+ * fields a relative date may be set on are exactly the ones the menu offers a
+ * date control for. The same bet as D-146: one declaration, or two that drift.
+ */
+export function isDateField(field: TaskField): boolean {
+  return AUTOMATABLE_FIELDS.some(
+    (candidate) => candidate.field === field && candidate.input === "date",
+  );
+}
 
 export interface AutomationRule {
   trigger: AutomationTrigger;
@@ -279,6 +348,55 @@ const SNAPSHOT_FIELDS: Record<string, keyof TaskSnapshot> = {
 };
 
 /**
+ * What a `setField` action writes, or that it writes nothing.
+ *
+ * Two shapes rather than a value and a null, because **null is a value here**:
+ * "clear the due date" is a real action, and a function that returned null for
+ * both that and "there was nothing to write" would make the two
+ * indistinguishable at the only place that can tell them apart.
+ */
+type Resolved = { write: true; value: unknown } | { write: false };
+
+/**
+ * A date is worked out; everything else is copied.
+ *
+ * Two things happen here and both are about invariant 9 — a calendar day is
+ * midnight UTC and is read in UTC:
+ *
+ * - **a relative date becomes an instant**, counted in UTC days from its
+ *   anchor. An empty anchor writes nothing: "three days later than it is" has
+ *   no answer for a task with no due date, and the alternative — falling back
+ *   to today — is a rule inventing a deadline nobody wrote;
+ * - **a `YYYY-MM-DD` typed into the form becomes midnight UTC** rather than
+ *   reaching the column as ten characters for Postgres to interpret in whatever
+ *   zone the server happens to be set to. It also makes the no-op check work at
+ *   all: `from` is an ISO instant, so comparing it against "2026-11-20" said
+ *   "different" every time and a rule that set the date it was already set to
+ *   logged a change.
+ *
+ * An ISO instant arriving through the API is left exactly as it came — that is
+ * a moment rather than a day, and the one thing this must not do is round it.
+ */
+function resolveValue(field: TaskField, to: unknown, current: unknown, now: Date): Resolved {
+  if (isRelativeDate(to)) {
+    if (!isDateField(field)) {
+      throw new AutomationError(`A relative date cannot be set on ${field}`);
+    }
+
+    const anchor = to.from === "now" ? now : current;
+    if (anchor === null || anchor === undefined || anchor === "") return { write: false };
+
+    return { write: true, value: addUtcDays(anchor as string | Date, to.days).toISOString() };
+  }
+
+  if (isDateField(field) && typeof to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return { write: true, value: startOfUtcDay(to).toISOString() };
+  }
+
+  return { write: true, value: to };
+}
+
+/**
  * Actions to operations, against the task as it stands.
  *
  * **No-ops are dropped here as well as in `applyOperations`.** The executor
@@ -290,11 +408,16 @@ const SNAPSHOT_FIELDS: Record<string, keyof TaskSnapshot> = {
  *
  * `newId` is a parameter because a comment needs a uuid and a pure function may
  * not invent one. The caller passes `randomUUID`; a test passes a counter.
+ * **`now` is a parameter for exactly the same reason** — a relative date is
+ * arithmetic on the clock, and reading the clock is as much an effect as
+ * inventing an id. The runtime passes `new Date()` at the moment it acts; a
+ * test passes a fixed instant and gets an answer it can write down.
  */
 export function compileActions(
   actions: readonly AutomationAction[],
   task: TaskSnapshot,
   newId: () => string,
+  now: Date,
 ): Operation[] {
   const ops: Operation[] = [];
 
@@ -305,9 +428,17 @@ export function compileActions(
         if (!key) throw new AutomationError(`An automation cannot set ${action.field}`);
 
         const from = task[key] ?? null;
-        if (sameValue(from, action.to)) break;
+        const resolved = resolveValue(action.field, action.to, from, now);
+        if (!resolved.write) break;
+        if (sameValue(from, resolved.value)) break;
 
-        ops.push({ kind: "setField", taskId: task.id, field: action.field, from, to: action.to });
+        ops.push({
+          kind: "setField",
+          taskId: task.id,
+          field: action.field,
+          from,
+          to: resolved.value,
+        });
         break;
       }
 
@@ -567,7 +698,11 @@ function parseActions(raw: unknown): AutomationAction[] {
         if (typeof field !== "string" || !(field in SNAPSHOT_FIELDS)) {
           throw new AutomationError(`An automation cannot set ${String(field)}`);
         }
-        return { kind: "setField", field: field as TaskField, to: value.to ?? null };
+        return {
+          kind: "setField",
+          field: field as TaskField,
+          to: parseActionValue(field as TaskField, value.to ?? null),
+        };
       }
 
       case "addRelation":
@@ -598,6 +733,55 @@ function parseActions(raw: unknown): AutomationAction[] {
         throw new AutomationError(`Not an action: ${String(value.kind)}`);
     }
   });
+}
+
+/**
+ * The value half of a `setField` action.
+ *
+ * **A scalar passes through untouched**, which is deliberate rather than lazy:
+ * the column decides what it accepts, the executor refuses what it cannot write
+ * and D-134 already drew that table. Validating types a second time here would
+ * be a second opinion about what a column holds.
+ *
+ * **The only structure a value may have is a relative date.** Before this,
+ * `to` was taken as it arrived, so an object posted where a status goes was
+ * stored, armed, and then handed to a uuid column — a caller-triggerable 500 at
+ * 3am rather than a 400 at the door, which is the same thing `parseOperations`
+ * exists to stop. So anything else object-shaped is refused by name, and a
+ * relative date is checked properly: the days are whole and bounded, and the
+ * anchor is one of the two the compiler knows how to count from.
+ *
+ * It is also refused on a field that does not hold a date, where it would
+ * otherwise parse, store, arm, and then throw inside the run.
+ */
+function parseActionValue(field: TaskField, raw: unknown): unknown {
+  if (raw === null || typeof raw !== "object") return raw;
+
+  const value = raw as Record<string, unknown>;
+  if (value.kind !== "relativeDate") {
+    throw new AutomationError(`Not a value for ${field}: ${JSON.stringify(raw)}`);
+  }
+  if (!isDateField(field)) {
+    throw new AutomationError(`A relative date cannot be set on ${field}`);
+  }
+
+  const days = value.days;
+  if (typeof days !== "number" || !Number.isInteger(days)) {
+    throw new AutomationError("A relative date is a whole number of days");
+  }
+  if (Math.abs(days) > MAX_RELATIVE_DAYS) {
+    throw new AutomationError(`A relative date may be at most ${MAX_RELATIVE_DAYS} days away`);
+  }
+
+  // `now` by default, because that is the anchor somebody who wrote only the
+  // days meant — and because a missing anchor is the one case where guessing is
+  // safe: the other answer needs a value the task may not have.
+  const from = value.from ?? "now";
+  if (from !== "now" && from !== "current") {
+    throw new AutomationError(`A relative date counts from now or from current, not ${String(from)}`);
+  }
+
+  return { kind: "relativeDate", days, from } satisfies RelativeDate;
 }
 
 /**
@@ -771,6 +955,30 @@ export function describeDelay(seconds: number): string {
 }
 
 /**
+ * A relative date in words.
+ *
+ * Here beside `describeDelay` rather than in the component, for the reason the
+ * whole sentence is: the list and the form's preview must not describe the same
+ * rule differently, and a phrase that reads wrongly is indistinguishable from a
+ * rule that is wrong. The two anchors have to *sound* different — "in 3 days"
+ * and "3 days later than it is" are different rules, and a sentence that
+ * blurred them would hide the only thing somebody is checking.
+ */
+export function describeRelativeDate(value: RelativeDate): string {
+  const magnitude = Math.abs(value.days) === 1 ? "1 day" : `${Math.abs(value.days)} days`;
+
+  if (value.from === "now") {
+    if (value.days === 0) return "today";
+    return value.days > 0 ? `${magnitude} from now` : `${magnitude} ago`;
+  }
+
+  if (value.days === 0) return "the day it already falls on";
+  return value.days > 0
+    ? `${magnitude} later than it is`
+    : `${magnitude} earlier than it is`;
+}
+
+/**
  * A rule in one sentence.
  *
  * **Here rather than in the component** so the list and the form's preview
@@ -862,7 +1070,11 @@ function describeAction(
   switch (action.kind) {
     case "setField": {
       const field = AUTOMATABLE_FIELDS.find((candidate) => candidate.field === action.field);
-      return `set ${field?.label ?? action.field} to ${names(field?.input ?? "text", action.to)}`;
+      const label = field?.label ?? action.field;
+      // A relative date has no id to look up — it is arithmetic, and `names`
+      // would print the object.
+      if (isRelativeDate(action.to)) return `set ${label} to ${describeRelativeDate(action.to)}`;
+      return `set ${label} to ${names(field?.input ?? "text", action.to)}`;
     }
 
     case "addRelation":

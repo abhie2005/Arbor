@@ -11,8 +11,10 @@ import {
   DELAY_CHOICES,
   MAX_DELAY_SECONDS,
   MAX_DEPTH,
+  MAX_RELATIVE_DAYS,
   MAX_RUN_ATTEMPTS,
   describeDelay,
+  describeRelativeDate,
   describeRule,
   relationInput,
   compileActions,
@@ -26,6 +28,17 @@ import {
   verbFor,
 } from "./automations";
 import { activityVerb } from "./mutations";
+
+/**
+ * The instant every compile in this file is run at.
+ *
+ * Fixed, like the ids, and chosen so the UTC day and this machine's day
+ * disagree: 03:00 UTC on the 10th is the evening of the 9th in California. A
+ * relative date is counted in UTC days (invariant 9), so every expectation
+ * below is written in UTC and a helper that quietly used the local day would
+ * fail here rather than only on a server somewhere.
+ */
+const NOW = new Date("2026-11-10T03:00:00.000Z");
 
 const TASK = "11111111-1111-4111-8111-111111111111";
 const RILEY = "22222222-2222-4222-8222-222222222222";
@@ -180,6 +193,7 @@ describe("compiling actions to operations", () => {
       [{ kind: "setField", field: "statusId", to: DONE }],
       snapshot({ statusId: "todo" }),
       ids(),
+      NOW,
     );
     expect(ops).toEqual([
       { kind: "setField", taskId: TASK, field: "statusId", from: "todo", to: DONE },
@@ -192,6 +206,7 @@ describe("compiling actions to operations", () => {
       [{ kind: "setField", field: "statusId", to: DONE }],
       snapshot({ statusId: DONE }),
       ids(),
+      NOW,
     );
     expect(ops).toEqual([]);
   });
@@ -201,6 +216,7 @@ describe("compiling actions to operations", () => {
       [{ kind: "addRelation", relation: "assignee", targetId: RILEY }],
       snapshot({ assignees: [RILEY] }),
       ids(),
+      NOW,
     );
     expect(already).toEqual([]);
 
@@ -208,6 +224,7 @@ describe("compiling actions to operations", () => {
       [{ kind: "removeRelation", relation: "assignee", targetId: RILEY }],
       snapshot({ assignees: [] }),
       ids(),
+      NOW,
     );
     expect(absent).toEqual([]);
   });
@@ -217,6 +234,7 @@ describe("compiling actions to operations", () => {
       [{ kind: "addRelation", relation: "watcher", targetId: RILEY }],
       snapshot(),
       ids(),
+      NOW,
     );
     expect(ops).toEqual([
       { kind: "addRelation", taskId: TASK, relation: "watcher", targetId: RILEY },
@@ -226,7 +244,7 @@ describe("compiling actions to operations", () => {
   // D-122's rule, from the other side: a rule's text is written once, so an
   // "@Name" in it must not bind to whoever held that name that day.
   it("writes a comment as a document and leaves @Name as text", () => {
-    const ops = compileActions([{ kind: "comment", text: "Moved by @Riley Kaur" }], snapshot(), ids());
+    const ops = compileActions([{ kind: "comment", text: "Moved by @Riley Kaur" }], snapshot(), ids(), NOW);
     expect(ops).toHaveLength(1);
     const op = ops[0] as { kind: string; commentId: string; body: unknown };
     expect(op.kind).toBe("createComment");
@@ -235,9 +253,141 @@ describe("compiling actions to operations", () => {
   });
 
   it("archives", () => {
-    expect(compileActions([{ kind: "archive" }], snapshot(), ids())).toEqual([
+    expect(compileActions([{ kind: "archive" }], snapshot(), ids(), NOW)).toEqual([
       { kind: "archiveTask", taskId: TASK },
     ]);
+  });
+
+  // D-147. The arithmetic is the point: a rule is written once and runs for a
+  // year, so a date it writes has to be worked out when it acts.
+  it("counts a relative date in UTC days from the moment the rule acts", () => {
+    const ops = compileActions(
+      [{ kind: "setField", field: "dueAt", to: { kind: "relativeDate", days: 3, from: "now" } }],
+      snapshot(),
+      ids(),
+      NOW,
+    );
+    expect(ops).toEqual([
+      {
+        kind: "setField",
+        taskId: TASK,
+        field: "dueAt",
+        from: null,
+        to: "2026-11-13T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("reads back the same day it wrote, whatever hour the clock said", () => {
+    const [op] = compileActions(
+      [{ kind: "setField", field: "dueAt", to: { kind: "relativeDate", days: 0, from: "now" } }],
+      snapshot(),
+      ids(),
+      NOW,
+    ) as { to: string }[];
+    // 03:00 UTC is the previous evening in California, and "today" is the UTC
+    // day — the whole reason the frame is named rather than implied (D-067).
+    expect(op!.to).toBe("2026-11-10T00:00:00.000Z");
+  });
+
+  it("counts an offset from the value the field already holds", () => {
+    const ops = compileActions(
+      [
+        {
+          kind: "setField",
+          field: "dueAt",
+          to: { kind: "relativeDate", days: 7, from: "current" },
+        },
+      ],
+      snapshot({ dueAt: "2026-11-20T00:00:00.000Z" }),
+      ids(),
+      NOW,
+    );
+    expect(ops).toEqual([
+      {
+        kind: "setField",
+        taskId: TASK,
+        field: "dueAt",
+        from: "2026-11-20T00:00:00.000Z",
+        to: "2026-11-27T00:00:00.000Z",
+      },
+    ]);
+  });
+
+  // The alternative is a rule that invents a deadline from today, which is a
+  // date nobody wrote appearing on a task nobody dated.
+  it("writes nothing when there is no current value to offset", () => {
+    expect(
+      compileActions(
+        [
+          {
+            kind: "setField",
+            field: "dueAt",
+            to: { kind: "relativeDate", days: 7, from: "current" },
+          },
+        ],
+        snapshot({ dueAt: null }),
+        ids(),
+        NOW,
+      ),
+    ).toEqual([]);
+  });
+
+  it("takes a negative offset as before the anchor", () => {
+    const [op] = compileActions(
+      [{ kind: "setField", field: "startAt", to: { kind: "relativeDate", days: -2, from: "now" } }],
+      snapshot(),
+      ids(),
+      NOW,
+    ) as { to: string }[];
+    expect(op!.to).toBe("2026-11-08T00:00:00.000Z");
+  });
+
+  // Two bugs in one check: the column used to be handed ten characters for
+  // Postgres to read in whatever zone it was set to, and the no-op check below
+  // could never match because `from` is an instant.
+  it("stores a day typed into the form as midnight UTC", () => {
+    const [op] = compileActions(
+      [{ kind: "setField", field: "dueAt", to: "2026-11-20" }],
+      snapshot(),
+      ids(),
+      NOW,
+    ) as { to: string }[];
+    expect(op!.to).toBe("2026-11-20T00:00:00.000Z");
+  });
+
+  it("drops a date the task already holds, which it could not do before", () => {
+    expect(
+      compileActions(
+        [{ kind: "setField", field: "dueAt", to: "2026-11-20" }],
+        snapshot({ dueAt: "2026-11-20T00:00:00.000Z" }),
+        ids(),
+        NOW,
+      ),
+    ).toEqual([]);
+  });
+
+  // An instant is a moment rather than a day, and rounding it would be this
+  // function deciding something the caller already decided.
+  it("leaves an instant from the API exactly as it arrived", () => {
+    const [op] = compileActions(
+      [{ kind: "setField", field: "dueAt", to: "2026-11-20T15:30:00.000Z" }],
+      snapshot(),
+      ids(),
+      NOW,
+    ) as { to: string }[];
+    expect(op!.to).toBe("2026-11-20T15:30:00.000Z");
+  });
+
+  it("refuses a relative date on a field that does not hold one", () => {
+    expect(() =>
+      compileActions(
+        [{ kind: "setField", field: "points", to: { kind: "relativeDate", days: 1, from: "now" } }],
+        snapshot(),
+        ids(),
+        NOW,
+      ),
+    ).toThrow(AutomationError);
   });
 
   it("refuses a field an automation may not set", () => {
@@ -246,6 +396,7 @@ describe("compiling actions to operations", () => {
         [{ kind: "setField", field: "position" as never, to: "a" }],
         snapshot(),
         ids(),
+        NOW,
       ),
     ).toThrow(AutomationError);
   });
@@ -390,6 +541,75 @@ describe("validating a rule before it is stored", () => {
     ).toThrow(AutomationError);
   });
 
+  it("keeps a relative date, and defaults the anchor to now", () => {
+    const parsed = parseAutomationRule({
+      ...valid,
+      actions: [{ kind: "setField", field: "dueAt", to: { kind: "relativeDate", days: 3 } }],
+    });
+    expect(parsed.actions).toEqual([
+      { kind: "setField", field: "dueAt", to: { kind: "relativeDate", days: 3, from: "now" } },
+    ]);
+  });
+
+  // The 500 this turns into a 400: an object used to be stored as it arrived
+  // and then handed to a uuid column at 3am (D-134's reasoning, other door).
+  it("refuses an object where a value goes", () => {
+    expect(() =>
+      parseAutomationRule({
+        ...valid,
+        actions: [{ kind: "setField", field: "statusId", to: { id: DONE } }],
+      }),
+    ).toThrow(AutomationError);
+  });
+
+  it("refuses a relative date on a field that is not a date", () => {
+    expect(() =>
+      parseAutomationRule({
+        ...valid,
+        actions: [
+          { kind: "setField", field: "statusId", to: { kind: "relativeDate", days: 1 } },
+        ],
+      }),
+    ).toThrow(AutomationError);
+  });
+
+  it("refuses days that are not whole, and days that are absurd", () => {
+    expect(() =>
+      parseAutomationRule({
+        ...valid,
+        actions: [{ kind: "setField", field: "dueAt", to: { kind: "relativeDate", days: 1.5 } }],
+      }),
+    ).toThrow(AutomationError);
+
+    expect(() =>
+      parseAutomationRule({
+        ...valid,
+        actions: [
+          {
+            kind: "setField",
+            field: "dueAt",
+            to: { kind: "relativeDate", days: MAX_RELATIVE_DAYS + 1 },
+          },
+        ],
+      }),
+    ).toThrow(AutomationError);
+  });
+
+  it("refuses an anchor it cannot count from", () => {
+    expect(() =>
+      parseAutomationRule({
+        ...valid,
+        actions: [
+          {
+            kind: "setField",
+            field: "dueAt",
+            to: { kind: "relativeDate", days: 1, from: "the sprint" },
+          },
+        ],
+      }),
+    ).toThrow(AutomationError);
+  });
+
   it("refuses a scope that is not one", () => {
     expect(() => parseAutomationRule({ ...valid, appliesTo: "everything" })).toThrow(
       AutomationError,
@@ -531,6 +751,52 @@ describe("a rule in one sentence", () => {
   // The distinction the sentence has to carry: a trigger with no `to` fires on
   // any change, and reading it as "becomes Done" would describe a rule nobody
   // wrote.
+  // The two anchors have to sound different, because they are different rules:
+  // one dates a task from today and the other moves the date it has.
+  it("says which anchor a relative date counts from", () => {
+    expect(
+      describeRule(
+        rule({
+          trigger: { kind: "taskCreated" },
+          actions: [
+            { kind: "setField", field: "dueAt", to: { kind: "relativeDate", days: 3, from: "now" } },
+          ],
+        }),
+        names,
+      ),
+    ).toBe("When a task is created, set Due date to 3 days from now");
+
+    expect(
+      describeRule(
+        rule({
+          trigger: { kind: "fieldChanged", field: "statusId", to: DONE },
+          actions: [
+            {
+              kind: "setField",
+              field: "dueAt",
+              to: { kind: "relativeDate", days: 7, from: "current" },
+            },
+          ],
+        }),
+        names,
+      ),
+    ).toBe("When Status becomes Done, set Due date to 7 days later than it is");
+  });
+
+  it("reads every relative date as English rather than as arithmetic", () => {
+    expect(describeRelativeDate({ kind: "relativeDate", days: 0, from: "now" })).toBe("today");
+    expect(describeRelativeDate({ kind: "relativeDate", days: 1, from: "now" })).toBe(
+      "1 day from now",
+    );
+    expect(describeRelativeDate({ kind: "relativeDate", days: -2, from: "now" })).toBe("2 days ago");
+    expect(describeRelativeDate({ kind: "relativeDate", days: -1, from: "current" })).toBe(
+      "1 day earlier than it is",
+    );
+    expect(describeRelativeDate({ kind: "relativeDate", days: 0, from: "current" })).toBe(
+      "the day it already falls on",
+    );
+  });
+
   it("says any change when the trigger is not narrowed", () => {
     expect(describeRule(rule({ trigger: { kind: "fieldChanged", field: "statusId" } }), names)).toBe(
       "When Status changes, archive the task",

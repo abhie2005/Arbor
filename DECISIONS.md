@@ -6157,3 +6157,113 @@ minutes because they are about *compilation*.
 *In one sentence:* the text box was a symptom of three fields sharing one input
 type, and the fix was to stop pretending that a list, a space and a folder are
 the same kind of choice.
+### D-147
+**A date a rule works out when it runs** · 2026-11-10 · active
+
+The second-to-last thing on the gaps list — "no relative dates in actions",
+deferred on purpose by D-129 and named in every status note since. A rule could
+set a due date to **the 20th** and could not set one to **three days from now**,
+which is the version somebody actually writes.
+
+**The value does not exist when the rule is written, so the action stores the
+arithmetic instead.** A rule is written once and then runs for a year; the date
+the form happened to be open on is the one answer that is certainly wrong. So
+`to` may be `{ kind: "relativeDate", days, from }` and `compileActions` does the
+sum at the moment it acts.
+
+**Rejected: a second action kind.** `setRelativeDate` beside `setField` would
+double every place that switches on a kind — the parser, the compiler, the
+sentence, the form, `draftsFrom` — to express a difference that is entirely about
+the *value*. The action is still "set the due date"; only what it is set to has
+gained a shape.
+
+**Rejected: a string, `"+3d"`.** It is shorter to type into a column and it
+needs a parser, a grammar nobody documents, and an error message about a syntax
+the form can never produce. The object is what the form posts and what the API
+takes, and `JSON.stringify` is the only serializer involved.
+
+**Rejected: the offset living on the rule, beside `delaySeconds`.** Tempting
+because the two look alike, and wrong for the reason the delay's own note gives:
+a delay is how long the rule *waits*, this is what it *writes*, and a rule may
+have both. Putting them in one place would make "wait an hour, then date it
+three days out" inexpressible.
+
+**`now` is a parameter to `compileActions`, for exactly the reason `newId`
+already was.** A pure function may not invent a uuid and may not read the clock
+either. The runtime passes `new Date()` at the moment it acts; the unit tests
+pass a fixed instant — 03:00 UTC, which is the previous evening in California,
+so a helper that quietly used the local day fails on this machine rather than
+only on a server somewhere.
+
+That parameter also decides something a reader would otherwise have to guess:
+**a delayed rule counts its days from when it acts, not from when it fired.**
+`executeRun` compiles the actions after the wait, so "in three days" on a rule
+that waits a week is ten days out, which is what the two clauses say
+separately.
+
+**Both anchors are real rules, and they have to sound different.** `now` is
+"three days from when this runs", which is what a rule on task creation means.
+`current` is "three days later than it already is", which is what a rule
+pushing a blocked task out means — and it is the one a date picker could never
+express, which is why the gap existed at all. The sentence says "3 days from
+now" against "7 days later than it is", because a form that blurred them would
+hide the only thing somebody is checking.
+
+**An empty anchor writes nothing.** "Seven days later than it is" has no answer
+for a task with no due date. The alternative — falling back to today — is a
+robot inventing a deadline nobody wrote, on a task nobody dated. So the action
+is dropped, which the run already knows how to report: it is the same path as a
+rule that fires a hundred times and changes nothing.
+
+**The parser gained the value half it never had.** `to` used to be taken as it
+arrived: `value.to ?? null`, no questions. So an object posted where a status
+goes was stored, armed, and then handed to a uuid column — a caller-triggerable
+500 inside a run at 3am, which is precisely what D-134 moved to a 400 at the
+door for the public API. Now a scalar still passes through untouched (the column
+decides what it accepts, and validating types twice is two opinions about one
+column), the only legal structure is a relative date, and anything else
+object-shaped is refused by name. A relative date on a field that holds no date
+is refused there too, where it would otherwise parse, store, arm, and throw
+three days later.
+
+**Two bugs were in the absolute case, and the same change fixes both.** A day
+typed into the form reached the column as ten characters — `"2026-11-20"` — for
+Postgres to interpret in whatever zone the server is set to, which is not a
+frame invariant 9 names. And the no-op check could never match: `from` is an ISO
+instant, so comparing it against a bare day said "different" every time and a
+rule that set the date it had already set logged a change. A `YYYY-MM-DD` on a
+date field is now midnight UTC before it becomes an operation; an ISO instant
+from the API is left exactly as it came, because that is a moment rather than a
+day and rounding it would be this function overruling its caller.
+
+**And a third, which is the one somebody would have seen.** No automation had
+ever cleared `due_has_time`. A rule writing midnight UTC onto a task whose flag
+was true leaves a calendar day marked as a moment, and every reader west of
+Greenwich then renders it as the day before — the D-067 bug, restored by the
+only writer that had never been taught the rule. `markDatesAsDays` writes the
+flag alongside `applyOperations`, exactly as `setTaskDate` does and for the same
+reason: the flag is a property of the value rather than a value of its own, so
+it is not an invertible operation and must not become one.
+
+The cost is stated rather than hidden: **an automation cannot write a timed
+date.** A relative date rounds to a UTC day, so "two hours before the meeting"
+is still not expressible — that needs the duration control the form does not
+have, and this is the second thing that will want it.
+
+**Verified.** 16 unit tests (644), three live-Postgres checks (358), three in
+`check:actions` (211) for the trip a nested object makes through a server action
+into `jsonb` and back. Two reverts were watched to fail: dropping the flag write
+fails the new check *and* the "a timed due date is not midnight UTC" section
+four hundred lines later, which is a second alarm on the same wire; dropping the
+date resolution fails all three.
+
+**The fixture lesson this file already warned about, walked into again.** The
+`current`-anchor check first reported broken arithmetic, and the cause was that
+the seed gives ENG-402 priority 1 — so the priority change meant to fire the
+rule was a no-op that never reached the log. A fixture that quietly does nothing
+reports "the rule did not fire" and looks exactly like a broken engine. The
+comment in `db:smoke` says so twice now, in two different sections.
+
+*In one sentence:* a rule that writes a date now stores the sum rather than the
+answer, which is the only version of the feature that still means what it said a
+year later.

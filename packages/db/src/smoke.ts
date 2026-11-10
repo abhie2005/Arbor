@@ -12,6 +12,7 @@
 import {
   DEFAULT_VIEW_DEFINITION,
   MAX_RUN_ATTEMPTS,
+  addUtcDays,
   compileViewQuery,
   docStateFrom,
   invert,
@@ -4365,6 +4366,135 @@ async function main() {
       ? null
       : "a second service account was created",
   );
+
+  // --- a date the rule works out when it runs (D-147) ------------------------
+  //
+  // The unit tests own the arithmetic; what only a database can answer is what
+  // ends up in the column, and the column is `timestamptz` with a flag beside
+  // it saying how to read it. Two things are checked here and both of them were
+  // wrong before:
+  //
+  //   - the value is **midnight UTC** on the day the rule meant, rather than
+  //     ten characters handed to Postgres to interpret in whatever zone the
+  //     server happens to be set to;
+  //   - `due_has_time` is **cleared**, because what the rule wrote is a
+  //     calendar day (invariant 9). The fixture below gives the task a timed
+  //     due date first, so a run that leaves the flag alone leaves a UTC
+  //     midnight marked as a moment — which every reader west of Greenwich
+  //     then renders as the day before. The "a due date that is a moment"
+  //     section later in this file fails too when that happens, which is the
+  //     second alarm on the same wire.
+  const dated = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "Due in three days once it is in review",
+      trigger: { kind: "fieldChanged", field: "statusId", to: inReview.id },
+      actions: [
+        { kind: "setField", field: "dueAt", to: { kind: "relativeDate", days: 3, from: "now" } },
+      ],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await pool.query(
+    `UPDATE tasks SET due_at = now() + interval '9 days 17 hours', due_has_time = true
+      WHERE id = $1`,
+    [autoTask.id],
+  );
+
+  // The same clock the run will read — `executeRun` calls `new Date()` in this
+  // process, so there is no drift between this expectation and the rule's own
+  // arithmetic (Postgres's clock is a different one, and CLAUDE.md says so).
+  const expectedDue = addUtcDays(new Date(), 3).toISOString();
+
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: autoTask.id!,
+        field: "statusId",
+        from: autoTodo.id!,
+        to: inReview.id!,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await tickAutomations(ws.id!, pool);
+
+  const datedRow = await one(
+    `SELECT due_at, due_has_time::text AS has_time FROM tasks WHERE id = $1`,
+    [autoTask.id],
+  );
+
+  report(
+    "a relative date lands on midnight UTC of the day the rule meant",
+    new Date(String(datedRow?.due_at)).toISOString() === expectedDue
+      ? null
+      : `stored ${String(datedRow?.due_at)}, expected ${expectedDue}`,
+  );
+
+  report(
+    "and the task is marked as carrying no time, because a day is what was written",
+    datedRow?.has_time === "false"
+      ? null
+      : "due_has_time survived a rule writing a calendar day into the column",
+  );
+
+  // The other anchor, and the one a date picker could never express: move the
+  // date the task already has. It runs against what the rule above just wrote,
+  // so the two checks are also a statement that the first one's value is a
+  // readable date rather than something that only looks right.
+  const pushed = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "Push it out a week when it is blocked",
+      trigger: { kind: "fieldChanged", field: "priority" },
+      actions: [
+        { kind: "setField", field: "dueAt", to: { kind: "relativeDate", days: 7, from: "current" } },
+      ],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  // Priority **2**, because the seed gives this task priority 1 and a change to
+  // the value it already holds is dropped before it ever reaches the log — so
+  // the rule would not fire and the check would read as broken arithmetic.
+  const before = await one(`SELECT priority FROM tasks WHERE id = $1`, [autoTask.id]);
+  await applyOperations(
+    [
+      {
+        kind: "setField",
+        taskId: autoTask.id!,
+        field: "priority",
+        from: before?.priority === null || before?.priority === undefined
+          ? null
+          : Number(before.priority),
+        to: 2,
+      },
+    ],
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await tickAutomations(ws.id!, pool);
+
+  const pushedRow = await one(`SELECT due_at FROM tasks WHERE id = $1`, [autoTask.id]);
+
+  report(
+    "an offset from the date a task already holds moves that date, not today's",
+    new Date(String(pushedRow?.due_at)).toISOString() === addUtcDays(expectedDue, 7).toISOString()
+      ? null
+      : `stored ${String(pushedRow?.due_at)}, expected ${addUtcDays(expectedDue, 7).toISOString()}`,
+  );
+
+  // Both rules off again. A rule left armed here fires on status and priority
+  // changes the sections below make for their own reasons, and an extra run in
+  // `outcomes` fails a check that is about something else entirely.
+  await setAutomationEnabled(dated, false, { actorId: owner.id!, connection: pool });
+  await setAutomationEnabled(pushed, false, { actorId: owner.id!, connection: pool });
+  await pool.query(`UPDATE tasks SET status_id = $2 WHERE id = $1`, [autoTask.id, autoTodo.id]);
 
   // --- what the screen reads, which is not what the engine reads -------------
   //
