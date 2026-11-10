@@ -119,7 +119,13 @@ two applies, because the registry must exist before an image can be pushed.
    watcher a read flag per event: the ambient half's read state is one mark per
    membership (D-088).
 9. **Dates**: a date-only value is midnight UTC and read in UTC (D-067).
-   `dueHasTime` decides. Never format one without asking.
+   `dueHasTime` decides. Never format one without asking. **A writer of a
+   calendar day owes the flag as well as the value** — it is a property of the
+   value rather than an operation of its own, so it is written beside
+   `applyOperations` rather than through it. There are two such writers now: the
+   calendar's `setTaskDate`, and `markDatesAsDays` for anything an automation
+   resolves (D-147). An automation therefore cannot write a *timed* date, which
+   is a cost rather than an oversight.
 10. **An operation must survive JSON.** It is handed to the client as an
    inverse and posted back by `undo`, so a `Date` on one arrives as a string and
    every helper that calls a date method on it throws. Instants on operations
@@ -213,6 +219,7 @@ two applies, because the registry must exist before an image can be pushed.
 | Retry policy, and the attempt limit's reasoning (pure, D-145) | `retryAfterSeconds` in `packages/core/src/automations.ts` |
 | Filter menus, and the only permission-scoped set in them (D-146) | `loadFilterOptions` in `apps/web/src/server/views.ts` |
 | Settling a run a dead process abandoned (D-145) | `reapStrandedRuns` in `packages/db/src/automations.ts` |
+| What a date an action sets resolves to, at the moment it acts (D-147) | `resolveValue` in `packages/core/src/automations.ts` |
 
 ## Conventions
 

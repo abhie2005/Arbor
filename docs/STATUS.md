@@ -1,6 +1,17 @@
 # Status — resume here
 
-Last updated 2026-11-06 (a container filter is a menu). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-11-10 (a rule can write a date it works out). Repo: https://github.com/abhie2005/Arbor (`main`).
+
+**The newest thing is D-147: an automation action may hold arithmetic rather
+than a value.** "Due three days from now" and "push it out a week from the date
+it has" are rules now; the sum is done at the moment the rule acts, which for a
+delayed rule is days after it fired. It also closed three things nobody was
+looking for: an object posted where a value goes used to be stored and armed
+(a 500 inside a run, now a refusal at the door), a day typed into the form
+reached the column as ten characters for Postgres to read in its own zone, and
+**no automation had ever cleared `due_has_time`** — so a rule writing a calendar
+day left it marked as a moment, which is D-067's bug restored by the one writer
+that had never been taught the rule.
 
 **Phases 1–10 are done, and the decision that followed them is made.** The
 browser pass is a gate — `npm run check:browser`, thirty checks driving four
@@ -318,7 +329,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 628 unit tests, 355 live-Postgres checks, 208 action checks, 30
+**Verified:** 644 unit tests, 358 live-Postgres checks, 211 action checks, 30
 API checks, 11 search checks, **39 browser checks**, four packages typechecking
 clean, and the interactions above driven in Chrome — most recently `[[`
 resolving to a page and then to a task inside one sentence, the two edges
@@ -372,7 +383,7 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 **Phase 10 is closed, nothing is half-built, and the decision that followed it
 is made.** Every numbered item below is struck through, both bug lists are
-empty, and the gates are green: 628 unit tests, 355 live-Postgres checks, 208
+empty, and the gates are green: 644 unit tests, 358 live-Postgres checks, 211
 action checks, 30 API checks, 11 search checks, 39 browser checks, and four
 packages typechecking.
 
@@ -397,8 +408,23 @@ genuinely a choice rather than an order:
    - **derived field types compute nothing.** `formula`, `rollup` and
      `automatic_progress` are declared and filterable. This is the one that is
      not small, and the open question is still whether it needs a worker.
-   - **no relative dates in actions**, and the two menu gaps (`parentTaskId`,
-     a duration control) that D-129 deferred on purpose.
+   - ~~**no relative dates in actions.**~~ **Done** (2026-11-10, D-147). An
+     action's `to` may be `{ kind: "relativeDate", days, from }`, resolved when
+     the rule acts — `now` for "three days from now", `current` for "a week
+     later than it is", and an empty anchor writes nothing rather than dating a
+     task from today. `compileActions` takes `now` as a parameter for the same
+     reason it already took `newId`. **Three bugs came out of it that the gaps
+     list never named**: an object where a value goes used to be armed and then
+     thrown from inside a run, a `YYYY-MM-DD` reached the column unframed, and
+     an automation never cleared `due_has_time`.
+   - **the two menu gaps that D-129 deferred on purpose**: `parentTaskId` (it
+     needs the task picker nobody has built — `ValueInput` already declares
+     `task`, so the declaration is ahead of the control) and a duration control
+     for `timeEstimateMs`, which means teaching the filter bar about durations
+     in the same change. **D-147 is the second thing that wants the second
+     one**: an automation cannot write a *timed* date, because a relative date
+     rounds to a UTC day, so "two hours before the meeting" waits on a control
+     that can say two hours.
 2. **Deploying it again.** The Terraform path has been applied against a real
    account once and destroyed; nothing has run against it since Phase 10 added
    three ways in. A second apply is the only thing that tells you whether the
@@ -671,8 +697,11 @@ wrote the comment that was typed into it.
   warn state at 80% and the refused count beside it — and this list was never
   updated. Found by reading the screen before building anything, which is the
   argument for auditing a list that has deferred the same items twice.
-- **No relative dates in actions.** "Due in 3 days" is the obvious next action
-  kind; `to` is currently a literal value.
+- ~~**No relative dates in actions.**~~ **Done** (D-147), and not as a new
+  action kind: `setField` keeps doing the setting and the *value* gained a
+  shape, because a second kind would have doubled every switch in the parser,
+  the compiler, the sentence and the form to express a difference that is
+  entirely about what is being set to what.
 - ~~**Forms and the public API.**~~ Both done — the API in D-133 to D-135, and
   forms in D-142 and D-143.
 - **`webhooks` and `templates` are still unread**, as they have been since

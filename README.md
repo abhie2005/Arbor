@@ -57,11 +57,11 @@ password and an API token scoped to the demo space.
 Verify the stack end to end:
 
 ```bash
-npm test               # 628 unit tests, no database needed
-npm run db:smoke       # 355 checks against real Postgres: compiled queries,
+npm test               # 644 unit tests, no database needed
+npm run db:smoke       # 358 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, the activity log, the
                        # automation engine, and API tokens end to end
-npm run check:actions  # 208 checks that POST what a button click posts, then
+npm run check:actions  # 211 checks that POST what a button click posts, then
                        # assert against Postgres — needs a dev server running
 npm run check:api      # 30 checks over HTTP against /api/v1 — reads, writes,
                        # every way a token can be refused, and posting an
@@ -354,10 +354,14 @@ back would be worse than no nudge.
       to "whose undo stack does a robot's write land in" is nobody's, by
       construction. The queue is a table and a delay is a column on the rule —
       "in 3 days, if still open" works because the conditions are asked when
-      the run executes rather than when it was queued. A rule acts as a
-      per-workspace service account: a real member the access index knows, not
-      a synthetic id, which is what lets history name it and permission checks
-      treat it like anybody else. `/settings/automations` writes one out of
+      the run executes rather than when it was queued. **A date an action writes
+      can be arithmetic rather than a value** — "due three days from now", or
+      "push it out a week from the date it already has" — worked out at the
+      moment the rule acts, because a rule is written once and then runs for a
+      year, and the date the form was open on is the one answer that is
+      certainly wrong (D-147). A rule acts as a per-workspace service account: a
+      real member the access index knows, not a synthetic id, which is what lets
+      history name it and permission checks treat it like anybody else. `/settings/automations` writes one out of
       parts that already existed — the sharing screen's container tree, the
       filter bar's condition menus — and takes `manage` on the container a rule
       is scoped to rather than a workspace role.
