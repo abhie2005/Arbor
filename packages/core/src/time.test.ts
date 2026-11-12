@@ -6,6 +6,7 @@ import {
   entryDurationMs,
   formatClock,
   formatDuration,
+  parseDuration,
   isRunning,
   sameTimeEntry,
   trackedPercent,
@@ -134,6 +135,53 @@ describe("formatDuration", () => {
 
   it("never renders a negative", () => {
     expect(formatDuration(-5_000)).toBe("0m");
+  });
+});
+
+describe("parseDuration", () => {
+  it("reads the vocabulary formatDuration writes", () => {
+    expect(parseDuration("1h 30m")).toBe(90 * 60_000);
+    expect(parseDuration("2h")).toBe(2 * 3_600_000);
+    expect(parseDuration("45m")).toBe(45 * 60_000);
+    expect(parseDuration("0m")).toBe(0);
+  });
+
+  // The round trip is the claim worth testing: what somebody types comes back
+  // as what they typed, or the control is rewriting their answer.
+  it("round-trips every shape the formatter emits", () => {
+    for (const ms of [0, 60_000, 45 * 60_000, 2 * 3_600_000, 90 * 60_000, 30 * 3_600_000]) {
+      expect(parseDuration(formatDuration(ms))).toBe(ms);
+    }
+  });
+
+  it("takes a bare number as minutes, because every duration box here does", () => {
+    expect(parseDuration("90")).toBe(90 * 60_000);
+    expect(parseDuration("0")).toBe(0);
+  });
+
+  it("takes a fraction of an hour, which is how people write ninety minutes", () => {
+    expect(parseDuration("1.5h")).toBe(90 * 60_000);
+    expect(parseDuration("0.25h")).toBe(15 * 60_000);
+  });
+
+  it("is relaxed about spacing and case", () => {
+    expect(parseDuration(" 2H30M ")).toBe(150 * 60_000);
+  });
+
+  // A half-written answer is not an error: the box is typed into one character
+  // at a time and the caller holds the last value it understood.
+  it("says null for what it cannot read, including a half-typed duration", () => {
+    expect(parseDuration("2h 3")).toBeNull();
+    expect(parseDuration("")).toBeNull();
+    expect(parseDuration("soon")).toBeNull();
+    expect(parseDuration("-5m")).toBeNull();
+  });
+
+  // Days would store a value that reappears as hours, which is the control
+  // rewriting what somebody typed.
+  it("refuses a unit the formatter cannot give back", () => {
+    expect(parseDuration("3d")).toBeNull();
+    expect(parseDuration("2w")).toBeNull();
   });
 });
 

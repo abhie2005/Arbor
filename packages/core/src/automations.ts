@@ -844,10 +844,10 @@ export interface AutomatableField {
  * to offer: "parent task" needs a task picker nobody has built, and a uuid in a
  * text box is not an interface, it is a way to store a typo.
  *
- * `timeEstimateMs` says its unit out loud because the column is milliseconds
- * and a box labelled "Estimate" invites hours. A duration control belongs in
- * `ValueInput` beside `date`, which means teaching the filter bar about it in
- * the same change — a separate job, not a side effect of this one.
+ * `timeEstimateMs` no longer says "(ms)" in its label, because the box no
+ * longer wants milliseconds: `duration` is a `ValueInput` now and the filter
+ * bar learned it in the same change, which is what that job always was
+ * (D-148).
  */
 export const AUTOMATABLE_FIELDS: readonly AutomatableField[] = [
   { field: "name", label: "Name", input: "text" },
@@ -856,7 +856,7 @@ export const AUTOMATABLE_FIELDS: readonly AutomatableField[] = [
   { field: "dueAt", label: "Due date", input: "date" },
   { field: "startAt", label: "Start date", input: "date" },
   { field: "points", label: "Points", input: "number" },
-  { field: "timeEstimateMs", label: "Estimate (ms)", input: "number" },
+  { field: "timeEstimateMs", label: "Estimate", input: "duration" },
   { field: "taskTypeId", label: "Task type", input: "taskType" },
   // `list` rather than a generic container (D-146): this action moves a task to
   // a list, and a menu that offered a space would compile to an operation the

@@ -153,6 +153,47 @@ export function formatDuration(ms: number): string {
 }
 
 /**
+ * "2h 30m", "90m", "1.5h", "90" → milliseconds. Null for anything it cannot
+ * read.
+ *
+ * The other half of `formatDuration`, and here for the reason that one is here:
+ * a duration is milliseconds in the column and "2h 30m" in somebody's head, and
+ * the translation between them belongs in one place rather than beside every
+ * box that needs it. Until this existed there was no box: a filter on Estimate
+ * and an automation setting one both asked for a raw millisecond count, which
+ * is a number nobody has (D-148).
+ *
+ * **What it takes is what `formatDuration` gives back.** Hours and minutes,
+ * because those are the units that function emits — accepting "3d" would store
+ * a value that reappears as "72h", which is a control quietly rewriting what
+ * somebody typed. Thirty hours is `30h`.
+ *
+ * **A bare number is minutes.** That is what every duration box in this app has
+ * meant since Phase 8 — the estimate field and the time-entry field are both
+ * labelled `min` — and a bare number has to mean *something*, because refusing
+ * it would make the fastest thing to type the one thing that does not work.
+ *
+ * **Null rather than a throw or a zero.** A box is typed into one character at
+ * a time, so "2h 3" is a half-written answer rather than an error worth
+ * showing, and the caller keeps the last value it understood. Zero is a legal
+ * duration — "0m" — so it cannot also be what failure looks like.
+ */
+export function parseDuration(text: string): number | null {
+  const trimmed = text.trim().toLowerCase();
+  if (trimmed === "") return null;
+
+  if (/^\d+(?:\.\d+)?$/.test(trimmed)) return Math.round(Number(trimmed) * 60_000);
+
+  const parts = /^(?:(\d+(?:\.\d+)?)\s*h)?\s*(?:(\d+(?:\.\d+)?)\s*m)?$/.exec(trimmed);
+  if (!parts || (parts[1] === undefined && parts[2] === undefined)) return null;
+
+  const hours = parts[1] === undefined ? 0 : Number(parts[1]);
+  const minutes = parts[2] === undefined ? 0 : Number(parts[2]);
+
+  return Math.round(hours * 3_600_000 + minutes * 60_000);
+}
+
+/**
  * "1:23:45" — a running timer, ticking.
  *
  * Seconds are shown here and nowhere else, because here they are the point: a

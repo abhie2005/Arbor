@@ -19,6 +19,7 @@ import {
   RELATION_LABELS,
   describeDelay,
   describeRule,
+  formatDuration,
   isRelativeDate,
   mayRetry,
   relationInput,
@@ -1129,6 +1130,10 @@ function firstValueFor(field: TaskField, values: FilterOptionValues): unknown {
 function nameLookup(values: FilterOptionValues) {
   return (input: ValueInput, value: unknown): string => {
     if (value === null || value === undefined || value === "") return "nothing";
+    // A duration has no table to look it up in — it is a quantity, and the
+    // sentence has to say "2h 30m" rather than the millisecond count the column
+    // holds (D-148).
+    if (input === "duration" && typeof value === "number") return formatDuration(value);
     const options = optionsFor(input, undefined, values);
     const match = options?.find((option) => String(option.id) === String(value));
     return match?.name ?? String(value);

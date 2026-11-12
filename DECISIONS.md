@@ -6267,3 +6267,90 @@ comment in `db:smoke` says so twice now, in two different sections.
 *In one sentence:* a rule that writes a date now stores the sum rather than the
 answer, which is the only version of the feature that still means what it said a
 year later.
+
+### D-148
+**A duration is written the way it is read** · 2026-11-12 · active
+
+The other half of the menu gap D-129 deferred, and the thing D-147 said would
+be wanted twice. The column is milliseconds. So was the box: a filter on
+Estimate declared `input: "number"`, and the automation action's label said
+**"Estimate (ms)"** out loud — a field asking for `9000000`, which is not a
+quantity anybody has.
+
+**Its own `ValueInput`, not `number`.** The same reason `date` is not `text`:
+the stored unit and the written one are different, and a control is what holds
+the translation. Once it exists, both halves get it from one declaration — the
+filter bar and the automation action — which is the bet this file has already
+made twice (D-054, D-146).
+
+**`parseDuration` beside `formatDuration`, so the vocabulary is one in both
+directions.** The formatter has been the single way every screen *reads* a
+duration since Phase 8; there was simply no way to write one. Three choices in
+the parser are worth the words:
+
+- **It takes what the formatter gives back, and nothing else.** Hours and
+  minutes. Accepting "3d" would store a value that reappears as "72h", which is
+  a box quietly rewriting what somebody typed.
+- **A bare number is minutes**, because that is what every duration box in this
+  app meant before today — the estimate field and the time-entry field were
+  both labelled `min` — and refusing it would make the fastest thing to type
+  the one thing that does not work.
+- **Null for what it cannot read, rather than a throw or a zero.** A box is
+  typed into one character at a time: "2h 3" is a half-written answer, not an
+  error worth showing. Zero is a legal duration ("0m") and must not also be
+  what failure looks like.
+
+**The control publishes only readable drafts**, which is what makes that null
+usable: the box holds its own text and the caller hears values it can use. In
+the filter bar every change is a navigation, so publishing a null mid-keystroke
+would clear the filter while somebody is still typing it.
+
+**`commitOn` is the one knob, and what decides it is who is listening.** A
+filter's receiver is component state, and it wants every readable keystroke the
+way the text and number boxes beside it do. A task's estimate is a *server
+write*, and a POST per keystroke is not an interface — so that one publishes
+when the box is left, which is exactly what the control it replaced did.
+
+**Three hand-rolled minute boxes went with it**: the estimate, logging time
+after the fact, and editing an entry. That was the real cost of not having this
+— the detail page rendered "2h 30m" in the bar and asked for `150` in the box
+directly beneath it. The estimate box had also hand-rolled invariant 11's rule
+(`seen`/`setSeen` to follow the server), and the shared control owns that now,
+so there is one copy of it rather than one per box.
+
+**The action's unit stays minutes.** Changing `setTimeEstimate` and `logTime`
+to take milliseconds would be an API change made for tidiness, and there is a
+check written against each of them; the component converts at the call site,
+which is where a unit mismatch between a control and a boundary belongs.
+
+**One subtlety the Enter key found.** `LogForm` clears its value after logging,
+and the control holds its draft while it has focus — so clearing the value
+behind a focused box left the text sitting there as if nothing had happened.
+Enter blurs the box and then submits. The `hold` that caused it is the same one
+that makes a live update safe (D-090), so the answer is ordering rather than
+removing it.
+
+**Verified**: 652 unit tests, and five checks in `check:browser` (44) because
+this is an affordance claim — the server has always stored milliseconds
+correctly, and the question is whether a person can say "2h 30m" to it. They
+cover both commit models and both directions: an Estimate filter reading `2h`
+where it used to read `7200000`, typing `1h 30m` into it and finding `5400000`
+in the URL the view is shared as, a task's estimate box reading `45m` for what
+the column holds, and typing `2h 30m` into it putting `9000000` there.
+
+**Two reverts were watched to fail, and the second one failed the right way by
+accident.** Putting `input: "number"` back makes the filter box read `7200000`
+and Playwright refuse to type into it at all — `Cannot type text into
+input[type=number]`, which is the gap in one sentence. Killing the parser's
+hours-and-minutes branch instead should have failed the estimate check, and it
+*passed* — because the check was asserting a value the previous run had left in
+the column. A check that passes against a build which cannot read "2h 30m" is
+worth more as a lesson than as a check: the fixture is written to `45m` first
+now, so the write has to happen for the assertion to hold. This is the same
+shape `db:smoke` warns about twice (a fixture that quietly does nothing reports
+a failure that looks like the code under test), found this time by following
+the rule that a new check must be watched to fail.
+
+*In one sentence:* the app could print "2h 30m" everywhere and accept it
+nowhere, and the fix was one parser, one control, and one declaration each for
+the two menus that needed it.

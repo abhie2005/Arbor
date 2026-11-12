@@ -81,6 +81,12 @@ describe("what a filter bar may offer", () => {
     expect(number?.options).toBeUndefined();
   });
 
+  // D-148: the column is milliseconds, which is a number and not a quantity
+  // anybody has. A text box asking for 9000000 is the gap this closed.
+  it("asks for an estimate as a duration rather than as a number", () => {
+    expect(filterableFields(catalog).find((f) => f.ref === "timeEstimate")?.input).toBe("duration");
+  });
+
   it("picks a control from the type, not from the storage column", () => {
     // Status and assignee are both uuids in SQL and need different pickers.
     const fields = filterableFields(catalog);
@@ -93,6 +99,9 @@ describe("operator wording", () => {
   it("says 'is after' for dates and 'is more than' for numbers", () => {
     expect(operatorLabel("gt", "date")).toBe("is after");
     expect(operatorLabel("gt", "number")).toBe("is more than");
+    // A duration is ordered the way a number is, so it inherits the wording
+    // rather than needing its own: "Estimate is after 2h" would read as a bug.
+    expect(operatorLabel("gt", "duration")).toBe("is more than");
   });
 
   it("hides the value control for presence checks", () => {

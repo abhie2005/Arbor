@@ -690,7 +690,78 @@ await section("the container filter", async () => {
   }
 });
 
-// --- 6. a person with a password --------------------------------------------
+// --- 6. a duration is written the way it is read -----------------------------
+
+console.log("\na duration — a box that takes back what it shows");
+
+await section("durations", async () => {
+  // An affordance claim, which is why it is here rather than in `check:actions`
+  // (D-146's argument): the server has always stored milliseconds correctly and
+  // the question is whether a person can say "2h 30m" to it. Two boxes, because
+  // the control is shared and the two halves commit differently — a filter
+  // publishes every readable keystroke, an estimate publishes when the box is
+  // left (D-148).
+  const { context, issues } = await asViewer(sessions.avery);
+  const page = await context.newPage();
+
+  const filtered = `/?f=${encodeURIComponent(JSON.stringify({ c: [["timeEstimate", "gte", 7_200_000]] }))}`;
+  await page.goto(`${BASE}${filtered}`, { waitUntil: "networkidle" });
+
+  const control = page.locator('[aria-label="Value"]').first();
+  const shown = await control.inputValue().catch(() => "MISSING");
+  report(
+    "an Estimate filter shows hours rather than the millisecond count it stores",
+    shown === "2h" ? null : `the value box reads ${JSON.stringify(shown)}`,
+  );
+
+  // The translation, end to end: what is typed becomes what the query carries.
+  await control.fill("1h 30m");
+  await control.blur();
+  await page.waitForURL(/5400000/, { timeout: 15_000 }).catch(() => undefined);
+  report(
+    "and typing one puts milliseconds in the URL the view is shared as",
+    page.url().includes("5400000") ? null : `the URL is ${page.url()}`,
+  );
+
+  // The other box, on the screen where an estimate is actually set. It was a
+  // number of minutes until D-148 — "2h 30m" in the bar above it and `150` in
+  // the box below, which is the inconsistency the control removes.
+  //
+  // **The fixture is set to something else first, and that is not a detail.**
+  // Without it this check asserted a value the *previous* run had written, so
+  // it passed against a build whose parser could not read "2h 30m" at all —
+  // caught by reverting one, which is what the rule about reverts is for.
+  await one(`UPDATE tasks SET time_estimate_ms = 2700000 WHERE key = 'ENG-402'`);
+  await page.goto(`${BASE}/t/ENG-402`, { waitUntil: "networkidle" });
+
+  const estimate = page.locator('[aria-label="Estimate"]');
+  report(
+    "the estimate box reads in words what the column holds in milliseconds",
+    (await estimate.inputValue()) === "45m"
+      ? null
+      : `the box reads ${JSON.stringify(await estimate.inputValue())}`,
+  );
+
+  await estimate.fill("2h 30m");
+  await estimate.blur();
+
+  let stored: unknown = null;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    stored = (await one(`SELECT time_estimate_ms FROM tasks WHERE key = 'ENG-402'`))
+      ?.time_estimate_ms;
+    if (Number(stored) === 9_000_000) break;
+    await page.waitForTimeout(250);
+  }
+  report(
+    "and one typed as hours and minutes is stored as milliseconds",
+    Number(stored) === 9_000_000 ? null : `the column holds ${String(stored)}`,
+  );
+
+  report("nothing in the console while a duration is typed", noisy(issues));
+  await context.close();
+});
+
+// --- 7. a person with a password --------------------------------------------
 
 console.log("\nsigning in — the door everybody else in this file walked past");
 

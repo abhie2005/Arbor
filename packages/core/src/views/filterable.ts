@@ -24,6 +24,14 @@ export type ValueInput =
   | "text"
   | "number"
   | "date"
+  /**
+   * Milliseconds in the column, "2h 30m" in the box (D-148). Its own input
+   * rather than `number` for the reason `date` is not `text`: the stored unit
+   * and the written one are different, and a control is what holds the
+   * translation. A filter on Estimate asked for a raw millisecond count until
+   * this existed, which is a number nobody has.
+   */
+  | "duration"
   /** The field's own dropdown or label options. */
   | "choice"
   | "status"
@@ -105,7 +113,7 @@ export const BUILTIN_FILTERABLE: Partial<Record<BuiltinField, BuiltinMeta>> = {
   completedAt: { label: "Completed", input: "date", ops: ORDERED_OPS },
   createdBy: { label: "Created by", input: "user", ops: SET_OPS },
   points: { label: "Points", input: "number", ops: ORDERED_OPS },
-  timeEstimate: { label: "Estimate", input: "number", ops: ORDERED_OPS },
+  timeEstimate: { label: "Estimate", input: "duration", ops: ORDERED_OPS },
   list: { label: "List", input: "list", ops: SET_OPS },
   space: { label: "Space", input: "space", ops: SET_OPS },
   folder: { label: "Folder", input: "folder", ops: SET_OPS },

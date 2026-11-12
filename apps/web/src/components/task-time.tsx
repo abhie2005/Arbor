@@ -18,6 +18,7 @@ import {
   updateTimeEntry,
 } from "@/server/time-actions";
 
+import { DurationInput } from "./duration-input";
 import { Timestamp } from "./timestamp";
 
 /**
@@ -187,17 +188,6 @@ function Estimate({
   canEdit: boolean;
   act: (action: () => Promise<Operation[]>) => void;
 }) {
-  const [minutes, setMinutes] = useState(estimateMs === null ? "" : String(estimateMs / 60_000));
-
-  // The server's value wins whenever it changes underneath — a live update, or
-  // somebody else's edit. Following `useServerValue`'s rule (D-090) rather than
-  // taking the prop once and never looking again.
-  const [seen, setSeen] = useState(estimateMs);
-  if (seen !== estimateMs) {
-    setSeen(estimateMs);
-    setMinutes(estimateMs === null ? "" : String(estimateMs / 60_000));
-  }
-
   return (
     <div className="time-estimate">
       <div className="time-bar">
@@ -219,22 +209,26 @@ function Estimate({
       <label className="time-estimate-field">
         Estimate
         {canEdit ? (
-          <>
-            <input
-              type="number"
-              min="0"
-              step="15"
-              value={minutes}
-              onChange={(event) => setMinutes(event.target.value)}
-              onBlur={() => {
-                const next = minutes.trim() === "" ? null : Number(minutes);
-                const current = estimateMs === null ? null : estimateMs / 60_000;
-                if (next === current) return;
-                act(() => setTimeEstimate(taskId, next));
-              }}
-            />
-            <span className="time-unit">min</span>
-          </>
+          // The same box the filter bar and an automation action use (D-148),
+          // which is the point: an estimate was written in minutes here and
+          // read as "2h 30m" everywhere else, including two lines above. It
+          // publishes on blur rather than on every keystroke because this
+          // receiver is a server write, and the hook that owns the state is
+          // inside the control — which is also how it keeps following the
+          // server (D-090), the thing this component used to hand-roll.
+          <DurationInput
+            value={estimateMs}
+            commitOn="blur"
+            ariaLabel="Estimate"
+            className="time-duration"
+            placeholder="2h 30m"
+            onChange={(ms) =>
+              // The action's unit is minutes and stays minutes: it is a
+              // boundary with a check written against it, and the column it
+              // writes is milliseconds either way.
+              act(() => setTimeEstimate(taskId, ms === null ? null : Math.round(ms / 60_000)))
+            }
+          />
         ) : (
           <span>{estimateMs === null ? "None" : formatDuration(estimateMs)}</span>
         )}
@@ -246,10 +240,15 @@ function Estimate({
 /**
  * Logging time that was spent without a timer running.
  *
- * Minutes, because that is what a person knows about work they have already
- * done. The action turns it into two instants by counting backwards from now —
- * a claim about a duration has to become a row with a start and an end, and
- * inventing the start is the honest half of that.
+ * A duration, because that is what a person knows about work they have already
+ * done — "half an hour", not a start and an end. The action turns it into two
+ * instants by counting backwards from now: a claim about a duration has to
+ * become a row with a start and an end, and inventing the start is the honest
+ * half of that.
+ *
+ * The box takes "30m" or "1h 30m" or a bare number of minutes (D-148), and its
+ * draft is this component's state because the value is not wanted until Enter
+ * or the button.
  */
 function LogForm({
   taskId,
@@ -258,35 +257,36 @@ function LogForm({
   taskId: string;
   act: (action: () => Promise<Operation[]>) => void;
 }) {
-  const [minutes, setMinutes] = useState("");
+  const [ms, setMs] = useState<number | null>(null);
   const [note, setNote] = useState("");
   const [billable, setBillable] = useState(false);
 
   const submit = () => {
-    const value = Number(minutes);
-    if (!Number.isFinite(value) || value <= 0) return;
+    if (ms === null || ms <= 0) return;
 
-    act(() => logTime(taskId, value, note, billable));
-    setMinutes("");
+    act(() => logTime(taskId, Math.round(ms / 60_000), note, billable));
+    setMs(null);
     setNote("");
     setBillable(false);
   };
 
   return (
     <div className="time-log">
-      <input
-        type="number"
-        min="1"
-        step="5"
-        placeholder="30"
-        aria-label="Minutes to log"
-        value={minutes}
-        onChange={(event) => setMinutes(event.target.value)}
+      <DurationInput
+        value={ms}
+        onChange={setMs}
+        ariaLabel="How long to log"
+        className="time-duration"
+        placeholder="30m"
         onKeyDown={(event) => {
-          if (event.key === "Enter") submit();
+          if (event.key !== "Enter") return;
+          // Blur first: the box holds its own draft while it has focus, so
+          // clearing the value behind a focused box would leave the text
+          // sitting there after the time was logged.
+          event.currentTarget.blur();
+          submit();
         }}
       />
-      <span className="time-unit">min</span>
 
       <input
         type="text"
@@ -312,7 +312,7 @@ function LogForm({
         Billable
       </label>
 
-      <button type="button" onClick={submit} disabled={minutes.trim() === ""}>
+      <button type="button" onClick={submit} disabled={ms === null || ms <= 0}>
         Log
       </button>
     </div>
@@ -396,21 +396,13 @@ function EntryEditor({
   act: (action: () => Promise<Operation[]>) => void;
   done: () => void;
 }) {
-  const [minutes, setMinutes] = useState(String(Math.round((entry.durationMs ?? 0) / 60_000)));
+  const [ms, setMs] = useState<number | null>(entry.durationMs ?? null);
   const [note, setNote] = useState(entry.description ?? "");
   const [billable, setBillable] = useState(entry.isBillable);
 
   return (
     <div className="time-editor">
-      <input
-        type="number"
-        min="1"
-        step="5"
-        aria-label="How long it was, in minutes"
-        value={minutes}
-        onChange={(event) => setMinutes(event.target.value)}
-      />
-      <span className="time-unit">min</span>
+      <DurationInput value={ms} onChange={setMs} ariaLabel="How long it was" className="time-duration" />
 
       <input
         type="text"
@@ -431,8 +423,11 @@ function EntryEditor({
       <button
         type="button"
         onClick={() => {
-          const value = Number(minutes);
-          act(() => updateTimeEntry(entry.id, Number.isFinite(value) ? value : null, note, billable));
+          // The action's unit is minutes, and stays minutes: it is a boundary
+          // with a check written against it (D-148).
+          act(() =>
+            updateTimeEntry(entry.id, ms === null ? null : Math.round(ms / 60_000), note, billable),
+          );
           done();
         }}
       >

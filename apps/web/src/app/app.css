@@ -3287,11 +3287,6 @@ select.filter-add option {
   white-space: nowrap;
 }
 
-.time-unit {
-  font-size: var(--text-meta);
-  color: var(--text-3);
-}
-
 .time-log,
 .time-editor {
   display: flex;
@@ -3318,10 +3313,16 @@ select.filter-add option {
   padding: 2px var(--space-2);
 }
 
-.time-log input[type="number"],
-.time-editor input[type="number"],
-.time-estimate-field input[type="number"] {
-  width: 4.5rem;
+/* A duration box is a text box now (D-148), so it needs the width the number
+   box had — and it has to say so *after* `.time-log input[type="text"]` above,
+   which exists for the note beside it and would otherwise stretch this one
+   across the row. */
+.time-log input.time-duration,
+.time-editor input.time-duration,
+.time-estimate-field input.time-duration {
+  flex: none;
+  width: 6rem;
+  min-width: 0;
   font-variant-numeric: tabular-nums;
 }
 
@@ -4769,6 +4770,11 @@ select.filter-add option {
   align-items: center;
   gap: var(--space-2);
   padding-left: calc(34px + var(--space-2));
+}
+/* A duration is "2h 30m" at its longest, so it does not need the width a name
+   or a date does (D-148). */
+.filter-duration {
+  width: 7rem;
 }
 /* A number of days is a quantity, not a field (D-147). At the inherited width
    it is as wide as the date picker it replaces and wraps onto its own line,

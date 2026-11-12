@@ -11,6 +11,8 @@ import {
   operatorLabel,
 } from "@arbor/core";
 
+import { DurationInput } from "./duration-input";
+
 /**
  * The condition menus, and the value controls under them.
  *
@@ -302,6 +304,16 @@ export function ValueControl({
     );
   }
 
+  if (input === "duration") {
+    return (
+      <DurationInput
+        value={typeof value === "number" ? value : null}
+        onChange={onChange}
+        className="filter-duration"
+      />
+    );
+  }
+
   if (input === "none") return null;
 
   return (
@@ -362,6 +374,10 @@ export function defaultValueFor(
   const options = optionsFor(input, choices, values);
   if (options) return coerce(input, options[0]?.id ?? "");
   if (input === "number") return 0;
+  // An hour, not zero. A number field's default of zero is a real value
+  // somebody might mean; a zero-length estimate is not, and "Estimate is more
+  // than 0m" is a filter that selects everything with an estimate at all.
+  if (input === "duration") return 3_600_000;
   if (input === "date") return new Date().toISOString().slice(0, 10);
   return "";
 }
