@@ -57,7 +57,7 @@ password and an API token scoped to the demo space.
 Verify the stack end to end:
 
 ```bash
-npm test               # 644 unit tests, no database needed
+npm test               # 652 unit tests, no database needed
 npm run db:smoke       # 358 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, the activity log, the
                        # automation engine, and API tokens end to end
@@ -69,7 +69,7 @@ npm run check:api      # 30 checks over HTTP against /api/v1 — reads, writes,
 npm run check:search   # 11 GETs against /search, asserting what the screen
                        # renders — runs against a dev server, the container
                        # image, or a deployed URL
-npm run check:browser  # 39 checks in a real Chrome, as four different people
+npm run check:browser  # 44 checks in a real Chrome, as four different people
                        # against a server in another time zone
 ```
 
@@ -302,7 +302,10 @@ back would be worse than no nudge.
       calls. Whose permissions a number is computed with turned out to be a
       decision rather than a default — a goal's rollup runs as the goal's owner,
       so a shared commitment reads the same for everyone, and a dashboard card
-      runs as the viewer, because a dashboard lives in a container.
+      runs as the viewer, because a dashboard lives in a container. A duration
+      is typed the way it is read — "2h 30m", or a bare number of minutes —
+      through one control the estimate, the time log, the filter bar and an
+      automation action all share (D-148).
 - [x] **9 — Docs.** CRDT editor, nested pages, backlinks. The editor and the
       page tree are built; so is **search**, which was the first reader the
       documents' plain-text projection ever had. Both halves of search match the

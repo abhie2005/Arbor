@@ -1,8 +1,16 @@
 # Status — resume here
 
-Last updated 2026-11-10 (a rule can write a date it works out). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-11-12 (a duration is written the way it is read). Repo: https://github.com/abhie2005/Arbor (`main`).
 
-**The newest thing is D-147: an automation action may hold arithmetic rather
+**The newest thing is D-148: a duration is a control now.** The column is
+milliseconds and so was every box that asked for one — a filter on Estimate
+declared `input: "number"` and the automation action's label said "Estimate
+(ms)" out loud. `parseDuration` is the missing half of `formatDuration`, the
+two menus get the new `duration` input from one declaration, and the three
+hand-rolled minute boxes on the task page are the same control now: the detail
+page used to print "2h 30m" in the bar and ask for `150` in the box beneath it.
+
+**Before that, D-147: an automation action may hold arithmetic rather
 than a value.** "Due three days from now" and "push it out a week from the date
 it has" are rules now; the sum is done at the moment the rule acts, which for a
 delayed rule is days after it fired. It also closed three things nobody was
@@ -320,7 +328,7 @@ out now, which is the staleness the calendar dates already had.
 | **History** | The activity log's first reader. Every operation has written a row since Phase 2 and no screen read one; the detail page now shows what happened to a task, newest first, with ids resolved to names from what the page already loads (D-091). Scoped by the same `access_index` join as every other read. |
 | **Presence** | Who else is looking at a task, pushed down the same stream. The connection *is* the signal — no table, no heartbeat, nothing to sweep, and gone the instant a tab closes (D-092). A scope is checked with `taskAccess` before a stream is registered on it. Per-process: a second instance would not see the first's viewers. |
 | **Live updates** | Every screen holds an `EventSource` to `/api/live`. A change announces itself with `pg_notify` inside the transaction that made it, so a rollback announces nothing; the route handler checks each nudge against the viewer's access before it leaves, and the browser answers with `router.refresh()` (D-090). A nudge carries the workspace, list and actor — never what changed. |
-| **Time tracking** | Start and stop on the task page, an entry list, logging time after the fact, and tracked-against-estimate. Every write is an operation (D-093), so ⌘Z undoes a stop and restores a deleted entry. At most one running timer per person, held by a unique partial index (D-094). A readout in the shell of every screen, pushed down the live stream so a timer started in another tab appears in this one (D-098). |
+| **Time tracking** | Start and stop on the task page, an entry list, logging time after the fact, and tracked-against-estimate. Every duration is typed the way it is read — "2h 30m", or a bare number of minutes — through one control shared with the filter bar and automation actions (D-148). Every write is an operation (D-093), so ⌘Z undoes a stop and restores a deleted entry. At most one running timer per person, held by a unique partial index (D-094). A readout in the shell of every screen, pushed down the live stream so a timer started in another tab appears in this one (D-098). |
 | **Goals** | `/goals` — goals with key results of four kinds. A *rollup* key result holds a view definition and is counted by the compiler (D-101), so a goal and a list can never disagree about what counts; it is computed as the goal's **owner** rather than the reader (D-102), which is what makes progress a shared fact. Manual, currency and yes/no key results are entered. Progress is the mean of the key results, each clamped; completion is a timestamp somebody set, not a number crossing 100%. |
 | **Dashboards** | `/dashboards` — a grid of cards, each a filter plus a way of drawing it. A card's `kind` *is* which compiler entry point it calls (D-104): a stat is `compileAggregate`, a chart is `compileGroupCounts`. Counted as the **viewer** (D-105), which is the opposite of a goal and for a reason. Scoped to a container, with personal dashboards following the saved view rule. Charts are HTML bars measured against the largest slice; no charting library. |
 | **Documents** | `/docs` — a page tree scoped by the same `access_index` join everything else uses, and an editor. The tree is a real walk at any depth (D-119): collapse hides descendants, a drop onto a row makes a page its first child and a drop in the gap below one makes it the next sibling, both as one `afterId`, and the `+` on a row makes a subpage. `[[` links a page or a task — a second embed kind the editor's offset arithmetic absorbed without a change — and `doc_links` answers the reverse, shown as "Linked from" on a page and "Referenced by" on a task, scoped to pages the *viewer* can read (D-120). A document's body is a Yjs CRDT holding the *same block tree* comments and descriptions use (ADR 6, D-110), so a mention is a reference rather than the characters "@Name", and `search_text` beside it is a projection recomputed on every write. The editor is a **contenteditable per paragraph** (D-117) with the change applied as a diff (D-112), so two people typing in one paragraph merge instead of clobbering. A mention is one `EMBED_CHAR` in the string the editor works in, which makes a DOM offset, a caret and a CRDT position the same number — so a paragraph naming somebody is edited rather than shown, `@` offers the workspace's members, and the caret is a Yjs relative position that survives both ⌘Z and somebody else's insert. Updates POST as base64 and arrive as a nudge on the existing stream; the editor answers by pulling the difference rather than re-rendering. Creating, renaming, moving and archiving are configuration writes with an activity row and no ⌘Z (D-111). |
@@ -329,8 +337,8 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 644 unit tests, 358 live-Postgres checks, 211 action checks, 30
-API checks, 11 search checks, **39 browser checks**, four packages typechecking
+**Verified:** 652 unit tests, 358 live-Postgres checks, 211 action checks, 30
+API checks, 11 search checks, **44 browser checks**, four packages typechecking
 clean, and the interactions above driven in Chrome — most recently `[[`
 resolving to a page and then to a task inside one sentence, the two edges
 landing in `doc_links`, and the reverse showing as "Linked from" on the page and
@@ -383,8 +391,8 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 **Phase 10 is closed, nothing is half-built, and the decision that followed it
 is made.** Every numbered item below is struck through, both bug lists are
-empty, and the gates are green: 644 unit tests, 358 live-Postgres checks, 211
-action checks, 30 API checks, 11 search checks, 39 browser checks, and four
+empty, and the gates are green: 652 unit tests, 358 live-Postgres checks, 211
+action checks, 30 API checks, 11 search checks, 44 browser checks, and four
 packages typechecking.
 
 **The third candidate below is done** (D-144). Two remain, and they are
@@ -417,14 +425,23 @@ genuinely a choice rather than an order:
      list never named**: an object where a value goes used to be armed and then
      thrown from inside a run, a `YYYY-MM-DD` reached the column unframed, and
      an automation never cleared `due_has_time`.
-   - **the two menu gaps that D-129 deferred on purpose**: `parentTaskId` (it
-     needs the task picker nobody has built — `ValueInput` already declares
-     `task`, so the declaration is ahead of the control) and a duration control
-     for `timeEstimateMs`, which means teaching the filter bar about durations
-     in the same change. **D-147 is the second thing that wants the second
-     one**: an automation cannot write a *timed* date, because a relative date
-     rounds to a UTC day, so "two hours before the meeting" waits on a control
-     that can say two hours.
+   - ~~**a duration control for `timeEstimateMs`.**~~ **Done** (2026-11-12,
+     D-148). `duration` is a `ValueInput`, the filter bar learned it in the
+     same change as the automation action, and `parseDuration` is the half of
+     `formatDuration` that never existed. It replaced three minute boxes on the
+     task page as well, which is where the inconsistency was loudest.
+   - **a task picker, which is what `parentTaskId` is waiting for.**
+     `ValueInput` declares `task` and no control draws it, so the `Parent task`
+     filter and the `tasks`/`relationship` custom fields are uuid text boxes
+     today — the automations menu omits `parentTaskId` rather than offer one.
+     **It is not the shape the other pickers are**: a workspace has too many
+     tasks for a `<select>`, so this one is a typeahead over a search, and the
+     search half already exists — the editor's `[[` menu resolves a task by
+     name (D-120).
+   - **an automation still cannot write a *timed* date** (D-147): a relative
+     date rounds to a UTC day, so "two hours before the meeting" needs the
+     duration vocabulary to reach the date half too. The control exists now;
+     what is missing is a date that carries a time.
 2. **Deploying it again.** The Terraform path has been applied against a real
    account once and destroyed; nothing has run against it since Phase 10 added
    three ways in. A second apply is the only thing that tells you whether the

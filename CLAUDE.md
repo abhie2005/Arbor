@@ -182,7 +182,8 @@ two applies, because the registry must exist before an image can be pushed.
 | What a group of changes reads as (pure) | `packages/core/src/activity.ts` |
 | Reading the activity log | `packages/db/src/history.ts` |
 | Live changes: publish and subscribe | `packages/db/src/live.ts` |
-| Duration rules and formatting (pure) | `packages/core/src/time.ts` |
+| Duration rules, formatting and parsing (pure, D-148) | `packages/core/src/time.ts` |
+| The one duration box, and which receiver it publishes to when | `apps/web/src/components/duration-input.tsx` |
 | Tracked time as a totalled field | `trackedMs` in `packages/core/src/views/compile.ts` |
 | Key-result kinds, progress arithmetic (pure) | `packages/core/src/goals.ts` |
 | Goals, key results, and running a rollup | `packages/db/src/goals.ts` |
