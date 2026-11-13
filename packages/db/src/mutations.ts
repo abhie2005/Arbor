@@ -284,6 +284,74 @@ interface Logged {
   listId: string;
 }
 
+/**
+ * A parent that cannot be one (D-150).
+ *
+ * **Here rather than in an action, because this is the only writer.** Every
+ * door — a server action, the public API, an automation — ends in
+ * `applyOperations` (invariant 1), so a guard here is one every caller passes
+ * and none can forget. Putting it in the screen that re-parents a task would
+ * have been putting it in the one place that does not exist yet.
+ *
+ * Three refusals, and they are different failures:
+ *
+ * - **its own parent**, which no walk would catch because the chain starts
+ *   above the task;
+ * - **a descendant**, which is the cycle: `A → B` and then `B → A` leaves two
+ *   rows pointing at each other and no root, so every reader that walks up
+ *   never terminates and every reader that walks down repeats forever;
+ * - **another workspace's task**, which is not a cycle but is worse — a subtree
+ *   spanning a boundary that every other query in this system assumes it cannot
+ *   cross, reachable by anybody who can guess a uuid.
+ *
+ * The walk is a recursive CTE because parents are rows, and it is **capped at
+ * 64**: nothing may create a cycle once this exists, but a database that
+ * already holds one from before would otherwise loop forever inside the guard
+ * meant to protect it. A cap turns that into a refusal.
+ */
+async function refuseImpossibleParent(
+  client: PoolClient,
+  taskId: string,
+  parent: unknown,
+): Promise<void> {
+  if (parent === null || parent === undefined) return;
+  if (typeof parent !== "string" || parent === "") {
+    throw new MutationRejected("A parent task is an id");
+  }
+  if (parent === taskId) throw new MutationRejected("A task cannot be its own parent");
+
+  const result = await client.query<{ same_workspace: boolean; descendant: boolean }>(
+    `WITH RECURSIVE chain AS (
+       SELECT t.id, t.parent_task_id, t.workspace_id, 0 AS depth
+         FROM tasks t WHERE t.id = $1 AND t.deleted_at IS NULL
+       UNION ALL
+       SELECT t.id, t.parent_task_id, t.workspace_id, c.depth + 1
+         FROM tasks t JOIN chain c ON t.id = c.parent_task_id
+        WHERE c.depth < 64 AND t.deleted_at IS NULL
+     )
+     SELECT
+       bool_or(chain.depth = 0 AND chain.workspace_id = me.workspace_id) AS same_workspace,
+       bool_or(chain.id = $2) AS descendant
+     FROM chain
+     CROSS JOIN (SELECT workspace_id FROM tasks WHERE id = $2) AS me`,
+    [parent, taskId],
+  );
+
+  const row = result.rows[0];
+  // No row at all means the proposed parent is gone or was never there, and
+  // the refusal says so in the same words a task nobody may see gets
+  // (invariant 6).
+  if (!row || row.same_workspace === null) {
+    throw new MutationRejected("That task no longer exists");
+  }
+  if (!row.same_workspace) {
+    throw new MutationRejected("That task is not in this workspace");
+  }
+  if (row.descendant) {
+    throw new MutationRejected("That would make a task its own ancestor");
+  }
+}
+
 async function applyOne(
   client: PoolClient,
   op: Operation,
@@ -295,6 +363,12 @@ async function applyOne(
     case "setField": {
       const column = FIELD_COLUMNS[op.field];
       if (!column) throw new MutationRejected(`Field is not writable: ${op.field}`);
+
+      // A parent is the one writable column whose value is a claim about the
+      // tree rather than about this row (D-150).
+      if (op.field === "parentTaskId") {
+        await refuseImpossibleParent(client, op.taskId, op.to);
+      }
 
       // Completion is derived, not set by the client: moving a task into a
       // `done` status stamps completed_at, moving it out clears it. Leaving

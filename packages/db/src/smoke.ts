@@ -4367,6 +4367,139 @@ async function main() {
       : "a second service account was created",
   );
 
+  // --- a parent that cannot be one (D-150) ------------------------------------
+  //
+  // The executor is the only writer (invariant 1), so this is the one place the
+  // guard can be and the one place it has to be checked. What makes it worth a
+  // section rather than a unit test is that every refusal here is a question
+  // about *rows*: whether one task is above another is a walk, not a value.
+  //
+  // The positive half is checked first and on purpose: a guard that refused
+  // everything would pass all three refusals below, and re-parenting a task is
+  // a thing somebody may legitimately do.
+  console.log("\na parent that cannot be one — the guard every door passes\n");
+
+  const treeRows = await pool.query<{ id: string }>(
+    `SELECT id FROM tasks
+      WHERE home_list_id = $1 AND parent_task_id IS NULL AND deleted_at IS NULL
+      ORDER BY position LIMIT 3`,
+    [autoList.id],
+  );
+  const [top, second, third] = treeRows.rows.map((row) => row.id);
+  const otherWorkspaceTask = await one(
+    `SELECT id FROM tasks WHERE workspace_id <> $1 LIMIT 1`,
+    [ws.id],
+  );
+
+  report(
+    "the fixture has three top-level tasks and a task in another workspace",
+    top && second && third && otherWorkspaceTask?.id
+      ? null
+      : `found ${treeRows.rows.length} tasks here and ${otherWorkspaceTask ? "one" : "none"} elsewhere`,
+  );
+
+  const setParent = (taskId: string, to: string | null, from: string | null = null) =>
+    applyOperations([{ kind: "setField", taskId, field: "parentTaskId", from, to }], {
+      actorId: owner.id!,
+      connection: pool,
+    });
+
+  report(
+    "a task can be made a subtask of another, which is the thing being guarded",
+    await expectNoRejection(() => setParent(second!, top!)),
+  );
+
+  report(
+    "and the column says so afterwards, so the positive half is not a no-op",
+    (await one(`SELECT parent_task_id FROM tasks WHERE id = $1`, [second]))?.parent_task_id === top
+      ? null
+      : "the parent was not written",
+  );
+
+  report(
+    "a task cannot be its own parent, which no walk would catch",
+    await expectRejection(() => setParent(top!, top!)),
+  );
+
+  // The cycle: `second` is already below `top`, so putting `top` below
+  // `second` leaves two rows pointing at each other and no root.
+  report(
+    "and it cannot be moved under its own descendant",
+    await expectRejection(() => setParent(top!, second!)),
+  );
+
+  // Two levels down, because a guard that only looked at the immediate parent
+  // would pass this one.
+  await setParent(third!, second!);
+  report(
+    "nor under a descendant two levels down, which a parent-only check would allow",
+    await expectRejection(() => setParent(top!, third!)),
+  );
+
+  report(
+    "a task in another workspace is not a parent either — a subtree cannot span one",
+    await expectRejection(() => setParent(top!, otherWorkspaceTask!.id as string)),
+  );
+
+  report(
+    "a parent that does not exist reads as a task that no longer exists",
+    await expectRejection(() => setParent(top!, "11111111-2222-4333-8444-555555555555")),
+  );
+
+  report(
+    "and after all of that the tree is still what the first two checks made it",
+    (await one(`SELECT parent_task_id FROM tasks WHERE id = $1`, [top]))?.parent_task_id === null
+      ? null
+      : "a refused write landed anyway",
+  );
+
+  // The newest door, and the claim this entry makes: the guard lives in the
+  // executor, so a *rule* that would make a cycle is refused by the same code
+  // a click is — and the run records why rather than the tree absorbing it.
+  const cycleRule = await createAutomation(
+    {
+      workspaceId: ws.id!,
+      containerId: autoList.id!,
+      name: "Adopt its own descendant",
+      trigger: { kind: "fieldChanged", field: "points" },
+      actions: [{ kind: "setField", field: "parentTaskId", to: second! }],
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  await applyOperations(
+    [{ kind: "setField", taskId: top!, field: "points", from: null, to: 8 }],
+    { actorId: owner.id!, connection: pool },
+  );
+  await tickAutomations(ws.id!, pool);
+
+  const refusedRun = await one(
+    `SELECT status, error FROM automation_runs
+      WHERE automation_id = $1 ORDER BY started_at DESC LIMIT 1`,
+    [cycleRule],
+  );
+
+  report(
+    "a rule that would make a cycle fails the run, because the guard is the executor's",
+    refusedRun?.status === "failed" && /ancestor/i.test(String(refusedRun.error))
+      ? null
+      : `the run was ${String(refusedRun?.status)}: ${String(refusedRun?.error)}`,
+  );
+
+  report(
+    "and the tree is untouched, which is the half that would have been silent",
+    (await one(`SELECT parent_task_id FROM tasks WHERE id = $1`, [top]))?.parent_task_id === null
+      ? null
+      : "the automation re-parented a task into a cycle",
+  );
+
+  await setAutomationEnabled(cycleRule, false, { actorId: owner.id!, connection: pool });
+
+  // Put it back, because the sections below read this list and a subtask is
+  // hidden from a view that nests them.
+  await setParent(second!, null, top!);
+  await setParent(third!, null, second!);
+
   // --- a date the rule works out when it runs (D-147) ------------------------
   //
   // The unit tests own the arithmetic; what only a database can answer is what

@@ -1,4 +1,4 @@
-import { ancestorsOf } from "@arbor/core";
+import { AUTOMATABLE_FIELDS, ancestorsOf } from "@arbor/core";
 import {
   automationQuota,
   loadAutomationsForContainers,
@@ -12,6 +12,7 @@ import {
   type RuleContainer,
 } from "@/components/settings/automations-panel";
 import { requireUser } from "@/server/auth";
+import { namedTasks } from "@/server/view-actions";
 import { loadFilterOptions } from "@/server/views";
 import { requireWorkspace } from "@/server/workspace";
 
@@ -110,6 +111,39 @@ export default async function AutomationsPage({
       : null,
   }));
 
+  /**
+   * What the tasks these rules already name are called (D-150).
+   *
+   * A task is the one value on this screen that arrives as a bare id: every
+   * other picker is a list the page was handed, and a workspace's tasks cannot
+   * be one (D-149). So the handful of ids the stored rules mention are resolved
+   * here — through the same action the picker uses, which means the same
+   * permission check, so a rule naming a task this viewer cannot reach prints
+   * the id rather than leaking the name.
+   *
+   * Actions only. A condition's value is never restated in the sentence — the
+   * summary counts conditions — so resolving them would be work nothing reads.
+   */
+  const takesATask = (field: string) =>
+    AUTOMATABLE_FIELDS.some((candidate) => candidate.field === field && candidate.input === "task");
+
+  const referenced = [
+    ...new Set(
+      rules.flatMap((row) =>
+        (row.rule?.actions ?? []).flatMap((action) =>
+          action.kind === "setField" && takesATask(action.field) && typeof action.to === "string"
+            ? [action.to]
+            : [],
+        ),
+      ),
+    ),
+  ];
+
+  const resolved = referenced.length === 0 ? { ok: true as const, tasks: [] } : await namedTasks(referenced);
+  const taskNames = Object.fromEntries(
+    (resolved.ok ? resolved.tasks : []).map((task) => [task.id, task.label]),
+  );
+
   return (
     <>
       <header className="header">
@@ -159,6 +193,7 @@ export default async function AutomationsPage({
             },
           }}
           quota={quota}
+          taskNames={taskNames}
         />
       </div>
     </>

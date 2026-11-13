@@ -837,12 +837,18 @@ export interface AutomatableField {
  * The fields a form offers, which is deliberately narrower than what a rule
  * may contain.
  *
- * `parentTaskId` is absent, and `position` with it. Both are settable by an
- * operation and both parse, so a rule written against the API keeps working —
- * the omission is this menu's, not the rule language's, exactly as `position`
- * is absent from `BUILTIN_FILTERABLE`. The reason is that neither has a control
- * to offer: "parent task" needs a task picker nobody has built, and a uuid in a
- * text box is not an interface, it is a way to store a typo.
+ * `position` is absent, and the omission is this menu's rather than the rule
+ * language's: an operation can set it and the parser takes it, exactly as
+ * `position` is absent from `BUILTIN_FILTERABLE`. It has no control to offer,
+ * and a number nobody can see the scale of is not an interface.
+ *
+ * **`parentTaskId` was absent for two different reasons and is here now**
+ * (D-150). The first was the missing control, which D-149 built. The second
+ * was the one the gaps list never named: re-parenting is the only write in
+ * this product that can make the tree *invalid*, and nothing guarded it. The
+ * executor refuses a cycle now — every door passes it, including this one — so
+ * offering the field no longer means offering a way to break the tree from a
+ * menu.
  *
  * `timeEstimateMs` no longer says "(ms)" in its label, because the box no
  * longer wants milliseconds: `duration` is a `ValueInput` now and the filter
@@ -857,6 +863,7 @@ export const AUTOMATABLE_FIELDS: readonly AutomatableField[] = [
   { field: "startAt", label: "Start date", input: "date" },
   { field: "points", label: "Points", input: "number" },
   { field: "timeEstimateMs", label: "Estimate", input: "duration" },
+  { field: "parentTaskId", label: "Parent task", input: "task" },
   { field: "taskTypeId", label: "Task type", input: "taskType" },
   // `list` rather than a generic container (D-146): this action moves a task to
   // a list, and a menu that offered a space would compile to an operation the

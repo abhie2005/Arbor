@@ -29,10 +29,20 @@ import { type TaskOption, namedTasks, taskCandidates } from "@/server/view-actio
 export function TaskPicker({
   value,
   onChange,
+  onPick,
   ariaLabel = "Value",
 }: {
   value: unknown;
   onChange: (value: unknown) => void;
+  /**
+   * What was picked, not only its id (D-150).
+   *
+   * A caller that has to *say* what the value is — the automations screen's
+   * one-sentence preview — would otherwise print a uuid until the rule was
+   * saved and the page resolved it. The picker already knows the label; this
+   * is it handing it over.
+   */
+  onPick?: (option: TaskOption) => void;
   ariaLabel?: string;
 }) {
   const id = typeof value === "string" ? value : "";
@@ -81,6 +91,7 @@ export function TaskPicker({
 
   const choose = (option: TaskOption) => {
     setLabels((known) => ({ ...known, [option.id]: option.label }));
+    onPick?.(option);
     onChange(option.id);
     setOpen(false);
     setTerm("");

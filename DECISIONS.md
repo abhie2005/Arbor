@@ -6429,3 +6429,69 @@ another workspace reading the uuid rather than the key.
 
 *In one sentence:* every other picker is a list the page already has, and this
 one is a search — which is why it was the gap that outlived the other three.
+
+### D-150
+**A parent that cannot be one** · 2026-11-13 · active
+
+D-149 ended by naming the real prerequisite for `parentTaskId`: not the picker,
+which now exists, but a guard. This is that guard, and the field is in the menu
+behind it.
+
+**It is a live hole rather than a hypothetical one.** `POST /api/v1/operations`
+has taken `setField` on `parentTaskId` since D-134, and `parseOperations`
+validates the *shape* of an operation rather than its meaning — so any token
+holder could point a task at its own child, or at a task in somebody else's
+workspace, with a well-formed request. Nothing in the UI re-parents a task, so
+nothing had ever exercised the path.
+
+**The guard is in the executor, which is the whole reason it is only one.**
+Every door — a server action, the API, an automation — ends in
+`applyOperations` (invariant 1). A check there is one that every caller passes
+and none can forget; a check in the screen that re-parents a task would have
+been a check in the one place that does not exist yet.
+
+Three refusals, and they are three different failures:
+
+- **its own parent**, which no walk would catch, because the walk starts above
+  the task;
+- **a descendant**, which is the cycle: `A → B` and then `B → A` leaves two rows
+  pointing at each other and no root, so a reader walking up never terminates
+  and one walking down repeats forever;
+- **another workspace's task**, which is not a cycle and is worse — a subtree
+  spanning a boundary every other query in this system assumes it cannot cross,
+  reachable by anybody who can guess a uuid.
+
+**The walk is a recursive CTE, capped at 64.** Nothing may create a cycle once
+this exists, but a database that already holds one — from the window above —
+would otherwise loop forever *inside the guard meant to protect it*. The cap
+turns that into a refusal. A missing parent is refused in the words a task
+nobody may see gets, because the guard has no business saying which it was
+(invariant 6).
+
+**And now the field is offered.** `parentTaskId` was absent from
+`AUTOMATABLE_FIELDS` for two reasons and only one was ever written down: the
+missing control (D-149 built it) and the missing guard (this). Both are closed,
+so the menu offers it.
+
+**A task is the one action value the screen has to be *told* the name of.**
+Every other value is an id from a list the page already holds, so `nameLookup`
+resolves it there; a workspace's tasks cannot be a list, which is the whole
+reason the picker is a search. So the page resolves the handful of ids its
+stored rules mention — through `namedTasks`, the same action the picker uses,
+which means the same permission check, so a rule naming a task the viewer
+cannot reach prints the id rather than leaking the name. And the picker reports
+*what it picked* rather than only the id, so the preview sentence names a task
+that has not been saved yet. Without that second half the form would say
+"set Parent task to 3f2b…" until the moment it was saved.
+
+**Verified**: eleven checks in `db:smoke` (369) and two in `check:actions`
+(218). The positive half is checked first and deliberately — a guard that
+refused everything would pass all four refusals, and re-parenting a task is a
+thing somebody may legitimately do. The last two are the end-to-end that makes
+the "every door" claim concrete: a *rule* whose action would make a cycle is
+refused by the same code a click is, the run is recorded failed with the reason,
+and the tree is untouched — which is the half that would otherwise have been
+silent.
+
+*In one sentence:* the tree had no rule saying it was a tree, and the only place
+to say it is the one line every writer already goes through.

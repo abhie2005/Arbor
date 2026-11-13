@@ -2843,6 +2843,39 @@ report(
     : `refusals were ${wrongField.text.slice(-160)} / ${notAnObject.text.slice(-160)}`,
 );
 
+// A parent is a task id, which is the one action value with no menu behind it
+// (D-149) and the one the sentence has to be *told* the name of (D-150). Both
+// halves are here: the id survives the trip, and the screen says what it is.
+const epic = await one(`SELECT id, key FROM tasks WHERE key = 'ENG-402'`);
+await callOn(AUTO_URL, AUTO_ACTIONS.createAutomationAction!, [
+  {
+    containerId: sprintListId,
+    name: "Adopt into the epic",
+    trigger: { kind: "taskCreated" },
+    actions: [{ kind: "setField", field: "parentTaskId", to: epic.id }],
+  },
+]);
+
+const parentRow = await one(
+  `SELECT actions::text AS actions FROM automations WHERE name = 'Adopt into the epic'`,
+);
+report(
+  "a rule may set a parent now, and the id survives the trip",
+  parentRow && JSON.parse(parentRow.actions)[0]?.to === epic.id
+    ? null
+    : `stored ${String(parentRow?.actions)}`,
+);
+
+const parentPage = await (
+  await fetch(`${AUTO_URL}?container=${sprintListId}`, { headers: { Cookie: COOKIE } })
+).text();
+report(
+  "and the screen names the task rather than printing the uuid it stores",
+  /set Parent task to ENG-402/.test(words(parentPage))
+    ? null
+    : "the sentence did not name the task",
+);
+
 await db.query(`DELETE FROM automations WHERE workspace_id = $1`, [workspaceId]);
 
 // --- forms, which have two audiences (D-142) --------------------------------

@@ -34,6 +34,7 @@ import {
   defaultValueFor,
   optionsFor,
 } from "@/components/filter-conditions";
+import { TaskPicker } from "@/components/task-picker";
 import { Timestamp } from "@/components/timestamp";
 import {
   createAutomationAction,
@@ -94,6 +95,7 @@ export function AutomationsPanel({
   fields,
   values,
   quota,
+  taskNames,
 }: {
   containers: RuleContainer[];
   selected: RuleContainer | null;
@@ -101,6 +103,15 @@ export function AutomationsPanel({
   fields: FilterableField[];
   values: FilterOptionValues;
   quota: { used: number; quota: number; refused: number };
+  /**
+   * What the task ids these rules already name are called (D-150).
+   *
+   * Resolved by the page for the handful of ids the stored rules mention,
+   * rather than shipped as a menu: the picker that writes them is a search
+   * precisely because a workspace's tasks cannot be a list (D-149), and the
+   * sentence needs names for exactly the ones already in use.
+   */
+  taskNames: Record<string, string>;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -113,6 +124,13 @@ export function AutomationsPanel({
    */
   const [renaming, setRenaming] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  /**
+   * The names above, plus the ones the picker learns while somebody is writing
+   * a rule. Without the second half the preview sentence would print a uuid
+   * until the rule was saved and the page re-resolved it — which is the gap
+   * this closes, one screen earlier.
+   */
+  const [learned, setLearned] = useState<Record<string, string>>({});
 
   function run(action: () => Promise<{ ok: true } | { ok: false; error: string }>) {
     setError(null);
@@ -129,7 +147,9 @@ export function AutomationsPanel({
     });
   }
 
-  const names = nameLookup(values);
+  const names = nameLookup(values, { ...taskNames, ...learned });
+  const learn = (id: string, label: string) =>
+    setLearned((known) => (known[id] === label ? known : { ...known, [id]: label }));
   const share = quota.quota > 0 ? quota.used / quota.quota : 0;
 
   return (
@@ -285,6 +305,7 @@ export function AutomationsPanel({
                         fields={fields}
                         values={values}
                         names={names}
+                        onLearn={learn}
                         initial={{ name: rule.name, rule: rule.rule }}
                         onSave={(input) => run(() => updateAutomationAction(rule.id, input))}
                         onCancel={() => setEditing(null)}
@@ -325,6 +346,7 @@ export function AutomationsPanel({
               fields={fields}
               values={values}
               names={names}
+              onLearn={learn}
               onSave={(input) => run(() => createAutomationAction(input))}
             />
           </>
@@ -424,6 +446,7 @@ function AutomationForm({
   fields,
   values,
   names,
+  onLearn,
   initial,
   onSave,
   onCancel,
@@ -432,6 +455,8 @@ function AutomationForm({
   fields: FilterableField[];
   values: FilterOptionValues;
   names: (input: ValueInput, value: unknown) => string;
+  /** Told what a picked task is called, so the preview can say it (D-150). */
+  onLearn: (id: string, label: string) => void;
   initial?: { name: string; rule: AutomationRule };
   onSave: (input: {
     containerId: string;
@@ -689,6 +714,7 @@ function AutomationForm({
             key={index}
             action={action}
             values={values}
+            onLearn={onLearn}
             onChange={(next) =>
               setActions(actions.map((current, i) => (i === index ? next : current)))
             }
@@ -748,11 +774,13 @@ function AutomationForm({
 function ActionRow({
   action,
   values,
+  onLearn,
   onChange,
   onRemove,
 }: {
   action: DraftAction;
   values: FilterOptionValues;
+  onLearn: (id: string, label: string) => void;
   onChange: (next: DraftAction) => void;
   onRemove?: () => void;
 }) {
@@ -792,7 +820,17 @@ function ActionRow({
             ))}
           </select>
           <span className="automation-word">to</span>
-          {field.input === "date" ? (
+          {field.input === "task" ? (
+            // Straight to the picker rather than through `ValueControl`, for
+            // the reason the date half is: this control reports *what it
+            // picked* and not only the id, so the sentence under the form can
+            // name a task that is not saved yet (D-150).
+            <TaskPicker
+              value={action.to}
+              onChange={(to) => onChange({ ...action, to })}
+              onPick={(option) => onLearn(option.id, option.label)}
+            />
+          ) : field.input === "date" ? (
             <DateValue value={action.to} values={values} onChange={(to) => onChange({ ...action, to })} />
           ) : (
             <ValueControl
@@ -1127,9 +1165,13 @@ function firstValueFor(field: TaskField, values: FilterOptionValues): unknown {
  * id with no match is printed as itself rather than as "unknown": a rule
  * pointing at a deleted status should show that it does.
  */
-function nameLookup(values: FilterOptionValues) {
+function nameLookup(values: FilterOptionValues, tasks: Record<string, string>) {
   return (input: ValueInput, value: unknown): string => {
     if (value === null || value === undefined || value === "") return "nothing";
+    // A task has no menu to look it up in — it is the one value the screen was
+    // handed by name rather than by list (D-150). An id nobody resolved is
+    // printed as itself, like every other unresolved id here.
+    if (input === "task") return tasks[String(value)] ?? String(value);
     // A duration has no table to look it up in — it is a quantity, and the
     // sentence has to say "2h 30m" rather than the millisecond count the column
     // holds (D-148).
