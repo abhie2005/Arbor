@@ -64,7 +64,9 @@ two applies, because the registry must exist before an image can be pushed.
 
 1. **`applyOperations` is the only thing that writes task data.** Every mutation
    is an `Operation` (`packages/core/src/mutations.ts`), so the activity log and
-   undo come free. A service with its own INSERT is the second writer, and the
+   undo come free — and so does a validity check that no caller can forget,
+   which is why the parent-cycle guard is there rather than in a screen
+   (D-150). A service with its own INSERT is the second writer, and the
    second writer is the one that forgets to log (D-083). Configuration is the
    documented exception — statuses, fields, types, grants, goals, dashboards and
    a document's place in the tree write through `logConfigChange` instead, which
@@ -185,6 +187,7 @@ two applies, because the registry must exist before an image can be pushed.
 | Duration rules, formatting and parsing (pure, D-148) | `packages/core/src/time.ts` |
 | The one duration box, and which receiver it publishes to when | `apps/web/src/components/duration-input.tsx` |
 | The value control that is a search rather than a menu (D-149) | `apps/web/src/components/task-picker.tsx`, `taskCandidates`/`namedTasks` in `apps/web/src/server/view-actions.ts` |
+| A parent that cannot be one — the only tree rule there is (D-150) | `refuseImpossibleParent` in `packages/db/src/mutations.ts` |
 | Tracked time as a totalled field | `trackedMs` in `packages/core/src/views/compile.ts` |
 | Key-result kinds, progress arithmetic (pure) | `packages/core/src/goals.ts` |
 | Goals, key results, and running a rollup | `packages/db/src/goals.ts` |

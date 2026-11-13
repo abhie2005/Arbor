@@ -58,10 +58,10 @@ Verify the stack end to end:
 
 ```bash
 npm test               # 652 unit tests, no database needed
-npm run db:smoke       # 358 checks against real Postgres: compiled queries,
+npm run db:smoke       # 369 checks against real Postgres: compiled queries,
                        # permission scoping, mutations, the activity log, the
                        # automation engine, and API tokens end to end
-npm run check:actions  # 216 checks that POST what a button click posts, then
+npm run check:actions  # 218 checks that POST what a button click posts, then
                        # assert against Postgres — needs a dev server running
 npm run check:api      # 30 checks over HTTP against /api/v1 — reads, writes,
                        # every way a token can be refused, and posting an

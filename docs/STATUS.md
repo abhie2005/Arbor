@@ -1,8 +1,17 @@
 # Status — resume here
 
-Last updated 2026-11-12 (the picker that is a search). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-11-13 (a parent that cannot be one). Repo: https://github.com/abhie2005/Arbor (`main`).
 
-**The newest thing is D-149: the task picker exists, and it is not a menu.**
+**The newest thing is D-150: the tree has a rule saying it is a tree.** The
+executor refuses a parent that is the task itself, one of its descendants, or a
+task in another workspace — and it was a live hole rather than a theoretical
+one: `POST /api/v1/operations` has taken `setField` on `parentTaskId` since
+D-134, and nothing anywhere checked what the id meant. The guard is in
+`applyOperations` because that is the only writer, so every door passes it,
+including the new one: `parentTaskId` is in the automations menu now, behind
+the guard that made offering it safe.
+
+**Before that, D-149: the task picker exists, and it is not a menu.**
 Every other value control is a closed set shipped with the page; a workspace has
 thousands of tasks, so this one asks the server as it is typed and resolves the
 uuid a saved filter already holds into what that task is called. **It did not
@@ -311,7 +320,7 @@ out now, which is the staleness the calendar dates already had.
 | **View compiler** | Definition → one parameterized SQL query. Filters, grouping, sorting, group counts, permission scoping. Custom fields resolve through a required field catalog. |
 | **Hierarchy** | Config inheritance, effective privacy, denormalized ancestors, move-legality. |
 | **Ordering** | Fractional indices — one row written per drag. |
-| **Mutations** | Invertible operations, one transaction per batch, activity row per change. **Undo works.** |
+| **Mutations** | Invertible operations, one transaction per batch, activity row per change. **Undo works.** It is also where a write's *validity* is decided, for the same reason it is where the activity row is written: a parent that would make a cycle is refused in `applyOperations`, so every door passes the check and none can forget it (D-150). |
 | **List view** | Renders through the compiler. Status cycling, priority cycling, inline rename, archive, inline create, undo. |
 | **Board view** | Same compiler, `grouping.field = status`. Drag between and within columns, one row written per drag, one undo entry per drag. |
 | **Table view** | Same compiler again, and the first renderer to read a definition's `columns`. Built-in and custom-field columns, sortable headers with the saved order one click away, and a chooser to show, hide and reorder. Status, priority, rename and archive work in the cells. |
@@ -347,7 +356,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 652 unit tests, 358 live-Postgres checks, 216 action checks, 30
+**Verified:** 652 unit tests, 369 live-Postgres checks, 218 action checks, 30
 API checks, 11 search checks, **49 browser checks**, four packages typechecking
 clean, and the interactions above driven in Chrome — most recently `[[`
 resolving to a page and then to a task inside one sentence, the two edges
@@ -401,7 +410,7 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 **Phase 10 is closed, nothing is half-built, and the decision that followed it
 is made.** Every numbered item below is struck through, both bug lists are
-empty, and the gates are green: 652 unit tests, 358 live-Postgres checks, 216
+empty, and the gates are green: 652 unit tests, 369 live-Postgres checks, 218
 action checks, 30 API checks, 11 search checks, 49 browser checks, and four
 packages typechecking.
 
@@ -440,17 +449,13 @@ genuinely a choice rather than an order:
      same change as the automation action, and `parseDuration` is the half of
      `formatDuration` that never existed. It replaced three minute boxes on the
      task page as well, which is where the inconsistency was loudest.
-   - ~~**a task picker, which is what `parentTaskId` is waiting for.**~~
-     **Half done** (2026-11-12, D-149). The picker exists: the `Parent task`
-     filter and the `tasks`/`relationship` custom fields are a search now
-     rather than uuid text boxes, and a stored id is resolved into what it is
-     called. **`parentTaskId` is still absent from the automations menu, and
-     the picker was never why.** Nothing in this app re-parents a task — a
-     subtask is created under its parent and that is the only write of the
-     column outside the API — so an automation that set it would be the first
-     way to produce a cycle, and `applyOperations` has no guard against one.
-     **That guard is the prerequisite**: it belongs in the executor, where
-     every writer passes, rather than in whichever menu offers the field.
+   - ~~**a task picker, and the `parentTaskId` it was supposed to be blocking.**~~
+     **Done** (D-149 and D-150). The picker is a search rather than a menu,
+     because a workspace's tasks cannot be a list; and `parentTaskId` is in the
+     automations menu behind a guard in the executor that refuses a parent
+     which is the task itself, one of its descendants, or a task in another
+     workspace. **The picker was never the blocker** — the missing guard was,
+     and it had been reachable from the public API since D-134.
    - **an automation still cannot write a *timed* date** (D-147): a relative
      date rounds to a UTC day, so "two hours before the meeting" needs the
      duration vocabulary to reach the date half too. The control exists now;
