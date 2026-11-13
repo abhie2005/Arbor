@@ -184,6 +184,7 @@ two applies, because the registry must exist before an image can be pushed.
 | Live changes: publish and subscribe | `packages/db/src/live.ts` |
 | Duration rules, formatting and parsing (pure, D-148) | `packages/core/src/time.ts` |
 | The one duration box, and which receiver it publishes to when | `apps/web/src/components/duration-input.tsx` |
+| The value control that is a search rather than a menu (D-149) | `apps/web/src/components/task-picker.tsx`, `taskCandidates`/`namedTasks` in `apps/web/src/server/view-actions.ts` |
 | Tracked time as a totalled field | `trackedMs` in `packages/core/src/views/compile.ts` |
 | Key-result kinds, progress arithmetic (pure) | `packages/core/src/goals.ts` |
 | Goals, key results, and running a rollup | `packages/db/src/goals.ts` |

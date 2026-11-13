@@ -1,8 +1,18 @@
 # Status — resume here
 
-Last updated 2026-11-12 (a duration is written the way it is read). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-11-12 (the picker that is a search). Repo: https://github.com/abhie2005/Arbor (`main`).
 
-**The newest thing is D-148: a duration is a control now.** The column is
+**The newest thing is D-149: the task picker exists, and it is not a menu.**
+Every other value control is a closed set shipped with the page; a workspace has
+thousands of tasks, so this one asks the server as it is typed and resolves the
+uuid a saved filter already holds into what that task is called. **It did not
+unblock `parentTaskId`**, which is the more useful half: the gaps list has
+blamed the missing picker for three phases, and the real prerequisite is a cycle
+guard — nothing in this app re-parents a task, so an automation that set the
+column would be the first way to make A the parent of B while B is the parent of
+A. Third time the list named the wrong blocker.
+
+**Before that, D-148: a duration is a control now.** The column is
 milliseconds and so was every box that asked for one — a filter on Estimate
 declared `input: "number"` and the automation action's label said "Estimate
 (ms)" out loud. `parseDuration` is the missing half of `formatDuration`, the
@@ -311,7 +321,7 @@ out now, which is the staleness the calendar dates already had.
 | **Dates** | A due date flagged as a calendar day is stored at midnight UTC and read in UTC, everywhere. Overdue means the day is over, not that the clock has passed midnight. |
 | **Automations** | A rule is a trigger, a `FilterGroup` of conditions and actions that compile to operations. Fires from the activity log, runs as a per-workspace service account, claimed with `SKIP LOCKED` (D-124, D-125, D-126). A delay is the rule's and its conditions are asked when it acts (D-128). `/settings/automations` writes one: the container tree scoped to what the viewer may `manage`, the filter bar's own menus for conditions, a one-sentence summary of what each rule does, its last run, and the month's quota. A rule can be disabled, renamed, edited or deleted — renaming through its own entry point, because a rule the parser cannot read still has a name (D-140). The drain runs in the server process, started from `/api/health` and the root layout. |
 | **Saved views** | The tab strip is the list of saved views. Create, rename, duplicate, set default, delete — validated by compiling the definition before it is written. Personal views are invisible to others. |
-| **Filter bar** | On all three renderers. Menus are built from the same declaration the compiler validates against, so an invalid filter cannot be expressed. Filter state lives in the URL and is shareable; a malformed link errors instead of showing everything. |
+| **Filter bar** | On all three renderers. Menus are built from the same declaration the compiler validates against, so an invalid filter cannot be expressed. Every value is the control its type calls for: a status menu, a duration box (D-148), and — for a set too large to ship — a task *search* that names the id a saved filter holds (D-149). Filter state lives in the URL and is shareable; a malformed link errors instead of showing everything. |
 | **Field types** | All 20 declared in one place: storage column, legal operators, config parser, value parser. |
 | **Status sets** | CRUD, inheritance resolution, four templates, reordering, and task migration on delete. |
 | **Custom fields** | CRUD, per-type config, placement down the tree, task-type scoping, archive, and type change with a real value migration. |
@@ -337,8 +347,8 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 652 unit tests, 358 live-Postgres checks, 211 action checks, 30
-API checks, 11 search checks, **44 browser checks**, four packages typechecking
+**Verified:** 652 unit tests, 358 live-Postgres checks, 216 action checks, 30
+API checks, 11 search checks, **49 browser checks**, four packages typechecking
 clean, and the interactions above driven in Chrome — most recently `[[`
 resolving to a page and then to a task inside one sentence, the two edges
 landing in `doc_links`, and the reverse showing as "Linked from" on the page and
@@ -391,8 +401,8 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 **Phase 10 is closed, nothing is half-built, and the decision that followed it
 is made.** Every numbered item below is struck through, both bug lists are
-empty, and the gates are green: 652 unit tests, 358 live-Postgres checks, 211
-action checks, 30 API checks, 11 search checks, 44 browser checks, and four
+empty, and the gates are green: 652 unit tests, 358 live-Postgres checks, 216
+action checks, 30 API checks, 11 search checks, 49 browser checks, and four
 packages typechecking.
 
 **The third candidate below is done** (D-144). Two remain, and they are
@@ -430,14 +440,17 @@ genuinely a choice rather than an order:
      same change as the automation action, and `parseDuration` is the half of
      `formatDuration` that never existed. It replaced three minute boxes on the
      task page as well, which is where the inconsistency was loudest.
-   - **a task picker, which is what `parentTaskId` is waiting for.**
-     `ValueInput` declares `task` and no control draws it, so the `Parent task`
-     filter and the `tasks`/`relationship` custom fields are uuid text boxes
-     today — the automations menu omits `parentTaskId` rather than offer one.
-     **It is not the shape the other pickers are**: a workspace has too many
-     tasks for a `<select>`, so this one is a typeahead over a search, and the
-     search half already exists — the editor's `[[` menu resolves a task by
-     name (D-120).
+   - ~~**a task picker, which is what `parentTaskId` is waiting for.**~~
+     **Half done** (2026-11-12, D-149). The picker exists: the `Parent task`
+     filter and the `tasks`/`relationship` custom fields are a search now
+     rather than uuid text boxes, and a stored id is resolved into what it is
+     called. **`parentTaskId` is still absent from the automations menu, and
+     the picker was never why.** Nothing in this app re-parents a task — a
+     subtask is created under its parent and that is the only write of the
+     column outside the API — so an automation that set it would be the first
+     way to produce a cycle, and `applyOperations` has no guard against one.
+     **That guard is the prerequisite**: it belongs in the executor, where
+     every writer passes, rather than in whichever menu offers the field.
    - **an automation still cannot write a *timed* date** (D-147): a relative
      date rounds to a UTC day, so "two hours before the meeting" needs the
      duration vocabulary to reach the date half too. The control exists now;
