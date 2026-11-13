@@ -761,7 +761,93 @@ await section("durations", async () => {
   await context.close();
 });
 
-// --- 7. a person with a password --------------------------------------------
+// --- 7. the picker that is a search ------------------------------------------
+
+console.log("\nthe task picker — the one value control that cannot be a menu");
+
+await section("the task picker", async () => {
+  // The last of the menu gaps (D-149), and the one that could not be closed the
+  // way D-146 closed the others: a workspace has thousands of tasks, so this
+  // control asks the server as it is typed rather than being handed a set. Two
+  // halves are checked, and the second is the one no HTTP assertion can see —
+  // what the box *says* a stored uuid is.
+  const parentOf = (id: string) =>
+    `/?f=${encodeURIComponent(JSON.stringify({ c: [["parent", "eq", id]] }))}`;
+
+  const anchor = await one(`SELECT id, key FROM tasks WHERE key = 'ENG-421'`);
+  const target = await one(`SELECT id, key FROM tasks WHERE key = 'ENG-402'`);
+
+  const { context, issues } = await asViewer(sessions.avery);
+  const page = await context.newPage();
+  await page.goto(`${BASE}${parentOf(anchor.id)}`, { waitUntil: "networkidle" });
+
+  const box = page.locator('[aria-label="Value"]').first();
+  await page.waitForFunction(
+    (uuid) => {
+      const input = document.querySelector('[aria-label="Value"]') as HTMLInputElement | null;
+      return input !== null && input.value !== "" && input.value !== uuid;
+    },
+    anchor.id,
+    { timeout: 15_000 },
+  ).catch(() => undefined);
+
+  report(
+    "a Parent task filter names the task rather than printing the uuid it stores",
+    (await box.inputValue()) === "ENG-421"
+      ? null
+      : `the box reads ${JSON.stringify(await box.inputValue())}`,
+  );
+
+  await box.click();
+  await box.fill("auth");
+  const options = page.locator('[role="option"]');
+  await options.first().waitFor({ timeout: 15_000 }).catch(() => undefined);
+  const offered = await options.allInnerTexts();
+
+  report(
+    "typing offers tasks, which is the half that is a query rather than a set",
+    offered.some((text) => text.includes("ENG-402"))
+      ? null
+      : `the list held ${JSON.stringify(offered)}`,
+  );
+
+  await options.filter({ hasText: "ENG-402" }).first().click();
+  await page.waitForURL(new RegExp(target.id), { timeout: 15_000 }).catch(() => undefined);
+
+  report(
+    "and picking one puts its id in the URL the view is shared as",
+    page.url().includes(target.id) ? null : `the URL is ${page.url()}`,
+  );
+
+  report("nothing in the console while a task is picked", noisy(issues));
+  await context.close();
+
+  // The half that is about permission rather than about typing: Quinn is in
+  // another workspace entirely, so the id resolves to nothing and the box shows
+  // it as itself. A picker that printed the name would be an existence oracle
+  // for every task in the product (invariant 6).
+  const outside = await asViewer(sessions.quinn);
+  const theirs = await outside.context.newPage();
+  await theirs.goto(`${BASE}${parentOf(target.id)}`, { waitUntil: "networkidle" });
+  const shown = await theirs
+    .locator('[aria-label="Value"]')
+    .first()
+    .inputValue()
+    .catch(() => "MISSING");
+
+  report(
+    "a task the viewer cannot reach is never named for them",
+    shown === target.id
+      ? null
+      : shown.includes("ENG-402")
+        ? "the picker named a task in a workspace this viewer is not in"
+        : `the box reads ${JSON.stringify(shown)}`,
+  );
+
+  await outside.context.close();
+});
+
+// --- 8. a person with a password --------------------------------------------
 
 console.log("\nsigning in — the door everybody else in this file walked past");
 

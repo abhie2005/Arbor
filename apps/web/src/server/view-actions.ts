@@ -5,15 +5,18 @@ import {
   createView,
   deleteView,
   duplicateView,
+  pool,
   renameView,
   requireListAccess,
   requireViewAccess,
   setDefaultView,
+  taskAccess,
   updateViewDefinition,
 } from "@arbor/db";
 import { revalidatePath } from "next/cache";
 
 import { requireUser } from "./auth";
+import { loadSearch } from "./search";
 import { requireWorkspace } from "./workspace";
 
 /**
@@ -139,5 +142,91 @@ export async function deleteViewAction(viewId: string): Promise<ViewResult> {
     return { ok: true };
   } catch (error) {
     return failed(error);
+  }
+}
+
+/**
+ * The two halves of the one picker that cannot be a menu (D-149).
+ *
+ * Every other value control is a closed set shipped with the page —
+ * `loadFilterOptions` loads the statuses, the people, the lists. A task cannot
+ * be: a workspace has thousands, and sending them all so that somebody can
+ * filter on one is a page load paying for an interaction most readers never
+ * start. That is the same reasoning `linkCandidates` is built on (D-120), and
+ * these live here rather than there because the control belongs to the filter
+ * bar, which the automation form borrows (D-129).
+ *
+ * **Searching goes through `loadSearch`**, so the picker matches the way
+ * `/search` matches — one rule for what matches, invariant 15 — and inherits
+ * its permission scoping rather than repeating it.
+ */
+export type TaskOption = { id: string; label: string; hint: string };
+
+export async function taskCandidates(
+  term: string,
+): Promise<{ ok: true; tasks: TaskOption[] } | { ok: false; error: string }> {
+  try {
+    const [actor, workspace] = await Promise.all([requireUser(), requireWorkspace()]);
+
+    const trimmed = term.trim();
+    if (trimmed === "") return { ok: true, tasks: [] };
+
+    const results = await loadSearch(workspace.id, actor.id, trimmed);
+
+    return {
+      ok: true,
+      tasks: results.tasks.slice(0, 8).map((task) => ({
+        id: task.id,
+        // The key is what somebody means by "this task", and the name is what
+        // tells them they picked the right one.
+        label: task.key ?? task.name,
+        hint: task.name,
+      })),
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * What the ids a filter already holds are called.
+ *
+ * A stored condition is a uuid, and a box showing one is the gap this closes —
+ * so the control asks what it is looking at. Read by hand with an access check
+ * in front of it rather than through the compiler, which is the detail page's
+ * bargain for the same reason: this is a handful of tasks by id, not a page of
+ * them (invariant 5).
+ *
+ * **An id the viewer cannot reach comes back as nothing**, which reads as
+ * "no longer exists" — the same words a genuinely missing task gets, because a
+ * picker that said "you may not see this one" would be an existence oracle
+ * (invariant 6).
+ */
+export async function namedTasks(
+  ids: string[],
+): Promise<{ ok: true; tasks: TaskOption[] } | { ok: false; error: string }> {
+  try {
+    const actor = await requireUser();
+
+    const wanted = [...new Set(ids.filter((id) => typeof id === "string" && id !== ""))].slice(0, 20);
+    if (wanted.length === 0) return { ok: true, tasks: [] };
+
+    const reachable = await Promise.all(
+      wanted.map(async (id) => ((await taskAccess(id, actor.id)) ? id : null)),
+    );
+    const allowed = reachable.filter((id): id is string => id !== null);
+    if (allowed.length === 0) return { ok: true, tasks: [] };
+
+    const rows = await pool().query<{ id: string; key: string | null; name: string }>(
+      `SELECT id, key, name FROM tasks WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+      [allowed],
+    );
+
+    return {
+      ok: true,
+      tasks: rows.rows.map((row) => ({ id: row.id, label: row.key ?? row.name, hint: row.name })),
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

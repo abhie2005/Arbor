@@ -12,6 +12,7 @@ import {
 } from "@arbor/core";
 
 import { DurationInput } from "./duration-input";
+import { TaskPicker } from "./task-picker";
 
 /**
  * The condition menus, and the value controls under them.
@@ -302,6 +303,12 @@ export function ValueControl({
         }
       />
     );
+  }
+
+  // Not a menu, and the only input here that is not: a workspace has thousands
+  // of tasks, so this one is a search (D-149).
+  if (input === "task") {
+    return <TaskPicker value={value} onChange={onChange} />;
   }
 
   if (input === "duration") {

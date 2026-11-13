@@ -6354,3 +6354,78 @@ the rule that a new check must be watched to fail.
 *In one sentence:* the app could print "2h 30m" everywhere and accept it
 nowhere, and the fix was one parser, one control, and one declaration each for
 the two menus that needed it.
+
+### D-149
+**The one value control that is a query** · 2026-11-12 · active
+
+The last of the menu gaps, and the one D-146 could not close the way it closed
+the others. Every value control in this app is a **closed set shipped with the
+page**: `loadFilterOptions` loads the statuses, the people, the tags, the lists,
+and `optionsFor` hands them to a `<select>`. A workspace has tens or hundreds of
+each. It has **thousands of tasks**, so the options cannot be shipped — and
+until now `input: "task"` fell through to the text box at the bottom of
+`ValueControl`, whose only valid content was a uuid.
+
+That is what "a task picker nobody has built" meant: the *declaration* was
+always there — `parent` has declared `input: "task"` since the filter bar
+existed, and so have the `tasks` and `relationship` custom field types — and the
+control was the missing half.
+
+**So this one asks the server as it is typed**, debounced, with a stale guard,
+because answers arrive out of order and a slow response for "au" landing after a
+fast one for "auth" replaces the right list with a wrong one. All of that is
+`linkCandidates`' reasoning (D-120), which is the other place in this product
+where a set was too big to ship, and the list it draws is the `.mention-picker`
+the `[[` menu and the comment box already draw.
+
+**Searching goes through `loadSearch`** rather than a query of its own, so the
+picker matches the way `/search` matches — case-insensitive substring,
+invariant 15 — and inherits its permission scoping instead of repeating it.
+
+**The half that is easy to miss is reading, not typing.** A stored condition is
+a uuid, so a control that only searched would show `b3f1…` for the filter
+somebody saved yesterday. `namedTasks` answers what the ids a filter already
+holds are called: read by hand with `taskAccess` in front of it, which is the
+detail page's bargain for the same reason — this is a handful of tasks by id,
+not a page of them (invariant 5). **An id the viewer cannot reach resolves to
+nothing and is shown as itself**, because a picker that said "you may not see
+this one" — or worse, named it — would be an existence oracle for every task in
+the product (invariant 6).
+
+**One box rather than a chip and a search field.** Closed, it reads as the value
+it holds; open, it reads as what is being typed. A filter row has no room for
+two controls, and the thing being replaced was one box.
+
+**The actions live in `view-actions.ts`** because the control belongs to the
+filter bar, which the automation form borrows (D-129) — not in `doc-actions.ts`
+beside the `[[` search they resemble.
+
+**What it did not unblock, which is the more useful half of this entry.** The
+gaps list has said for three phases that `parentTaskId` is absent from the
+automations menu because there is no task picker. There is one now, and
+`parentTaskId` is still absent — because the picker was never the blocker.
+**Nothing in this app re-parents a task**: a subtask is created under a parent
+and that is the only write of `parent_task_id` outside the API. The executor
+takes the column like any other, so an automation that set it would be the first
+way to make A the parent of B while B is the parent of A, and there is no guard
+anywhere that would notice. That guard is the real prerequisite, it belongs in
+`applyOperations` rather than in a menu, and it is now what the gaps list says.
+Third time the list has described the wrong blocker (D-145, D-146), and the
+third time the cost of checking first was nothing.
+
+**Verified**: five checks in `check:browser` (49) and five in `check:actions`
+(216), and both reverts were watched to fail. Taking the `task` branch out of
+`ValueControl` puts the uuid back in the box, empties the list, and leaves
+nothing to click; taking `taskAccess` out of `namedTasks` makes it answer `Sam`
+with `HIRE-1`, which is the leak the check is there for. The browser half is the affordance — a Parent task filter that reads
+`ENG-421` where it used to read a uuid, a list that appears as you type, and a
+pick that puts the chosen id in the URL the view is shared as. The action half
+is the boundary, and the permission question is asked there because it is a
+property of the action rather than of the control: Sam cannot find `HIRE-1` by
+searching and cannot resolve its id, **paired with Avery finding it by the same
+search**, because an absence proves nothing unless the presence is checked
+beside it. The browser pass asks the same question one level up, with Quinn in
+another workspace reading the uuid rather than the key.
+
+*In one sentence:* every other picker is a list the page already has, and this
+one is a search — which is why it was the gap that outlived the other three.

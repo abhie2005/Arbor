@@ -4771,6 +4771,16 @@ select.filter-add option {
   gap: var(--space-2);
   padding-left: calc(34px + var(--space-2));
 }
+/* The task picker draws `.mention-picker` under itself, and that list is
+   absolutely positioned against the nearest positioned ancestor (D-149). */
+.task-picker {
+  position: relative;
+  display: inline-block;
+}
+.task-picker-input {
+  min-width: 10rem;
+}
+
 /* A duration is "2h 30m" at its longest, so it does not need the width a name
    or a date does (D-148). */
 .filter-duration {

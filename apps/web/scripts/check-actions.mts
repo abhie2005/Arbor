@@ -3486,6 +3486,73 @@ report(
     : "the switch did not take effect — a live session outranked it",
 );
 
+// --- the picker that is a search (D-149) ------------------------------------
+//
+// The one value control that asks the server instead of being handed a set, so
+// it is the one with a boundary of its own. The browser pass proves it draws a
+// list; this proves the two actions behind it answer the right rows — and the
+// permission half is the reason it is here rather than only there: a picker
+// that named tasks the caller cannot reach would be an existence oracle for
+// every task in the product, and that is a property of the action, not of the
+// control.
+console.log("\nthe task picker \u2192 a search, with the same permission as a read\n");
+
+const HOME_URL = `http://localhost:${PORT}/`;
+const PICKER_ACTIONS = actionIds("app/page");
+
+const authTask = await one(`SELECT id, key FROM tasks WHERE key = 'ENG-402'`);
+const hiringTask = await one(
+  `SELECT t.id, t.key, t.name FROM tasks t
+     JOIN containers c ON c.id = t.home_list_id
+    WHERE c.name = 'Hiring' LIMIT 1`,
+);
+
+// Explicit, because the sharing section earlier in this file shares and
+// unshares the same list: whatever state it happened to leave is not a fixture.
+await revokeHiring(samUserId);
+
+const candidates = await callOn(HOME_URL, PICKER_ACTIONS.taskCandidates!, ["auth"]);
+report(
+  "the picker's search answers with tasks, by the key somebody would type",
+  /ENG-402/.test(candidates.text) ? null : `response ${candidates.text.slice(-200)}`,
+);
+
+const named = await callOn(HOME_URL, PICKER_ACTIONS.namedTasks!, [[authTask.id]]);
+report(
+  "and an id a filter already holds comes back as what it is called",
+  /ENG-402/.test(named.text) ? null : `response ${named.text.slice(-200)}`,
+);
+
+// Sam is in the workspace and has no grant on Hiring — the same fixture the
+// authorization section uses, and the same answer: nothing, in the words a
+// missing task would get.
+const samNamed = await callOn(HOME_URL, PICKER_ACTIONS.namedTasks!, [[hiringTask.id]], SAM);
+report(
+  "a task the caller cannot reach is not named for them",
+  hiringTask &&
+    !samNamed.text.includes(String(hiringTask.key)) &&
+    !samNamed.text.includes(String(hiringTask.id))
+    ? null
+    : `response ${samNamed.text.slice(-200)}`,
+);
+
+// The pair that makes the absence mean something: the same search, run by
+// somebody who may see that list, finds the row Sam's run must not.
+const averySearch = await callOn(HOME_URL, PICKER_ACTIONS.taskCandidates!, ["offer"]);
+const samSearch = await callOn(HOME_URL, PICKER_ACTIONS.taskCandidates!, ["offer"], SAM);
+report(
+  "the private task is findable by somebody who may see it, so the next check means something",
+  averySearch.text.includes(String(hiringTask?.key))
+    ? null
+    : `response ${averySearch.text.slice(-200)}`,
+);
+report(
+  "and the search does not offer it to Sam, because it is the same scoping",
+  !samSearch.text.includes(String(hiringTask?.key))
+    ? null
+    : `response ${samSearch.text.slice(-200)}`,
+);
+
 await db.query(`DELETE FROM status_sets WHERE id = $1`, [set.id]);
 await db.query(`DELETE FROM fields WHERE name = $1 OR name LIKE 'Bad %'`, [fieldName]);
 await db.end();
