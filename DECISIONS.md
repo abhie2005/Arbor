@@ -6495,3 +6495,92 @@ silent.
 
 *In one sentence:* the tree had no rule saying it was a tree, and the only place
 to say it is the one line every writer already goes through.
+
+### D-151
+**A field that computes rather than stores** · 2026-11-14 · active
+
+Three field types have been declared, filterable and **empty** since Phase 1.
+`automatic_progress`, `formula` and `rollup` write nothing to `field_values`,
+so every read of one has always been null — a column you could add to a table,
+sort by, and watch stay blank. The gaps list has carried them for five phases
+with one open question attached: *does this need a worker?*
+
+**It does not, and that is the decision.** A derived field is an **expression
+evaluated on read**, not a value kept up to date on write. The alternative is a
+column maintained by a worker, and the work that implies is the argument
+against it: a subtask closing has to find every ancestor holding a progress
+field and recompute it; creating a field has to backfill every task in scope; a
+missed event is a number that is quietly wrong for a week and looks exactly
+like a number that is right. Read-time arithmetic cannot be stale, needs no
+queue, and has no backfill.
+
+**The cost is paid honestly: it cannot be indexed.** A filter on a derived
+field scans. That is the same trade this repo already made for custom field
+values in general (D-013's EAV), and the first derived type is a correlated
+count over `tasks.parent_task_id`, which is indexed.
+
+**What made it small was where the expression goes.** A custom field's value
+was already written out four times in the compiler — in a filter, a sort key, a
+group key and a total — each as the same correlated read of `field_values`.
+Those four are now one function, `customValueExpr`, and *that* is where stored
+and derived part company. So the first derived type arrived in filtering,
+sorting, grouping and totalling in the same change, rather than in a cell with
+three followups. A derived field only three of the four understood would be a
+column you can see and cannot sort by.
+
+**The cell is the fifth reader and it lives outside the compiler.**
+`loadColumnValues` batches one `field_values` lookup for every visible custom
+column (D-062), and a derived field has no row for it to find — which is
+precisely why the column rendered blank. It takes the *same* expression from
+`derivedValueSql` rather than keeping a second copy, so a cell and a filter
+cannot come to different conclusions about one field.
+
+**What `automatic_progress` means, in three decisions:**
+
+- **Finished is `done` or `closed`** — the pair `completed_at` is stamped for,
+  so "complete" means one thing across the product.
+- **Archived and deleted subtasks are not counted at all.** They are not work
+  remaining and they are not work finished; leaving them in either half makes
+  the number lie in a different direction.
+- **No subtasks is NULL, not zero.** A task with no subtasks has not made no
+  progress — it has no answer, and a bar sitting at 0% is a claim about work
+  that does not exist. `trackedPercent` made the same call for the same reason.
+
+The one thing interpolated into the SQL is the table alias, so it is validated
+against a pattern before it is used. It is written by this codebase today and
+the check is what keeps that true the day somebody passes one through (D-018).
+
+**`formula` and `rollup` still return null**, which is what they returned
+before, and they are not harder than this one by accident: a formula needs an
+expression language — a parser, a precedence table, and a closed set of
+references that can never become SQL text — and a rollup has to resolve a
+relationship field and aggregate across it. Shipping the simplest of the three
+first is what proves the mechanism the other two will use.
+
+**Verified**: eight unit tests (660), five in `db:smoke` (374) and two in
+`check:actions` (220). The unit tests assert an *absence* — a query that
+mentions `field_values` or carries the field's id is the bug this entry is
+about — and the live checks pin the number from both sides: a parent with two
+of four subtasks finished is `>= 50` and is not `> 50`, archiving one of the
+unfinished pair moves it to `>= 67`, and a task with no subtasks comes back for
+`isNull`. The action check is the half no SQL assertion can see: a table with a
+derived column renders `50%` where it used to render nothing.
+
+**Both reverts were watched to fail.** Making `derivedValueSql` silent for
+`automatic_progress` fails four of the eight unit tests — the other four are
+about the function's own answers for stored, formula and rollup types, which
+the revert does not change — and four of the five live checks. The fifth,
+"not more than 50", passes against the broken build precisely because nothing
+matches at all: it is a negative check, and the positive one above it is what
+carries the weight. That pairing is the rule this file keeps relearning.
+
+**And it found a flake that had nothing to do with it.** "A timed due date is
+not midnight UTC" asserted `getUTCHours() !== 0`, which is a different claim
+from the one it makes in words: the seed's timed dates inherit the hour
+`db:seed` ran at (D-130), so a seed run between 00:00 and 01:00 UTC produces a
+perfectly good moment — 00:34 — that the check called a calendar day. A day is
+stored at *exactly* midnight, so that is what it compares against now.
+
+*In one sentence:* the question was whether derived fields need a worker, and
+the answer was that an expression in the one place every reader already goes
+through needs nothing at all.

@@ -3,6 +3,7 @@ import "server-only";
 import {
   type FieldCatalog,
   type ResolvedColumn,
+  derivedValueSql,
   fieldValueColumn,
 } from "@arbor/core";
 import { peopleIn, pool } from "@arbor/db";
@@ -93,9 +94,25 @@ export async function loadColumnValues(
   options: { workspaceId: string; catalog: FieldCatalog; connection?: Connection },
 ): Promise<ColumnValues> {
   const taskIds = rows.map((row) => row.id);
-  const customFieldIds = columns
-    .filter((column) => column.custom && column.fieldId)
-    .map((column) => column.fieldId as string);
+
+  /**
+   * Stored fields are looked up; derived ones are computed (D-151).
+   *
+   * A derived field has no `field_values` row to find — asking for one is how
+   * `automatic_progress` rendered as empty for five phases. The expression is
+   * the compiler's own, taken from `derivedValueSql` rather than written again
+   * here, so a cell and a filter on the same field can never disagree about
+   * what it means.
+   */
+  const customColumns = columns.filter((column) => column.custom && column.fieldId);
+  const derivedColumns = customColumns.filter((column) => {
+    const field = options.catalog.get(column.fieldId as string);
+    return field ? derivedValueSql(field, "p") !== null : false;
+  });
+  const derivedIds = new Set(derivedColumns.map((column) => column.fieldId as string));
+  const customFieldIds = customColumns
+    .map((column) => column.fieldId as string)
+    .filter((id) => !derivedIds.has(id));
 
   const has = (test: (column: ResolvedColumn) => boolean) => columns.some(test);
   const needsTags = has((c) => c.kind === "tags");
@@ -108,6 +125,7 @@ export async function loadColumnValues(
 
   const wanted =
     customFieldIds.length > 0 ||
+    derivedColumns.length > 0 ||
     needsTags ||
     needsWatchers ||
     needsTaskTypes ||
@@ -120,13 +138,36 @@ export async function loadColumnValues(
   const db = options.connection ?? pool();
   const { workspaceId, catalog } = options;
 
-  const [valueRows, tagRows, watcherRows, typeRows, containerRows, peopleRows] = await Promise.all([
+  /**
+   * Every derived column in one query, one expression per column.
+   *
+   * The same bargain as the batched `field_values` read above (D-062): the
+   * query text grows with the number of *derived* columns rather than with the
+   * number of rows, and there are at most a handful of those. The ids come from
+   * `rows`, which already came out of a permission-scoped result — this file may
+   * only ever narrow.
+   */
+  const derivedSelect = derivedColumns
+    .map((column, index) => {
+      const field = catalog.get(column.fieldId as string);
+      return `${derivedValueSql(field!, "p")} AS v${index}`;
+    })
+    .join(", ");
+
+  const [valueRows, derivedRows, tagRows, watcherRows, typeRows, containerRows, peopleRows] =
+    await Promise.all([
     customFieldIds.length > 0
       ? db.query<ValueRow>(
           `SELECT task_id, field_id, value_text, value_num, value_date, value_bool, value_json
            FROM field_values
            WHERE task_id = ANY($1::uuid[]) AND field_id = ANY($2::uuid[])`,
           [taskIds, customFieldIds],
+        )
+      : null,
+    derivedColumns.length > 0
+      ? db.query<Record<string, unknown>>(
+          `SELECT p.id AS task_id, ${derivedSelect} FROM tasks p WHERE p.id = ANY($1::uuid[])`,
+          [taskIds],
         )
       : null,
     needsTags
@@ -177,6 +218,21 @@ export async function loadColumnValues(
     const forTask = custom.get(row.task_id) ?? new Map<string, unknown>();
     forTask.set(row.field_id, value);
     custom.set(row.task_id, forTask);
+  }
+
+  // A computed value lands in the same map a stored one does, so every cell
+  // renderer downstream is unchanged: by the time it is read, "where it came
+  // from" is not a question the cell asks.
+  for (const row of derivedRows?.rows ?? []) {
+    const taskId = String(row.task_id);
+    for (const [index, column] of derivedColumns.entries()) {
+      const value = row[`v${index}`];
+      if (value === null || value === undefined) continue;
+
+      const forTask = custom.get(taskId) ?? new Map<string, unknown>();
+      forTask.set(column.fieldId as string, Number(value));
+      custom.set(taskId, forTask);
+    }
   }
 
   const people = new Map((peopleRows ?? []).map((row) => [row.id, row.name]));

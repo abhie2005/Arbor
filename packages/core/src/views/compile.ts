@@ -6,6 +6,7 @@ import {
   fieldValueColumn,
   parseFilterValue,
 } from "../fields";
+import { derivedValueSql } from "./derived";
 import {
   type BuiltinField,
   type FieldRef,
@@ -240,6 +241,28 @@ export function escapeLike(input: string): string {
 }
 
 /**
+ * One custom field's value, as a scalar expression.
+ *
+ * **Stored types read their row; derived types compute** (D-151). It is one
+ * function because there are four readers — a filter, a sort key, a group key
+ * and a total — and a derived field that only three of them understood would
+ * be a column you can see and cannot sort by. They all take the expression
+ * from here, so the day `formula` computes, all four learn it together.
+ *
+ * The subquery is correlated rather than joined for the reason it always was:
+ * a task with no row for the field reads as NULL instead of dropping out of
+ * the result.
+ */
+function customValueExpr(field: FieldDefinition, params: ParamBag): string {
+  const derived = derivedValueSql(field, "t");
+  if (derived) return derived;
+
+  return `(SELECT fv.${fieldValueColumn(field)}
+           FROM field_values fv
+           WHERE fv.task_id = t.id AND fv.field_id = ${params.add(field.id)})`;
+}
+
+/**
  * A predicate on one custom field.
  *
  * Everything about the shape of this comes from the field's declared type: the
@@ -267,6 +290,14 @@ function customFieldSql(
     if (error instanceof FieldError) throw new ViewCompileError(error.message);
     throw error;
   }
+
+  // A derived field has no row to find, so the predicate is about the
+  // expression itself rather than about a row existing (D-151). "Is empty" is
+  // then the ordinary meaning of empty: the computation had no answer. It is
+  // answered before the parameter below is added, because a query that looks
+  // nothing up should not carry the id of the thing it is not looking up.
+  const derived = derivedValueSql(field, "t");
+  if (derived) return comparisonSql(derived, { ...condition, value }, params);
 
   const idParam = params.add(field.id);
   const rowFor = (predicate: string) =>
@@ -431,9 +462,7 @@ function orderExpr(sort: SortField, params: ParamBag, fields: FieldCatalog | und
     // The column comes from the declared type, so a number sorts numerically
     // and a date chronologically — the COALESCE-to-text this used to do sorted
     // 10 before 9 and 2026-01 before 2025-12.
-    return `(SELECT fv.${fieldValueColumn(field)}
-             FROM field_values fv
-             WHERE fv.task_id = t.id AND fv.field_id = ${params.add(field.id)}) ${direction} ${nulls}`;
+    return `${customValueExpr(field, params)} ${direction} ${nulls}`;
   }
 
   if (MULTI_VALUE_FIELDS.has(sort.field as BuiltinField)) {
@@ -682,9 +711,7 @@ function aggregateValueExpr(
       );
     }
 
-    return `(SELECT fv.value_num
-            FROM field_values fv
-            WHERE fv.task_id = t.id AND fv.field_id = ${params.add(definition.id)})`;
+    return customValueExpr(definition, params);
   }
 
   if (!SUMMABLE_BUILTINS.has(field as BuiltinField)) {
@@ -715,9 +742,7 @@ function groupKeyExpr(
     // Cast to text because the group key is a header label and a map key on the
     // renderer side; the ordering of groups is the grouping direction, not the
     // field's natural order.
-    return `(SELECT fv.${fieldValueColumn(definition)}::text
-            FROM field_values fv
-            WHERE fv.task_id = t.id AND fv.field_id = ${params.add(definition.id)})`;
+    return `${customValueExpr(definition, params)}::text`;
   }
 
   /**

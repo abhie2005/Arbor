@@ -9,7 +9,13 @@ import {
   compileGroupCounts,
   compileViewQuery,
 } from "./compile";
-import { DEFAULT_VIEW_DEFINITION, type FilterGroup, type ViewDefinition } from "./types";
+import { derivedValueSql } from "./derived";
+import {
+  DEFAULT_VIEW_DEFINITION,
+  type FilterCondition,
+  type FilterGroup,
+  type ViewDefinition,
+} from "./types";
 
 const WORKSPACE = "11111111-1111-4111-8111-111111111111";
 const VIEWER = "22222222-2222-4222-8222-222222222222";
@@ -17,6 +23,7 @@ const LIST = "33333333-3333-4333-8333-333333333333";
 const FIELD = "44444444-4444-4444-8444-444444444444";
 const TEXT_FIELD = "55555555-5555-4555-8555-555555555555";
 const LABELS_FIELD = "66666666-6666-4666-8666-666666666666";
+const PROGRESS_FIELD = "88888888-8888-4888-8888-888888888888";
 const OPTION = "77777777-7777-4777-8777-777777777777";
 
 /**
@@ -32,6 +39,7 @@ const CATALOG = indexFields([
     type: "labels",
     typeConfig: { options: [{ id: OPTION, name: "infra", color: "#43B581", orderindex: 0 }] },
   },
+  { id: PROGRESS_FIELD, type: "automatic_progress", typeConfig: {} },
 ] as FieldDefinition[]);
 
 function compile(overrides: Partial<ViewDefinition> = {}, scopeId = LIST) {
@@ -650,5 +658,90 @@ describe("grouping by a multi-valued field", () => {
 
   it("refuses a multi-valued custom field the same way", () => {
     expect(() => counts(`cf:${LABELS_FIELD}`)).toThrow(/several values at once/);
+  });
+});
+
+
+/**
+ * A derived field is computed rather than read (D-151), and the property worth
+ * asserting is not the exact SQL — it is that **no reader reaches for a row
+ * that cannot exist**. `field_values` holds nothing for a derived field, so a
+ * query mentioning both that table and this field id is the bug the whole
+ * entry is about.
+ */
+describe("a derived field is an expression, not a stored value", () => {
+  const filtered = (op: FilterCondition["op"], value: unknown) =>
+    compile({
+      filters: {
+        op: "AND",
+        conditions: [{ field: `cf:${PROGRESS_FIELD}`, op, value } as FilterCondition],
+      },
+    });
+
+  it("computes progress from subtasks instead of reading a value row", () => {
+    const { text, params } = filtered("gt", 50);
+
+    expect(text).toContain("dsub.parent_task_id = t.id");
+    expect(text).toContain("dst.group IN ('done','closed')");
+    expect(text).not.toContain("field_values");
+    // The field id is not a parameter either: nothing looks it up.
+    expect(params).not.toContain(PROGRESS_FIELD);
+  });
+
+  it("counts only subtasks that are still there", () => {
+    const { text } = filtered("gt", 50);
+    expect(text).toContain("dsub.deleted_at IS NULL");
+    expect(text).toContain("dsub.archived_at IS NULL");
+  });
+
+  // "Empty" for a stored field means no row; for a computed one it means the
+  // computation had no answer, which is a different query and the same words.
+  it("reads 'is empty' as the computation having no answer", () => {
+    const { text } = filtered("isNull", null);
+    expect(text).toContain("IS NULL");
+    expect(text).not.toContain("field_values");
+  });
+
+  it("sorts and groups by the same expression every other reader uses", () => {
+    const sorted = compile({ sort: [{ field: `cf:${PROGRESS_FIELD}`, dir: "desc" }] });
+    expect(sorted.text).toContain("dsub.parent_task_id = t.id");
+    expect(sorted.text).not.toContain("field_values");
+
+    const grouped = compileGroupCounts({
+      workspaceId: WORKSPACE,
+      viewerId: VIEWER,
+      scope: { kind: "list", id: LIST },
+      fields: CATALOG,
+      definition: {
+        ...DEFAULT_VIEW_DEFINITION,
+        grouping: { field: `cf:${PROGRESS_FIELD}`, dir: "asc" },
+      },
+    });
+    expect(grouped.text).toContain("dsub.parent_task_id = t.id");
+    expect(grouped.text).not.toContain("field_values");
+  });
+
+  it("still reads a stored field from its row, which is the half that must not change", () => {
+    const { text } = compile({
+      filters: { op: "AND", conditions: [{ field: `cf:${FIELD}`, op: "gt", value: 3 }] },
+    });
+    expect(text).toContain("field_values");
+  });
+});
+
+describe("derivedValueSql on its own", () => {
+  it("has nothing to say about a stored type", () => {
+    expect(derivedValueSql({ type: "number" }, "t")).toBeNull();
+  });
+
+  it("is still silent for the two that are not built yet, which is what they return today", () => {
+    expect(derivedValueSql({ type: "formula" }, "t")).toBeNull();
+    expect(derivedValueSql({ type: "rollup" }, "t")).toBeNull();
+  });
+
+  // The alias is interpolated, so it is the one thing here that could become
+  // SQL text if a caller ever passed one through (D-018).
+  it("refuses an alias that is not an alias", () => {
+    expect(() => derivedValueSql({ type: "automatic_progress" }, "t; DROP TABLE tasks --")).toThrow();
   });
 });

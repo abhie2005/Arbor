@@ -514,6 +514,74 @@ report(
     : `stored ${JSON.stringify(afterHide.definition.columns.slice(0, 2))}`,
 );
 
+// A derived column is the half of D-151 that no SQL assertion can see: the
+// compiler computes the number, and whether a *cell* ever receives it is a
+// question about `loadColumnValues`, which reads `field_values` — where a
+// derived field has nothing. So the field is made, a column is added for it,
+// and the page is asked what it says.
+const progressName = `Subtask progress ${Date.now()}`;
+await call("createFieldAction", [
+  { name: progressName, type: "automatic_progress", containerId: null, typeConfig: {} },
+]);
+const progressField = await one(`SELECT id FROM fields WHERE name = $1`, [progressName]);
+
+const doneStatusId = (
+  await one(
+    `SELECT s.id FROM statuses s JOIN status_sets ss ON ss.id = s.status_set_id
+      WHERE ss.name = 'Engineering' AND s.name = 'Done'`,
+  )
+).id;
+const subtaskParent = await one(`SELECT id FROM tasks WHERE key = 'ENG-402'`);
+const subtasks = await db.query<{ id: string; status_id: string | null }>(
+  `SELECT id, status_id FROM tasks WHERE parent_task_id = $1 AND deleted_at IS NULL ORDER BY position`,
+  [subtaskParent.id],
+);
+report(
+  "the seeded parent has subtasks, so the percentage below means something",
+  subtasks.rows.length === 2 ? null : `found ${subtasks.rows.length} subtasks`,
+);
+
+// **Both** of them are set, not one. The seed makes both subtasks `Done`, so a
+// fixture that only moved one would be asserting 50% against a parent that is
+// at 100% — which is how this check first failed, and is the same shape as the
+// two other fixtures in this repo that quietly did nothing.
+const todoStatusId = (
+  await one(
+    `SELECT s.id FROM statuses s JOIN status_sets ss ON ss.id = s.status_set_id
+      WHERE ss.name = 'Engineering' AND s.name = 'Todo'`,
+  )
+).id;
+await db.query(`UPDATE tasks SET status_id = $1 WHERE id = $2`, [
+  doneStatusId,
+  subtasks.rows[0]?.id,
+]);
+await db.query(`UPDATE tasks SET status_id = $1 WHERE id = $2`, [
+  todoStatusId,
+  subtasks.rows[1]?.id,
+]);
+
+await callOn(TABLE_URL, TABLE_ACTIONS.saveViewDefinitionAction!, [
+  tableView.id,
+  {
+    ...originalDefinition,
+    columns: [...originalDefinition.columns, { field: `cf:${progressField.id}` }],
+  },
+]);
+
+const tablePage = await (await fetch(TABLE_URL, { headers: { Cookie: COOKIE } })).text();
+report(
+  "a derived column renders the number it computed, where a stored one would be empty",
+  /50%/.test(tablePage) ? null : "no computed percentage on the table",
+);
+
+for (const subtask of subtasks.rows) {
+  await db.query(`UPDATE tasks SET status_id = $1 WHERE id = $2`, [
+    subtask.status_id ?? null,
+    subtask.id,
+  ]);
+}
+await db.query(`DELETE FROM fields WHERE id = $1`, [progressField.id]);
+
 await db.query(`UPDATE views SET definition = $1 WHERE id = $2`, [
   originalDefinition,
   tableView.id,

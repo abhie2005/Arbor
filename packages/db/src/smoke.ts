@@ -13,6 +13,7 @@ import {
   DEFAULT_VIEW_DEFINITION,
   MAX_RUN_ATTEMPTS,
   addUtcDays,
+  compileAggregate,
   compileViewQuery,
   docStateFrom,
   invert,
@@ -4500,6 +4501,147 @@ async function main() {
   await setParent(second!, null, top!);
   await setParent(third!, null, second!);
 
+  // --- a field that computes rather than stores (D-151) -----------------------
+  //
+  // `automatic_progress` has been declared, filterable and empty since Phase 1.
+  // What only a database can answer is whether the expression the compiler now
+  // emits returns the right *number*, and the way to pin a number through a
+  // filter is to put the boundary either side of it: a parent with two of four
+  // subtasks finished is `>= 50` and is not `> 50`.
+  console.log("\na derived field — computed on read, in every reader at once\n");
+
+  const progressField = await createField(
+    {
+      workspaceId: ws.id!,
+      containerId: list.id!,
+      name: `Subtask progress ${Date.now()}`,
+      type: "automatic_progress",
+    },
+    { actorId: owner.id!, connection: pool },
+  );
+
+  const progressRef = `cf:${progressField.id}` as const;
+  const progressCatalog = await loadFieldCatalog(ws.id!, pool);
+
+  const [parentRow] = (
+    await pool.query<{ id: string }>(
+      `INSERT INTO tasks (workspace_id, home_list_id, space_id, name, status_id, position, created_by)
+       VALUES ($1, $2, $3, 'Derived parent', $4, 'zz', $5)
+       RETURNING id`,
+      [ws.id, list.id, space.id, autoTodo.id, owner.id],
+    )
+  ).rows;
+
+  await pool.query(`INSERT INTO task_lists (task_id, list_id, is_home, position) VALUES ($1, $2, true, 'zz')`, [
+    parentRow!.id,
+    list.id,
+  ]);
+
+  // Four subtasks, two of them finished. Written directly because they are a
+  // fixture rather than a claim about the write path — which every other
+  // section in this file is already about.
+  for (const [index, status] of [autoDone.id, autoDone.id, autoTodo.id, autoTodo.id].entries()) {
+    await pool.query(
+      `INSERT INTO tasks (workspace_id, home_list_id, space_id, parent_task_id, name, status_id, position, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [ws.id, list.id, space.id, parentRow!.id, `Derived child ${index}`, status, `zz${index}`, owner.id],
+    );
+  }
+
+  const progressQuery = (op: "gte" | "gt" | "isNull", value: unknown) =>
+    compileViewQuery({
+      workspaceId: ws.id!,
+      viewerId: owner.id!,
+      fields: progressCatalog,
+      scope: { kind: "list", id: list.id! },
+      definition: {
+        ...DEFAULT_VIEW_DEFINITION,
+        filters: {
+          op: "AND",
+          conditions: [{ field: progressRef, op, value }],
+          showClosed: true,
+          showSubtasks: 3,
+        },
+      },
+    });
+
+  await check(
+    "two of four subtasks finished reads as at least 50",
+    progressQuery("gte", 50),
+    (rows) =>
+      rows.some((row) => row.id === parentRow!.id) ? null : "the parent was not in the result",
+  );
+
+  await check(
+    "and not as more than 50, which is what pins it to exactly that",
+    progressQuery("gt", 50),
+    (rows) =>
+      rows.some((row) => row.id === parentRow!.id)
+        ? "the parent came back for > 50, so the number is wrong"
+        : null,
+  );
+
+  // A task with no subtasks has not made no progress — it has no answer. The
+  // same call `trackedPercent` makes, and the reason the expression returns
+  // NULL rather than zero.
+  await check(
+    "a task with no subtasks is empty rather than zero",
+    progressQuery("isNull", null),
+    (rows) =>
+      rows.length > 0 && !rows.some((row) => row.id === parentRow!.id)
+        ? null
+        : `${rows.length} rows, parent included: ${rows.some((row) => row.id === parentRow!.id)}`,
+    );
+
+  // The aggregate entry point reads the same expression, which is the claim
+  // that one function feeds every reader: a goal could total this field.
+  const progressTotal = compileAggregate({
+    workspaceId: ws.id!,
+    viewerId: owner.id!,
+    fields: progressCatalog,
+    scope: { kind: "list", id: list.id! },
+    definition: {
+      ...DEFAULT_VIEW_DEFINITION,
+      // Narrowed to the fixture: the seeded workspace has other parents with
+      // subtasks, and a total over all of them is a number that moves whenever
+      // an earlier section closes something.
+      filters: {
+        op: "AND",
+        conditions: [{ field: "name", op: "eq", value: "Derived parent" }],
+        showClosed: true,
+        showSubtasks: 3,
+      },
+    },
+    aggregate: { fn: "sum", field: progressRef },
+  });
+
+  const totalled = await pool.query<{ value: string | null }>(
+    progressTotal.text,
+    progressTotal.params,
+  );
+  report(
+    "a goal could total it, because the aggregate reads the same expression",
+    Number(totalled.rows[0]?.value ?? 0) === 50
+      ? null
+      : `the total was ${String(totalled.rows[0]?.value)}, not the parent's own 50`,
+  );
+
+  // Archiving a subtask takes it out of both halves of the fraction: it is
+  // neither work remaining nor work finished.
+  await pool.query(
+    `UPDATE tasks SET archived_at = now() WHERE parent_task_id = $1 AND name = 'Derived child 3'`,
+    [parentRow!.id],
+  );
+
+  await check(
+    "an archived subtask leaves the fraction, so two of three reads as 67",
+    progressQuery("gte", 67),
+    (rows) =>
+      rows.some((row) => row.id === parentRow!.id)
+        ? null
+        : "archiving a subtask did not change the share",
+  );
+
   // --- a date the rule works out when it runs (D-147) ------------------------
   //
   // The unit tests own the arithmetic; what only a database can answer is what
@@ -5543,9 +5685,16 @@ async function main() {
     // `every` over no rows is true, so the length is part of the assertion: a
     // check that passes when the thing it describes is absent is the shape of
     // the hole this whole section exists to fill.
+    //
+    // **The test is the instant, not the hour.** It used to be
+    // `getUTCHours() !== 0`, which is a different claim: the seed's timed dates
+    // inherit the hour `db:seed` ran at (D-130), so a seed run in the 00:00 UTC
+    // hour produced a perfectly good moment — 00:34 — that this check called a
+    // calendar day. A day is stored at *exactly* midnight, so that is what to
+    // compare against.
     instants.rows.length >= 2 &&
       instants.rows.every(
-        (r) => new Date((r as { due_at: string }).due_at).getUTCHours() !== 0,
+        (r) => new Date((r as { due_at: string }).due_at).getTime() % 86_400_000 !== 0,
       )
       ? null
       : "a timed due date landed on midnight UTC and reads as a calendar day",
