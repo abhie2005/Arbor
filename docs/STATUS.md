@@ -1,8 +1,17 @@
 # Status — resume here
 
-Last updated 2026-11-13 (a parent that cannot be one). Repo: https://github.com/abhie2005/Arbor (`main`).
+Last updated 2026-11-14 (a field that computes). Repo: https://github.com/abhie2005/Arbor (`main`).
 
-**The newest thing is D-150: the tree has a rule saying it is a tree.** The
+**The newest thing is D-151: a derived field computes, and it needs no worker.**
+`automatic_progress` has been declared, filterable and empty since Phase 1 —
+the gaps list carried all three derived types with one question attached, *does
+this need a worker*, and the answer is no: a derived field is an **expression
+evaluated on read**, so it cannot be stale, needs no queue and has no backfill.
+The cost is that it cannot be indexed, which is the trade the EAV already
+makes. `formula` and `rollup` still return null; the mechanism they will use is
+now proved.
+
+**Before that, D-150: the tree has a rule saying it is a tree.** The
 executor refuses a parent that is the task itself, one of its descendants, or a
 task in another workspace — and it was a live hole rather than a theoretical
 one: `POST /api/v1/operations` has taken `setField` on `parentTaskId` since
@@ -320,6 +329,7 @@ out now, which is the staleness the calendar dates already had.
 | **View compiler** | Definition → one parameterized SQL query. Filters, grouping, sorting, group counts, permission scoping. Custom fields resolve through a required field catalog. |
 | **Hierarchy** | Config inheritance, effective privacy, denormalized ancestors, move-legality. |
 | **Ordering** | Fractional indices — one row written per drag. |
+| **Derived fields** | `automatic_progress` computes: the share of a task's subtasks that are `done` or `closed`, as an expression the compiler emits rather than a value anything writes (D-151). Archived and deleted subtasks leave the fraction entirely; a task with no subtasks is empty rather than zero. One expression feeds the filter, the sort, the group key, the total and the cell. `formula` and `rollup` are still declared and still empty. |
 | **Mutations** | Invertible operations, one transaction per batch, activity row per change. **Undo works.** It is also where a write's *validity* is decided, for the same reason it is where the activity row is written: a parent that would make a cycle is refused in `applyOperations`, so every door passes the check and none can forget it (D-150). |
 | **List view** | Renders through the compiler. Status cycling, priority cycling, inline rename, archive, inline create, undo. |
 | **Board view** | Same compiler, `grouping.field = status`. Drag between and within columns, one row written per drag, one undo entry per drag. |
@@ -356,7 +366,7 @@ out now, which is the staleness the calendar dates already had.
 | **Deployment** | `Dockerfile` (two targets: the app as Next's traced standalone output, and a migrator that runs the same `drizzle-kit migrate` a developer does) and `infra/terraform/` — VPC, RDS Postgres, ECS Fargate behind an ALB, two ECR repositories, one secret. 45 resources, `validate`-clean, **never applied against a real account**. The app needed only `output: "standalone"` and `/api/health` to become deployable, because it reads three environment variables and talks to nothing but Postgres (D-114). The ALB's idle timeout and deregistration delay are set explicitly, because SSE streams are exactly what their defaults kill. |
 | **Ambient activity** | The read-time half. What happened on tasks you watch, assembled from `activity` at display time and grouped into one row per task, in one stream with the signals (D-089). Excludes your own actions, anything that already notified you directly, and movement that is not news. Read state is one mark per membership rather than a flag per event (D-088). |
 
-**Verified:** 652 unit tests, 369 live-Postgres checks, 218 action checks, 30
+**Verified:** 660 unit tests, 374 live-Postgres checks, 220 action checks, 30
 API checks, 11 search checks, **49 browser checks**, four packages typechecking
 clean, and the interactions above driven in Chrome — most recently `[[`
 resolving to a page and then to a task inside one sentence, the two edges
@@ -410,7 +420,7 @@ takes 6.6s in it against roughly six minutes for one package on the host.
 
 **Phase 10 is closed, nothing is half-built, and the decision that followed it
 is made.** Every numbered item below is struck through, both bug lists are
-empty, and the gates are green: 652 unit tests, 369 live-Postgres checks, 218
+empty, and the gates are green: 660 unit tests, 374 live-Postgres checks, 220
 action checks, 30 API checks, 11 search checks, 49 browser checks, and four
 packages typechecking.
 
@@ -432,9 +442,16 @@ genuinely a choice rather than an order:
      scoped to `view` (a filter is a read, unlike the four settings screens
      that ask for `manage`), and the automations screen keeps its own
      `manage`-scoped list for its "move to list" action.
-   - **derived field types compute nothing.** `formula`, `rollup` and
-     `automatic_progress` are declared and filterable. This is the one that is
-     not small, and the open question is still whether it needs a worker.
+   - **derived field types: one of three computes now** (2026-11-14, D-151).
+     `automatic_progress` is an expression the compiler emits, so it arrived in
+     filtering, sorting, grouping, totalling and cells at once — and **the open
+     question is answered: no worker.** Computed on read cannot be stale and
+     has no backfill; the cost is that it cannot be indexed.
+     **`formula` and `rollup` are what is left**, and they are not harder by
+     accident: a formula needs an expression language (a parser, a precedence
+     table, and a closed set of references that can never become SQL text), and
+     a rollup has to resolve a relationship field and aggregate across it. Both
+     plug into `derivedValueSql`, which is the part that is now proved.
    - ~~**no relative dates in actions.**~~ **Done** (2026-11-10, D-147). An
      action's `to` may be `{ kind: "relativeDate", days, from }`, resolved when
      the rule acts — `now` for "three days from now", `current` for "a week

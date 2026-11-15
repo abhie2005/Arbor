@@ -72,7 +72,11 @@ two applies, because the registry must exist before an image can be pushed.
    a document's place in the tree write through `logConfigChange` instead, which
    gets the activity row without the undo entry (D-103, D-111).
 2. **No renderer has a query of its own.** Every view reads through
-   `compileViewQuery`. A renderer needing something the compiler cannot say
+   `compileViewQuery`. **A derived field is an expression, not a value**
+   (D-151): `derivedValueSql` is where one is defined, `customValueExpr` is
+   where the compiler chooses between computing and reading a row, and
+   `loadColumnValues` takes the *same* expression for a cell — so a filter and
+   a cell cannot disagree about what a field means. A renderer needing something the compiler cannot say
    means the compiler grows (D-078), not that the renderer writes SQL (D-032).
    A goal's rollup obeys this too: `key_results.source` holds a view definition
    and `compileAggregate` shares `buildBase` with the row query, so a goal and a
@@ -188,6 +192,7 @@ two applies, because the registry must exist before an image can be pushed.
 | The one duration box, and which receiver it publishes to when | `apps/web/src/components/duration-input.tsx` |
 | The value control that is a search rather than a menu (D-149) | `apps/web/src/components/task-picker.tsx`, `taskCandidates`/`namedTasks` in `apps/web/src/server/view-actions.ts` |
 | A parent that cannot be one — the only tree rule there is (D-150) | `refuseImpossibleParent` in `packages/db/src/mutations.ts` |
+| What a derived field computes, and the four readers that share it (D-151) | `packages/core/src/views/derived.ts`, `customValueExpr` in `views/compile.ts` |
 | Tracked time as a totalled field | `trackedMs` in `packages/core/src/views/compile.ts` |
 | Key-result kinds, progress arithmetic (pure) | `packages/core/src/goals.ts` |
 | Goals, key results, and running a rollup | `packages/db/src/goals.ts` |
